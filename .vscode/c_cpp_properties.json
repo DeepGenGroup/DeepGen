@@ -1,0 +1,17 @@
+{
+    "configurations": [
+        {
+            "name": "Linux",
+            "includePath": [
+                "${workspaceFolder}/include",
+                "~/llvm-install/include",
+                "~/anaconda3/envs/triton_rocm/include/python3.8"
+            ],
+            "defines": ["COMPILE_AS_PYMODULE"],
+            "compilerPath": "/usr/bin/g++",
+            "cStandard": "c17",
+            "cppStandard": "c++17"
+        }
+    ],
+    "version": 4
+}

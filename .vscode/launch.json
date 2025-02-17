@@ -1,0 +1,52 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "name": "Python Debugger: testt.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Runtime/python/kcg/testt.py",
+            "console": "integratedTerminal",
+            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime/python"},
+            "cwd": "${workspaceFolder}/Runtime/python/kcg",
+            "python": "/home/xushilong/anaconda3/envs/triton_rocm/bin/python"
+        },
+        {
+            "name": "Python Debugger: testGetKernels.py",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Runtime/python/kcg/testGetKernels.py",
+            "console": "integratedTerminal",
+            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime/python", "HIP_VISIBLE_DEVICES":"7"},
+            "cwd": "${workspaceFolder}/Runtime/python/kcg",
+            "python": "/home/xushilong/anaconda3/envs/triton_rocm/bin/python"
+        },
+        {
+            "name": "(gdb) Launch",
+            "type": "cppdbg",
+            "request": "launch",
+            "program": "${workspaceFolder}/bin/kcg_compiler",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}/bin",
+            "environment": [],
+            "externalConsole": false,
+            "MIMode": "gdb",
+            "setupCommands": [
+                {
+                    "description": "Enable pretty-printing for gdb",
+                    "text": "-enable-pretty-printing",
+                    "ignoreFailures": true
+                },
+                {
+                    "description": "Set Disassembly Flavor to Intel",
+                    "text": "-gdb-set disassembly-flavor intel",
+                    "ignoreFailures": true
+                }
+            ]
+        }
+    ]
+}

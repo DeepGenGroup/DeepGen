@@ -1,0 +1,8 @@
+#ifndef __KCG_CONFIG_H__
+#define __KCG_CONFIG_H__
+
+#define DEBUG_AMDGCN_OUTPUT_PATH        "${DEBUG_AMDGCN_OUTPUT_PATH}"
+#define USER_LLD_PATH                   "${USER_LLD_PATH}"
+#define HIP_BITCODE_PATH                "${HIP_BITCODE_PATH}"
+#define BC_DUMP_PATH                    "${BC_DUMP_PATH}"
+#endif // __KCG_CONFIG_H__
