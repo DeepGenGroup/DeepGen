@@ -12,11 +12,8 @@ include/config.h
 include/config.h
 include/config.h
 _cache/
-cfg_comination*
 _dump/
 _pkls/
 _tmp/
-cfg_cominations*.json
 perfRecordlog_*.json
-kcg/__pycache__/
-kcg/Operators/__pycache__/
+*__pycache__
