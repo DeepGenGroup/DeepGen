@@ -327,10 +327,10 @@ class PathManager :
 
     @staticmethod
     def loader_c_path_hip()->str:
-        return os.path.join(PathManager.project_dir(),"Runtime/python/kcg/loaderCCode/hip.c")
+        return os.path.join(PathManager.project_dir(),"Runtime/kcg/loaderCCode/hip.c")
     @staticmethod
     def loader_c_path_cuda()->str:
-        return os.path.join(PathManager.project_dir(),"Runtime/python/kcg/loaderCCode/cuda.c")
+        return os.path.join(PathManager.project_dir(),"Runtime/kcg/loaderCCode/cuda.c")
     
     @staticmethod
     def kcg_compiler_path()->str:

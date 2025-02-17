@@ -1,4 +1,4 @@
-pmc_log_path = '/home/xushilong/CodeGenDemo/Runtime/python/kcg/pmc_results_239084.txt'
+pmc_log_path = '/home/xushilong/CodeGenDemo/Runtime/kcg/pmc_results_239084.txt'
 lines = []
 with open(pmc_log_path) as f:
     lines = f.readlines()

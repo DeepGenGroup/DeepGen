@@ -1,6 +1,6 @@
 
 
-filename = "/home/xushilong/CodeGenDemo/Runtime/python/kcg/temp.mlir"
+filename = "/home/xushilong/CodeGenDemo/Runtime/kcg/temp.mlir"
 to_analyze_lines = []
 with open(filename) as f:
     lines = f.readlines()

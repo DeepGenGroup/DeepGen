@@ -36,7 +36,7 @@ ${project_folder}/bin/kcg_compiler > log.txt 2>&1
 
 2. lib模式   
 
-启动脚本为 ${project_dir}/Runtime/python/kcg/Benchmark.sh 其调用testGetKernels.py ,并开启进程池处理编译和测试任务。该进程是会话分离的（nohup），即ssh链接断开后也不会停止
+启动脚本为 ${project_dir}/Runtime/kcg/Benchmark.sh 其调用testGetKernels.py ,并开启进程池处理编译和测试任务。该进程是会话分离的（nohup），即ssh链接断开后也不会停止
 需要查看总体运行时间，执行 ： 
 ```shell
 ps -eo pid,etime,cmd | grep testGetKernels
@@ -98,8 +98,8 @@ testGetKernels.py
 Benchmark.sh   
 ```shell
 #! /bin/bash
-export PYTHONPATH=~/CodeGenDemo/Runtime/python
-cd ~/CodeGenDemo/Runtime/python/kcg
+export PYTHONPATH=~/CodeGenDemo/Runtime
+cd ~/CodeGenDemo/Runtime/kcg
 export HIP_VISIBLE_DEVICES=7  # 指定使用的DCU设备
 nohup python testGetKernels.py > log.log 2>&1 & # 开启任务并将其和会话分离（父进程ID=1）
 

@@ -8,20 +8,20 @@
             "name": "Python Debugger: testt.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/Runtime/python/kcg/testt.py",
+            "program": "${workspaceFolder}/Runtime/kcg/testt.py",
             "console": "integratedTerminal",
-            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime/python"},
-            "cwd": "${workspaceFolder}/Runtime/python/kcg",
+            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime"},
+            "cwd": "${workspaceFolder}/Runtime/kcg",
             "python": "/home/xushilong/anaconda3/envs/triton_rocm/bin/python"
         },
         {
             "name": "Python Debugger: testGetKernels.py",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/Runtime/python/kcg/testGetKernels.py",
+            "program": "${workspaceFolder}/Runtime/kcg/testGetKernels.py",
             "console": "integratedTerminal",
-            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime/python", "HIP_VISIBLE_DEVICES":"7"},
-            "cwd": "${workspaceFolder}/Runtime/python/kcg",
+            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime", "HIP_VISIBLE_DEVICES":"7"},
+            "cwd": "${workspaceFolder}/Runtime/kcg",
             "python": "/home/xushilong/anaconda3/envs/triton_rocm/bin/python"
         },
         {

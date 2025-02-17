@@ -1,7 +1,4 @@
 bin
-build
-Runtime/python/kcg/*/__pycache__/
-Runtime/python/kcg/__pycache__/
 log
 *.log
 *.amdgcn
@@ -17,3 +14,4 @@ _pkls/
 _tmp/
 perfRecordlog_*.json
 *__pycache__
+build/
