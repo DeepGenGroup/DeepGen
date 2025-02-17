@@ -103,4 +103,4 @@ cd ~/CodeGenDemo/Runtime/python/kcg
 export HIP_VISIBLE_DEVICES=7  # 指定使用的DCU设备
 nohup python testGetKernels.py > log.log 2>&1 & # 开启任务并将其和会话分离（父进程ID=1）
 
-```
+````
