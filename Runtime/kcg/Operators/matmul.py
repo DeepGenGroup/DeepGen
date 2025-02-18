@@ -312,4 +312,113 @@ class TuningSpaceChecker_Matmul :
             return False
         return True
     
-class 
+    @staticmethod
+    def check_glw(config : Dict) -> bool :
+        glwa = config[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A]
+        glwb = config[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B]
+        bm = config[ConfigKeywords.KEY_BLOCK_SIZE_M]
+        bn = config[ConfigKeywords.KEY_BLOCK_SIZE_N]
+        bk = config[ConfigKeywords.KEY_BLOCK_SIZE_K]
+        tm = config[ConfigKeywords.KEY_THREAD_SIZE_M]
+        tn = config[ConfigKeywords.KEY_THREAD_SIZE_N]
+        nThreads = bm / tm * bn / tn
+        if bm * bk / nThreads < 1 :
+            return False
+        if bn * bk / nThreads < 1 :
+            return False
+        return True
+        
+# 以 tuning_config 为模板，生成config的字符串编码
+class TuningSpaceEncoder_Matmul :
+    def __init__(self, tuning_config : Dict):
+        self.m_tuningCfg = tuning_config
+        self.m_keyLists = [
+            ConfigKeywords.KEY_BLOCK_SIZE_M,
+            ConfigKeywords.KEY_BLOCK_SIZE_N,
+            ConfigKeywords.KEY_BLOCK_SIZE_K,
+            ConfigKeywords.KEY_THREAD_SIZE_M,
+            ConfigKeywords.KEY_THREAD_SIZE_N,
+            ConfigKeywords.KEY_WARP_SIZE,
+            ConfigKeywords.KEY_BLOCK_LAYOUT_M,
+            ConfigKeywords.KEY_BLOCK_LAYOUT_N,
+            ConfigKeywords.KEY_WARP_LAYOUT_M,
+            ConfigKeywords.KEY_WARP_LAYOUT_N,
+            ConfigKeywords.KEY_DTYPE_A,
+            ConfigKeywords.KEY_DTYPE_B,
+            ConfigKeywords.KEY_DTYPE_C,
+            ConfigKeywords.KEY_M,
+            ConfigKeywords.KEY_N,
+            ConfigKeywords.KEY_K,
+            ConfigKeywords.KEY_IS_A_TRANSPOSE,
+            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A,
+            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B,
+            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A,
+            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B,
+            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A,
+            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B,
+            ConfigKeywords.KEY_LOCAL_SPLIT_U,
+            ConfigKeywords.KEY_BLOCK_MAPPING,
+            ConfigKeywords.KEY_GLOB_STORE_WIDTH,
+            ConfigKeywords.KEY_UNROLL_NUM,
+            ConfigKeywords.KEY_REG_PREFETCH,
+            ConfigKeywords.KEY_SHARED_PREFETCH,
+            ConfigKeywords.KEY_LOAD_CONTINUOUS,
+            ConfigKeywords.KEY_REDUCE_C_CONTINUOUS,
+        ]
+        
+    def _valEncode(self,config : Dict, kw : str) -> str:
+        inputVal = config[kw]
+        index = 0
+        for val in self.m_tuningCfg[kw] :
+            if inputVal == val :
+                return str(index)
+            index+=1
+        assert(False and "invalid Keyword")
+    
+    def encode(self,config : Dict) -> str :
+        ret = ''
+        for key in self.m_keyLists :
+            ret += self._valEncode(config,key)
+        return ret
+    
+    def decode(self, code:str ) -> Dict :
+        retDict = {
+            ConfigKeywords.KEY_BLOCK_SIZE_M : 0,
+            ConfigKeywords.KEY_BLOCK_SIZE_N : 0,
+            ConfigKeywords.KEY_BLOCK_SIZE_K : 0,
+            ConfigKeywords.KEY_THREAD_SIZE_M : 0,
+            ConfigKeywords.KEY_THREAD_SIZE_N : 0,
+            ConfigKeywords.KEY_WARP_SIZE : 0,
+            ConfigKeywords.KEY_BLOCK_LAYOUT_M : 0,
+            ConfigKeywords.KEY_BLOCK_LAYOUT_N : 0,
+            ConfigKeywords.KEY_WARP_LAYOUT_M : 0,
+            ConfigKeywords.KEY_WARP_LAYOUT_N : 0,
+            ConfigKeywords.KEY_DTYPE_A : 0,
+            ConfigKeywords.KEY_DTYPE_B : 0,
+            ConfigKeywords.KEY_DTYPE_C : 0,
+            ConfigKeywords.KEY_M : 0,
+            ConfigKeywords.KEY_N : 0,
+            ConfigKeywords.KEY_K : 0,
+            ConfigKeywords.KEY_IS_A_TRANSPOSE : 0,
+            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A : 0,
+            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B : 0,
+            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A : 0,
+            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B : 0,
+            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A : 0,
+            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B : 0,
+            ConfigKeywords.KEY_LOCAL_SPLIT_U : 0,
+            ConfigKeywords.KEY_BLOCK_MAPPING : 0,
+            ConfigKeywords.KEY_GLOB_STORE_WIDTH : 0,
+            ConfigKeywords.KEY_UNROLL_NUM : 0,
+            ConfigKeywords.KEY_REG_PREFETCH : 0,
+            ConfigKeywords.KEY_SHARED_PREFETCH : 0,
+            ConfigKeywords.KEY_LOAD_CONTINUOUS : 0,
+            ConfigKeywords.KEY_REDUCE_C_CONTINUOUS : 0,
+        }
+        i=0
+        for key in self.m_keyLists :
+            val = self.m_tuningCfg[key][int(code[i])]
+            retDict[key] = val
+            i+=1
+        return retDict
+            

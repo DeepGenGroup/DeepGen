@@ -300,7 +300,7 @@ class DeviceInfo :
 class PathManager :
     @staticmethod
     def project_dir()->str:
-        return Path(os.path.dirname(os.path.realpath(__file__))).parent.parent.parent
+        return Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
     
     @staticmethod
     def pikle_dir() ->str :

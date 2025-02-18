@@ -21,7 +21,7 @@ from typing import List, Tuple
 import glob
 import ctypes
 import json
-
+from ConfigGenerator import ParseTuningSpace
 # import pymlir
 
 
@@ -272,7 +272,7 @@ class PerfTester :
     
 
 class SerialCompileTask :
-    def _task_compile_kernel(self,kpm : KernelArgMatmul, index:int, deviceId:int) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
+    def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -302,14 +302,14 @@ class SerialCompileTask :
         logger = logging.getLogger(logfile)
         return logger
     
-    def compile_kernels(self, lock, kernelArgs : List[KernelArgMatmul],lbs=0,ubs=-1,namePrefix='',deviceId=0) -> List:
+    def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0) -> List:
         # 读取 JSON 文件
         output_path = PathManager.pikle_dir() + f'/valid_kernels_{namePrefix}_{lbs}_{ubs}.pkl'
         valid_kernels = [] 
         if ubs < 0:
-            lbs = 0; ubs = len(kernelArgs) 
+            lbs = 0; ubs =1
         for i in range(lbs,ubs) :
-            kernelCfg = kernelArgs[i]
+            kernelCfg = kernelArg
             r = self._task_compile_kernel(kernelCfg,i,deviceId)   #维持执行的进程总数为processes，当一个进程执行完毕后会添加新的进程进去    
             valid_kernels.append(r)
         lock.acquire()
@@ -319,12 +319,12 @@ class SerialCompileTask :
 
 
 class ParallelTaskManager :
-    def __init__(self, total_cfg_count ,json_path_arr : List[str], perf_out_path : str, benchmarkcnt = 5, warmupcnt = 1, devId=0, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50):
+    def __init__(self, total_cfg_count , tuningSpaceJson : str , perf_out_path : str, benchmarkcnt = 5, warmupcnt = 1, devId=0, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50):
         ctx = multiprocessing.get_context('spawn')
         self.Process = ctx.Process
         self.lock = ctx.Lock()
         self.subProcList = []
-        self.cfg_json_path_arr = json_path_arr
+        self.tuningSpaceJson = tuningSpaceJson
         self.CFG_COUNT = total_cfg_count
         self.task_groups = []
         self.m_totalKernels = []
@@ -378,78 +378,63 @@ class ParallelTaskManager :
         self.subProcList.clear()
     
     ## 从json文件里读取 cfgs，转化为 List[KernelArgMatmul] 
-    def _get_kernelargMatmul(self, json_path : str) -> List[KernelArgMatmul] : 
-        import json
-        with open(json_path, 'r') as file:
-            json_data = json.load(file)
-        cfgs = json_data['cfgs']
-        kernelArgs = []
-        kw = ConfigKeywords
-        for i in range(0,len(cfgs)) :
-            config = cfgs[i]
-            arg = KernelArgMatmul(config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K], 
-                                EnumKernelDType(config[kw.KEY_DTYPE_A]), 
-                                EnumKernelDType(config[kw.KEY_DTYPE_B]),
-                                EnumKernelDType(config[kw.KEY_DTYPE_C]))
-            arg.BLOCK_SIZE_M = config[kw.KEY_BLOCK_SIZE_M]
-            arg.BLOCK_SIZE_N = config[kw.KEY_BLOCK_SIZE_N]
-            arg.BLOCK_SIZE_K = config[kw.KEY_BLOCK_SIZE_K]
-            arg.THREAD_SIZE_M = config[kw.KEY_THREAD_SIZE_M]
-            arg.THREAD_SIZE_N = config[kw.KEY_THREAD_SIZE_N]
-            arg.WARP_SIZE = config[kw.KEY_WARP_SIZE]
-            arg.BLOCK_LAYOUT_M = config[kw.KEY_BLOCK_LAYOUT_M]
-            arg.BLOCK_LAYOUT_N = config[kw.KEY_BLOCK_LAYOUT_N]
-            arg.WARP_LAYOUT_M = config[kw.KEY_WARP_LAYOUT_M]
-            arg.WARP_LAYOUT_N = config[kw.KEY_WARP_LAYOUT_N]
-            arg.isATranspose = config[kw.KEY_IS_A_TRANSPOSE]
-            arg.GLOB_LOAD_WIDTH_A = config[kw.KEY_GLOB_LOAD_WIDTH_A]
-            arg.GLOB_LOAD_WIDTH_B = config[kw.KEY_GLOB_LOAD_WIDTH_B]
-            arg.WARP_SCATTER_WIDTH_A = config[kw.KEY_WARP_SCATTER_WIDTH_A]
-            arg.WARP_SCATTER_WIDTH_B = config[kw.KEY_WARP_SCATTER_WIDTH_B]
-            arg.THREAD_SCATTER_WIDTH_A = config[kw.KEY_THREAD_SCATTER_WIDTH_A]
-            arg.THREAD_SCATTER_WIDTH_B = config[kw.KEY_THREAD_SCATTER_WIDTH_B]
-            arg.LOCAL_SPLIT_U = config[kw.KEY_LOCAL_SPLIT_U]
-            arg.BLOCK_MAPPING = config[kw.KEY_BLOCK_MAPPING]
-            arg.GLOB_STORE_WIDTH = config[kw.KEY_GLOB_STORE_WIDTH]
-            arg.UNROLL_NUM = config[kw.KEY_UNROLL_NUM]
-            arg.REG_PREFETCH = config[kw.KEY_REG_PREFETCH]
-            arg.SHARED_PREFETCH = config[kw.KEY_SHARED_PREFETCH]
-            arg.LOAD_CONTINUOUS = config[kw.KEY_LOAD_CONTINUOUS]
-            arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
-            
-            kernelArgs.append(arg)
-            
-        return kernelArgs
+    def _get_kernelargMatmul(self, cfgstr : str, tse : TuningSpaceEncoder_Matmul) -> KernelArgMatmul : 
+        kw = ConfigKeywords    
+        config = tse.decode(cfgstr)
+        arg = KernelArgMatmul(config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K], 
+                            EnumKernelDType(config[kw.KEY_DTYPE_A]), 
+                            EnumKernelDType(config[kw.KEY_DTYPE_B]),
+                            EnumKernelDType(config[kw.KEY_DTYPE_C]))
+        arg.BLOCK_SIZE_M = config[kw.KEY_BLOCK_SIZE_M]
+        arg.BLOCK_SIZE_N = config[kw.KEY_BLOCK_SIZE_N]
+        arg.BLOCK_SIZE_K = config[kw.KEY_BLOCK_SIZE_K]
+        arg.THREAD_SIZE_M = config[kw.KEY_THREAD_SIZE_M]
+        arg.THREAD_SIZE_N = config[kw.KEY_THREAD_SIZE_N]
+        arg.WARP_SIZE = config[kw.KEY_WARP_SIZE]
+        arg.BLOCK_LAYOUT_M = config[kw.KEY_BLOCK_LAYOUT_M]
+        arg.BLOCK_LAYOUT_N = config[kw.KEY_BLOCK_LAYOUT_N]
+        arg.WARP_LAYOUT_M = config[kw.KEY_WARP_LAYOUT_M]
+        arg.WARP_LAYOUT_N = config[kw.KEY_WARP_LAYOUT_N]
+        arg.isATranspose = config[kw.KEY_IS_A_TRANSPOSE]
+        arg.GLOB_LOAD_WIDTH_A = config[kw.KEY_GLOB_LOAD_WIDTH_A]
+        arg.GLOB_LOAD_WIDTH_B = config[kw.KEY_GLOB_LOAD_WIDTH_B]
+        arg.WARP_SCATTER_WIDTH_A = config[kw.KEY_WARP_SCATTER_WIDTH_A]
+        arg.WARP_SCATTER_WIDTH_B = config[kw.KEY_WARP_SCATTER_WIDTH_B]
+        arg.THREAD_SCATTER_WIDTH_A = config[kw.KEY_THREAD_SCATTER_WIDTH_A]
+        arg.THREAD_SCATTER_WIDTH_B = config[kw.KEY_THREAD_SCATTER_WIDTH_B]
+        arg.LOCAL_SPLIT_U = config[kw.KEY_LOCAL_SPLIT_U]
+        arg.BLOCK_MAPPING = config[kw.KEY_BLOCK_MAPPING]
+        arg.GLOB_STORE_WIDTH = config[kw.KEY_GLOB_STORE_WIDTH]
+        arg.UNROLL_NUM = config[kw.KEY_UNROLL_NUM]
+        arg.REG_PREFETCH = config[kw.KEY_REG_PREFETCH]
+        arg.SHARED_PREFETCH = config[kw.KEY_SHARED_PREFETCH]
+        arg.LOAD_CONTINUOUS = config[kw.KEY_LOAD_CONTINUOUS]
+        arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
+        return arg
     
     def run(self, maxProcess = 10, startFromSubjson = '', needCompile = True, needPerfTest = True) :
-        isStartAtSubjson = False
-        if len(startFromSubjson) <= 0:
-            print(f"====== start from cfg at beggining =========")
-        else :
-            print(f"====== start from subjson {startFromSubjson} =========")
-            isStartAtSubjson = True
-            
         procCount = 0
         dealed = 0
         if needPerfTest:
             self.perfProcMonitor.start()
         if needCompile :
-            for jsonPath in self.cfg_json_path_arr :
-                if isStartAtSubjson :
-                    if jsonPath != startFromSubjson :
-                        continue
-                print(f"=========== Dealing json : {jsonPath} ================")
-                kernelConfigs = self._get_kernelargMatmul(jsonPath)
-                words = jsonPath.split('/')
-                namePrefix = words[-1].split('.')[0]
-                for i in range(0,len(kernelConfigs)) :
-                    sct = SerialCompileTask()
-                    self._createSubProc(sct.compile_kernels,self.lock,kernelConfigs,i,i+1,namePrefix,self.devId)
-                    procCount += 1; dealed += 1
-                    if procCount >= maxProcess or i == self.CFG_COUNT-1:
-                        print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
-                        self._waitAll()
-                        procCount = 0
+            tse = None
+            cfgstrs = []
+            with open(self.tuningSpaceJson) as f :
+                obj = json.load(f)
+                tse = TuningSpaceEncoder_Matmul(obj['cfgs'])
+                cfgstrs = obj['cfgs']
+            
+            sct = SerialCompileTask()
+            for i in range(len(cfgstrs)) :
+                print(f"=========== Dealing : cfgstrs[{i}] ================")
+                config = self._get_kernelargMatmul(cfgstrs[i],tse)
+                self._createSubProc(sct.compile_kernels,self.lock,config,i,i+1,'nameprefix',self.devId)
+                procCount += 1; dealed += 1
+                if procCount >= maxProcess or i == self.CFG_COUNT-1:
+                    print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
+                    self._waitAll()
+                    procCount = 0
             print(f"========= All Compile tasks Finished [{self.CFG_COUNT}] ! ============")
         self.endSignal.value = 1
         
