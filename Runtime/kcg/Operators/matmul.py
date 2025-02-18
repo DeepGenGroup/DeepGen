@@ -332,39 +332,7 @@ class TuningSpaceChecker_Matmul :
 class TuningSpaceEncoder_Matmul :
     def __init__(self, tuning_config : Dict):
         self.m_tuningCfg = tuning_config
-        self.m_keyLists = [
-            ConfigKeywords.KEY_BLOCK_SIZE_M,
-            ConfigKeywords.KEY_BLOCK_SIZE_N,
-            ConfigKeywords.KEY_BLOCK_SIZE_K,
-            ConfigKeywords.KEY_THREAD_SIZE_M,
-            ConfigKeywords.KEY_THREAD_SIZE_N,
-            ConfigKeywords.KEY_WARP_SIZE,
-            ConfigKeywords.KEY_BLOCK_LAYOUT_M,
-            ConfigKeywords.KEY_BLOCK_LAYOUT_N,
-            ConfigKeywords.KEY_WARP_LAYOUT_M,
-            ConfigKeywords.KEY_WARP_LAYOUT_N,
-            ConfigKeywords.KEY_DTYPE_A,
-            ConfigKeywords.KEY_DTYPE_B,
-            ConfigKeywords.KEY_DTYPE_C,
-            ConfigKeywords.KEY_M,
-            ConfigKeywords.KEY_N,
-            ConfigKeywords.KEY_K,
-            ConfigKeywords.KEY_IS_A_TRANSPOSE,
-            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A,
-            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B,
-            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A,
-            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B,
-            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A,
-            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B,
-            ConfigKeywords.KEY_LOCAL_SPLIT_U,
-            ConfigKeywords.KEY_BLOCK_MAPPING,
-            ConfigKeywords.KEY_GLOB_STORE_WIDTH,
-            ConfigKeywords.KEY_UNROLL_NUM,
-            ConfigKeywords.KEY_REG_PREFETCH,
-            ConfigKeywords.KEY_SHARED_PREFETCH,
-            ConfigKeywords.KEY_LOAD_CONTINUOUS,
-            ConfigKeywords.KEY_REDUCE_C_CONTINUOUS,
-        ]
+        self.m_keyLists = list(tuning_config.keys())
         
     def _valEncode(self,config : Dict, kw : str) -> str:
         inputVal = config[kw]
@@ -381,44 +349,21 @@ class TuningSpaceEncoder_Matmul :
             ret += self._valEncode(config,key)
         return ret
     
-    def decode(self, code:str ) -> Dict :
-        retDict = {
-            ConfigKeywords.KEY_BLOCK_SIZE_M : 0,
-            ConfigKeywords.KEY_BLOCK_SIZE_N : 0,
-            ConfigKeywords.KEY_BLOCK_SIZE_K : 0,
-            ConfigKeywords.KEY_THREAD_SIZE_M : 0,
-            ConfigKeywords.KEY_THREAD_SIZE_N : 0,
-            ConfigKeywords.KEY_WARP_SIZE : 0,
-            ConfigKeywords.KEY_BLOCK_LAYOUT_M : 0,
-            ConfigKeywords.KEY_BLOCK_LAYOUT_N : 0,
-            ConfigKeywords.KEY_WARP_LAYOUT_M : 0,
-            ConfigKeywords.KEY_WARP_LAYOUT_N : 0,
-            ConfigKeywords.KEY_DTYPE_A : 0,
-            ConfigKeywords.KEY_DTYPE_B : 0,
-            ConfigKeywords.KEY_DTYPE_C : 0,
-            ConfigKeywords.KEY_M : 0,
-            ConfigKeywords.KEY_N : 0,
-            ConfigKeywords.KEY_K : 0,
-            ConfigKeywords.KEY_IS_A_TRANSPOSE : 0,
-            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A : 0,
-            ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B : 0,
-            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A : 0,
-            ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B : 0,
-            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A : 0,
-            ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B : 0,
-            ConfigKeywords.KEY_LOCAL_SPLIT_U : 0,
-            ConfigKeywords.KEY_BLOCK_MAPPING : 0,
-            ConfigKeywords.KEY_GLOB_STORE_WIDTH : 0,
-            ConfigKeywords.KEY_UNROLL_NUM : 0,
-            ConfigKeywords.KEY_REG_PREFETCH : 0,
-            ConfigKeywords.KEY_SHARED_PREFETCH : 0,
-            ConfigKeywords.KEY_LOAD_CONTINUOUS : 0,
-            ConfigKeywords.KEY_REDUCE_C_CONTINUOUS : 0,
-        }
-        i=0
-        for key in self.m_keyLists :
-            val = self.m_tuningCfg[key][int(code[i])]
-            retDict[key] = val
-            i+=1
+    def decode(self, code:int ) -> Dict :
+        retDict = {}
+        for k,v in self.m_tuningCfg.items() :
+            retDict[k] = v
+        codestr = str(code)
+        i=len(codestr)-1
+        tempList = self.m_keyLists.copy()
+        tempList.reverse()
+        for key in tempList :
+            if i < 0 :
+                retDict[key] = self.m_tuningCfg[key][0]
+            else:
+                index = int(codestr[i])
+                retDict[key] = self.m_tuningCfg[key][index]
+                i-=1
+                
         return retDict
             

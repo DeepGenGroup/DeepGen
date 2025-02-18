@@ -18,7 +18,7 @@ def _process_cfg(encoder : TuningSpaceEncoder_Matmul, cfgs : List[Dict], check_f
                 isOK = False;break
         if isOK :
             encodestr = encoder.encode(config)
-            ret['results'].append(encodestr)
+            ret['results'].append(int(encodestr))
     if len(ret['results']) > 0:
         with open(tempfilename,'w') as f:
             json.dump(ret,f)

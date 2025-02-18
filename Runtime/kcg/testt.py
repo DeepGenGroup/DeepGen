@@ -50,30 +50,14 @@ def getVal() :
     return int(ret)
 
 obj = {'confs' : []}
+t0 = time.time()
 
-def buildTuningSpace(fname : str , outfname : str):
-    tsm = TuningSpaceManager('spacename',fname,outfname)
-    tsm.generateSpaceParallel()
+for i in range(1000000) :
+    # obj["confs"].append('0000000000000000000020000121000')  # file 33.38MB ,time: 0.14580845832824707 / 20.436734894380212%,  0.5676541328430176 / 79.56326510561979%, total 0.7134625911712646.
+    obj["confs"].append(int('0000000000000000000020000121000'))  # file 12.4MB  time: 0.4025759696960449 / 38.05594690234771%,  0.6552770137786865 / 61.94405309765229%, total 1.0578529834747314.
 
-def parseTuningSpace(fname : str) :
-    space = None
-    with open(fname) as f :
-        space = json.load(f)
-    te = TuningSpaceEncoder_Matmul(space['template'])
-    cfgs = []
-    times = []
-    for cfgstr in space['cfgs'] :
-        t0 = time.time()
-        cfgs.append(te.decode(cfgstr))
-        t1 = time.time()
-        times.append((t1-t0) * 1000) 
-    print(f'deal med time (ms): {np.median(times)}') 
-    return cfgs
-
-
-
-
-
-# ret = parseSpace('/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_2.jsonrrr')
-# print(len(ret))
-getSpace('/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_2.json', '/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_2.jsonrrr')
+t1 = time.time()
+with open('/home/xushilong/DeepGen/te.json','w') as f :
+    json.dump(obj,f)
+t2 = time.time()
+print(f'time: {t1-t0} / {(t1-t0)/(t2-t0)*100}%,  {t2-t1} / {(t2-t1)/(t2-t0)*100}%, total {t2-t0}.' )

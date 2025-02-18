@@ -268,7 +268,7 @@ class PerfTester :
                 with open(outputPAth,mode='w') as f:
                     obj = PerfTester.jsonfyBestPerfs(PerfTester.BestPerf)
                     json.dump(obj,f,indent=4)
-        print(f"=====[ PerfTest Finished ] =======\n   - Best : {PerfTester.BestPerf} ")
+        print(f"=====[ PerfTest Finished ] =======\n Results store in : {str(outputPAth)} ")
     
 
 class SerialCompileTask :
@@ -378,7 +378,7 @@ class ParallelTaskManager :
         self.subProcList.clear()
     
     ## 从json文件里读取 cfgs，转化为 List[KernelArgMatmul] 
-    def _get_kernelargMatmul(self, cfgstr : str, tse : TuningSpaceEncoder_Matmul) -> KernelArgMatmul : 
+    def _get_kernelargMatmul(self, cfgstr : int, tse : TuningSpaceEncoder_Matmul) -> KernelArgMatmul : 
         kw = ConfigKeywords    
         config = tse.decode(cfgstr)
         arg = KernelArgMatmul(config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K], 
@@ -422,7 +422,7 @@ class ParallelTaskManager :
             cfgstrs = []
             with open(self.tuningSpaceJson) as f :
                 obj = json.load(f)
-                tse = TuningSpaceEncoder_Matmul(obj['cfgs'])
+                tse = TuningSpaceEncoder_Matmul(obj['template'])
                 cfgstrs = obj['cfgs']
             
             sct = SerialCompileTask()
