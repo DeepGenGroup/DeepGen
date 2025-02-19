@@ -117,7 +117,10 @@ class CreateMatmulConfig:
       for lc in self.cfg_dict["LOAD_CONTINUOUS"]:
         for pshread in self.cfg_dict["SHARED_PREFETCH"]:
           for preg in self.cfg_dict["REG_PREFETCH"]:
-            if preg == 1 and 2 * tal[1][0] * tal[1][1] * self.word_width <= self.max_reg_size:  # reg 限制
+            factor = 1
+            if preg == 1 :  # reg prefetch
+              factor = 2
+            if factor * tal[1][0] * tal[1][1] * self.word_width <= self.max_reg_size:  # reg 限制
               line = (tal[0], tal[1], tal[2], tal[3], tal[4], tal[5], tal[6], (pshread, preg, lc))
               new_tals.append(line)
     return new_tals
