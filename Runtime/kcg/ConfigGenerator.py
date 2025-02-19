@@ -139,7 +139,7 @@ def BuildTuningSpace(fname : str , outfname : str, mode = 1) -> int:
         if mode == 1:
             totalLen = tsm.generatePrunedSpaceByCMC()
         else:
-            assert(False and 'Invalid building space mode specifier![0,1]')
+            assert False , 'Invalid building space mode specifier![0,1]'
         print(f'Tuning space generate OK! Stored in {outfname}')
     else:
         with open(outfname) as f:
