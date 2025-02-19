@@ -115,10 +115,13 @@ class TuningSpaceManager :
             json.dump(obj,f)
         return len(obj['cfgs'])
     
-    def generatePrunedSpaceByCMC(self, wordWidth = 4) :
+    def generatePrunedSpaceByCMC(self,thalfTag : bool,tsquareTag:bool,bhalfTag:bool,bsquareTag:bool,
+        max_thread_num:int,
+        wordWidth:int = 4
+        ) :
         param_options = self._read_params(self.m_tuningConfigFileName)
         self.m_cmc = CreateMatmulConfig(param_options,wordWidth)
-        spaceEncodedInts = self.m_cmc.createMatMulConfig(False,False,False,False)
+        spaceEncodedInts = self.m_cmc.createMatMulConfig(thalfTag,tsquareTag,bhalfTag,bsquareTag,max_thread_num)
         obj = {
             'template' : "-" , 
             'cfgs' : []
@@ -129,18 +132,22 @@ class TuningSpaceManager :
             json.dump(obj,f)
         return len(obj['cfgs'])
         
-def BuildTuningSpace(fname : str , outfname : str, mode = 1) -> int:
+def BuildTuningSpace( fname : str , outfname : str, mode = 1, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, maxThreadNum=256, wordBytes = 4) -> int:
+    import time
     totalLen = 0
     if not os.path.exists(outfname) :
+        print(f'Tuning space not exists, start generate...',flush=True)
         tsm = TuningSpaceManager('spacename',fname,outfname)
         totalLen = 0
+        t0 = time.time()
         if mode == 0:
             totalLen = tsm.generateSpaceParallel(maxProcess = 80)
         if mode == 1:
-            totalLen = tsm.generatePrunedSpaceByCMC()
+            totalLen = tsm.generatePrunedSpaceByCMC(thalfTag,tsquareTag,bhalfTag,bsquareTag, maxThreadNum, wordBytes)
         else:
-            assert False , 'Invalid building space mode specifier![0,1]'
-        print(f'Tuning space generate OK! Stored in {outfname}')
+            assert False , f'Invalid building space mode specifier {mode} . valid:[0,1]'
+        t1 = time.time()
+        print(f'Tuning space generate OK, spent {(t1-t0)/60} minutes. space size={totalLen}. Stored in {outfname}')
     else:
         with open(outfname) as f:
             o = json.load(f)

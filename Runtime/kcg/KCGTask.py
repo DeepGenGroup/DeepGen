@@ -130,12 +130,14 @@ class PerfTester :
         return c,elapsed_time
     
     @staticmethod
-    def _test_perf(kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50) -> KernelTestResult:
+    def _test_perf(kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50, devId = -1) -> KernelTestResult:
+        if devId < 0:
+            devId = PerfTester.currentDevId
         result = KernelTestResult(kpm)
         a = PerfTester._a
         b = PerfTester._b
-        c = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{PerfTester.currentDevId}')
-        d = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{PerfTester.currentDevId}')
+        c = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{devId}')
+        d = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{devId}')
         atrans = torch.transpose(a,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
         assert(a.is_contiguous())
         assert(b.is_contiguous())
@@ -259,9 +261,9 @@ class PerfTester :
                 dyTorchCounter+=1
                 if PerfTester._a is None or PerfTester._b is None :
                     PerfTester._init_AB(kpm,inConfig)
-                perf_data.append(PerfTester._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount, nTorchEpsInitTest))        
+                perf_data.append(PerfTester._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount, nTorchEpsInitTest,int(device)))        
                 if len(torchDynamicLogPath) > 0 and int(dyTorchCounter) % int(PerfTester.check_dynamic_torch_perf) == 0:
-                        PerfTester.check_torch_dynamic_perf(torchDynamicLogPath, dyTorchCounter)
+                    PerfTester.check_torch_dynamic_perf(torchDynamicLogPath, dyTorchCounter)
             valid_kernels.clear()
             PerfTester._getBestPerf(perf_data, topNum)
             if len(PerfTester.BestPerf) > 0 and outputPAth is not None :

@@ -369,6 +369,8 @@ class TuningSpaceEncoder_Matmul :
             if inputVal == val :
                 return str(index)
             index+=1
+        if kw == ConfigKeywords.KEY_GLOB_STORE_WIDTH :
+            return '0'
         assert False , f"Invalid Keyword {kw} or Invalid input val {inputVal}"
     
     def encode(self,config : Dict) -> str :

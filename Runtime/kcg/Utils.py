@@ -282,7 +282,13 @@ class DeviceInfo :
     @staticmethod
     def set_current_device(idx):
         import torch
-        torch.cuda.set_device(idx)
+        import os
+        envname = 'CUDA_VISIBLE_DEVICES'
+        if is_hip() :
+            envname = 'HIP_VISIBLE_DEVICES'
+        os.environ[envname] = str(idx)
+        print(f"==== set {envname} : {idx}  =====",flush=True)
+        # torch.cuda.set_device(idx)
 
     @staticmethod
     def get_device_capability(idx):
