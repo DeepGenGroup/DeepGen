@@ -4,8 +4,8 @@
             "name": "Linux",
             "includePath": [
                 "${workspaceFolder}/include",
-                "~/llvm-install/include",
-                "~/anaconda3/envs/triton_rocm/include/python3.8"
+                "~/projects/llvm-install/include",
+                "~/miniconda3/envs/dcupy/include/python3.10"
             ],
             "defines": ["COMPILE_AS_PYMODULE"],
             "compilerPath": "/usr/bin/g++",

@@ -22,17 +22,25 @@ MatmulConfigUtils::MatmulConfigUtils(const std::map<std::string,int>& config){
   this->WARP_REPEAT_A = config.at(KEY_WARP_SCATTER_WIDTH_A) / config.at(KEY_THREAD_SCATTER_WIDTH_A);
   this->BLOCK_REPEAT_B = TN / config.at(KEY_WARP_SCATTER_WIDTH_B);
   this->WARP_REPEAT_B = config.at(KEY_WARP_SCATTER_WIDTH_B) / config.at(KEY_THREAD_SCATTER_WIDTH_B);
-  //不连续访存所需参数
-  this->GLOB_LOAD_ROW_WIDTH_A = THREAD_NUM / BK * config.at(KEY_GLOB_LOAD_WIDTH_A);
-  this->GLOB_LOAD_ROW_WIDTH_B = THREAD_NUM / BK * config.at(KEY_GLOB_LOAD_WIDTH_B);
-  this->GLOB_STORE_ROW_WIDTH = THREAD_NUM / BM * config.at(KEY_GLOB_STORE_WIDTH);
-  // 连续访存所需参数
-  this->GLOB_LOAD_COL_THREAD_NUM_A = BM / config.at(KEY_GLOB_LOAD_WIDTH_A);
-  this->GLOB_LOAD_COL_THREAD_NUM_B = BN / config.at(KEY_GLOB_LOAD_WIDTH_B);
-  this->GLOB_LOAD_ROW_THREAD_NUM_A = THREAD_NUM / GLOB_LOAD_COL_THREAD_NUM_A;
-  this->GLOB_LOAD_ROW_THREAD_NUM_B = THREAD_NUM / GLOB_LOAD_COL_THREAD_NUM_B;
-  this->GLOB_STORE_COL_THREAD_NUM = BN / config.at(KEY_GLOB_STORE_WIDTH);
-  this->GLOB_STORE_ROW_THREAD_NUM = THREAD_NUM / GLOB_STORE_COL_THREAD_NUM;
+
+  if (config.at(KEY_LOAD_CONTINUOUS)) {  // 连续访存所需参数
+    this->GLOB_LOAD_COL_THREAD_NUM_A = BM / config.at(KEY_GLOB_LOAD_WIDTH_A);
+    this->GLOB_LOAD_COL_THREAD_NUM_B = BN / config.at(KEY_GLOB_LOAD_WIDTH_B);
+    this->GLOB_LOAD_ROW_THREAD_NUM_A = THREAD_NUM / GLOB_LOAD_COL_THREAD_NUM_A;
+    this->GLOB_LOAD_ROW_THREAD_NUM_B = THREAD_NUM / GLOB_LOAD_COL_THREAD_NUM_B;
+  } else {  //不连续访存所需参数
+    this->GLOB_LOAD_ROW_WIDTH_A = THREAD_NUM / BK * config.at(KEY_GLOB_LOAD_WIDTH_A);
+    this->GLOB_LOAD_ROW_WIDTH_B = THREAD_NUM / BK * config.at(KEY_GLOB_LOAD_WIDTH_B);
+  }
+
+  if (config.at(KEY_LOCAL_SPLIT_U) > 1) {  // 有 splitU 参数
+    if (config.at(KEY_REDUCE_C_CONTINUOUS)) {  // 连续访存所需参数
+      this->GLOB_STORE_COL_THREAD_NUM = BN / config.at(KEY_GLOB_STORE_WIDTH);
+      this->GLOB_STORE_ROW_THREAD_NUM = THREAD_NUM / GLOB_STORE_COL_THREAD_NUM;
+    } else {  //不连续访存所需参数
+      this->GLOB_STORE_ROW_WIDTH = THREAD_NUM / BM * config.at(KEY_GLOB_STORE_WIDTH);
+    }
+  }
 }
 
 bool MatmulOptimizer::applicable(mlir::ModuleOp& module) {

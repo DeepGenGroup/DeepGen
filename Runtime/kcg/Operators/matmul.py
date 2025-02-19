@@ -107,6 +107,34 @@ class KernelArgMatmul :
         self.LOAD_CONTINUOUS : int = 0
         self.REDUCE_C_CONTINUOUS : int = 0
     
+    def setArgs(self, *args):
+        self.BLOCK_SIZE_M = args[0]
+        self.BLOCK_SIZE_N = args[1]
+        self.BLOCK_SIZE_K = args[2]
+        self.THREAD_SIZE_M = args[3]
+        self.THREAD_SIZE_N = args[4]
+        self.GLOB_LOAD_WIDTH_A  = args[5]
+        self.GLOB_LOAD_WIDTH_B  = args[6]
+        self.BLOCK_LAYOUT_M = args[7]
+        self.BLOCK_LAYOUT_N = args[8]
+        self.WARP_LAYOUT_M = args[9]
+        self.WARP_LAYOUT_N = args[10]
+        self.WARP_SCATTER_WIDTH_A  = args[11]
+        self.WARP_SCATTER_WIDTH_B  = args[12]
+        self.THREAD_SCATTER_WIDTH_A  = args[13]
+        self.THREAD_SCATTER_WIDTH_B  = args[14]
+        self.SHARED_PREFETCH  = args[15]
+        self.REG_PREFETCH  = args[16]
+        self.LOAD_CONTINUOUS  = args[17]
+        self.LOCAL_SPLIT_U  = args[18]
+        self.GLOB_STORE_WIDTH   = args[19]
+        self.REDUCE_C_CONTINUOUS  = args[20]
+        self.BLOCK_MAPPING  = args[21]
+        self.UNROLL_NUM  = args[22]
+        self.WARP_SIZE = args[23]
+        self.isATranspose  = args[24]
+
+    
     def jsonfy(self) : 
         obj = {
             str(ConfigKeywords.KEY_BLOCK_SIZE_M) : (self.BLOCK_SIZE_M),
