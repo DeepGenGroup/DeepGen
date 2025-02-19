@@ -3,6 +3,7 @@ import json
 from Utils import *
 import multiprocessing
 from Operators.matmul import *
+from CreateCfgAndCompile import CreateMatmulConfig
 # 功能：根据 /home/xushilong/CodeGenDemo/TuningConfigs/GEMM_configs_2.json， 输出所有参数的组合并校验。校验通过的加入到 tuning space
 # tuning space 为一个文件夹，文件夹内含很多小json，共同组成一个很大的调优空间
 # tuning space 的命名由用户输入
@@ -29,7 +30,7 @@ class TuningSpaceManager :
         self.m_cacheFileName = cacheFileName
         self.m_tuningConfigFileName = tuningConfigFilePath
         self.m_encoder = None
-        
+        self.m_cmc = None
 
     def _read_params(self, userInputJsonPath : str) :
         with open(userInputJsonPath, 'r') as file:
@@ -109,17 +110,36 @@ class TuningSpaceManager :
                 result = json.load(f)
                 obj['cfgs'] += result['results']
             os.remove(fpath)
-        obj['template'] = self._read_params(self.m_tuningConfigFileName)
+        obj['template'] = param_options
         with open(self.m_cacheFileName,'w') as f :
             json.dump(obj,f)
         return len(obj['cfgs'])
     
-
-def BuildTuningSpace(fname : str , outfname : str) -> int:
+    def generatePrunedSpaceByCMC(self, wordWidth = 4) :
+        param_options = self._read_params(self.m_tuningConfigFileName)
+        self.m_cmc = CreateMatmulConfig(param_options,wordWidth)
+        spaceEncodedInts = self.m_cmc.createMatMulConfig(False,False,False,False)
+        obj = {
+            'template' : "-" , 
+            'cfgs' : []
+        }
+        obj['cfgs'] = spaceEncodedInts
+        obj['template'] = param_options
+        with open(self.m_cacheFileName,'w') as f :
+            json.dump(obj,f)
+        return len(obj['cfgs'])
+        
+def BuildTuningSpace(fname : str , outfname : str, mode = 1) -> int:
     totalLen = 0
     if not os.path.exists(outfname) :
         tsm = TuningSpaceManager('spacename',fname,outfname)
-        totalLen = tsm.generateSpaceParallel(maxProcess = 80)
+        totalLen = 0
+        if mode == 0:
+            totalLen = tsm.generateSpaceParallel(maxProcess = 80)
+        if mode == 1:
+            totalLen = tsm.generatePrunedSpaceByCMC()
+        else:
+            assert(False and 'Invalid building space mode specifier![0,1]')
         print(f'Tuning space generate OK! Stored in {outfname}')
     else:
         with open(outfname) as f:
@@ -127,6 +147,7 @@ def BuildTuningSpace(fname : str , outfname : str) -> int:
             totalLen = len(o['cfgs'])
             print(f'Tuning space already exists, skip generate. Read from {outfname}')
     return totalLen
+
 
 def ParseTuningSpace(fname : str) :
     space = None

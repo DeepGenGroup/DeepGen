@@ -4,6 +4,8 @@ import importlib.util
 from kcg.CompiledKernelFactory import UserInputs, EnumOperator, CompiledKernelFactory
 from kcg.Operators.matmul import KernelArgMatmul
 from kcg.Utils import PathManager
+from kcg.Operators.matmul import TuningSpaceEncoder_Matmul
+from typing import List
 
 def readConfigJson(path):
   # read json file
@@ -19,6 +21,7 @@ class CreateMatmulConfig:
     self.word_width = word_width  # 一个字 4 byte
     self.max_reg_size = 256 * self.word_width   # byte
     self.max_sm_size = 64 * 1024  # byte
+    self.encoder = TuningSpaceEncoder_Matmul(self.cfg_dict)
 
   def getThreadTile(self, halfTag=True, squareTag=True):
     # 获取线程tile的大小，halfTag为是tile只是用一般，另一半对称的不使用，squareTag且尽量方形
@@ -177,7 +180,7 @@ class CreateMatmulConfig:
             
     return new_tals
 
-  def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256):
+  def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256) -> List[int]:
     # main
     ttiles = self.getThreadTile(halfTag=thalfTag, squareTag=tsquareTag)
     btiles = self.getBlockTile(halfTag=bhalfTag, squareTag=bsquareTag)
@@ -206,7 +209,8 @@ class CreateMatmulConfig:
         self.cfg_dict["WARP_SIZE"][0], self.cfg_dict["IS_ATRANS"][0],   # warp_size, is_Atran
       )
       kam.setArgs(*config)
-      kams.append(kam)
+      kamEncodedStr = self.encoder.encode(kam.jsonfy())
+      kams.append(int(kamEncodedStr))
     return kams
     
 
@@ -244,7 +248,7 @@ def compile(compileFunc, config, device=7):
   packedKernel = CompiledKernelFactory.getKernel(inConfig, device)
   return packedKernel
 
-
+# example code 
 if "__main__" == __name__:
   path = "/home/xiebaokang/projects/mymlir/DeepGen/TuningConfigs/test.json"
   cfg_dict = readConfigJson(path)
