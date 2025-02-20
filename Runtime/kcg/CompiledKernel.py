@@ -12,7 +12,7 @@ class CompiledKernel:
                  blockDims:list,
                  device = DeviceInfo.get_current_device()):
         self.signature = kernel_signature
-        print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
+        # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
         self.m_loader = HIPLoaderST()
         self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
     

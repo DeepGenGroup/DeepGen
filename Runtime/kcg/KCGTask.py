@@ -93,7 +93,7 @@ class PerfTester :
     def _init_torch_eps(self,nTorchEpsInitTest) :
         eps_torch_list = []
         for i in range(0, nTorchEpsInitTest) :
-            d,eps_torch = self._inner_test_torch(self.matA, self.matB)
+            self.matD, eps_torch = self._inner_test_torch(self.matA, self.matB)
             eps_torch_list.append(eps_torch)
         if not self._read_torch_eps_from_file() :
             self.torch_eps = np.median(eps_torch_list)
@@ -125,7 +125,6 @@ class PerfTester :
         result = KernelTestResult(kpm)
         packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
         self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
-        self.matD = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
         atrans = torch.transpose(self.matA,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
         assert(self.matA.is_contiguous())
         assert(self.matB.is_contiguous())
@@ -148,7 +147,7 @@ class PerfTester :
             
         # 计算torch的eps
         if self.torch_eps <= 0:
-            d = self._init_torch_eps(nTorchEpsInitTest)
+            self._init_torch_eps(nTorchEpsInitTest)
         
         # benchmark
         for i in range(0,benchmarkCount) : 

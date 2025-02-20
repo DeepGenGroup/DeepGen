@@ -36,8 +36,6 @@ if __name__ == '__main__' :
         '''
         print(msg, flush=True)
         
-    DeviceInfo.set_visible_devices(gpu_devices)
-    print(f'===== Set visible device to {DeviceInfo.get_visible_devices()} =======',flush=True)
     print('===== Waiting for tuning space build ... ',flush=True)
     totalLen = BuildTuningSpace(tuning_param_file, cacheTuningSPaceFile, tuningSpaceGenMode)
     print(f'===== Tuning space build OK! ==== ',flush=True)
@@ -50,7 +48,7 @@ if __name__ == '__main__' :
             warmupcnt=1, 
             keepTopNum = 15,
             torchDynamicLogPath='', 
-            nTorchEpsInitTest=10
+            nTorchEpsInitTest=30
         )
         tm.run(maxProcess= nProcess , startFromSubjson = '', needCompile=True, needPerfTest=True)
 
