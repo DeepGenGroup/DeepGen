@@ -3,21 +3,24 @@ if __name__ == '__main__' :
     import multiprocessing 
     from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
     import sys
+    # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True)
     # Tuning 参数空间配置文件
-    tuning_param_file = '/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_1024.json'
+    tuning_param_file = '/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_2.json'
     # perf文件路径(用于记录当前最佳性能的case)
     perfPAth = '/home/xushilong/DeepGen/perfRecordlog_7'
+    # 调优空间存储文件
     cacheTuningSPaceFile = '/home/xushilong/DeepGen/TuningCombs/tuingspace_gemm_debug.json'
-    onlyGenerateCfg = True # 是否只生产 tuning space 并存入 cacheTuningSPaceFile
-    nProcess = 100 # 最大进程数
-    gpu_devices = '0,7'  # 可见设备
-    tuningSpaceGenMode = 1  # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
+    # 是否只生产 tuning space 并存入 cacheTuningSPaceFile
+    onlyGenerateCfg = False 
+    # 最大进程数
+    nProcess = 100 
+    # 可见设备
+    gpu_devices = [6,7]  
+    # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
+    tuningSpaceGenMode = 1  
     
-    '''
-        tuning_param_file 列举调优空间参数及其可选值
-        cacheTuningSPaceFile 是调优空间文件，内含所有可选参数值的组合
-    '''
+    ######################################################################################
     if len(sys.argv) > 1 :
         tuning_param_file = sys.argv[1]
         cacheTuningSPaceFile = sys.argv[2]
@@ -28,22 +31,23 @@ if __name__ == '__main__' :
         [cacheTuningSPaceFile] = {cacheTuningSPaceFile}
         [onlyGenerateCfg] = {onlyGenerateCfg}
         [tuning space gen mode] = {tuningSpaceGenMode}
+        [gpu_devices] = {gpu_devices}
         =======================================
         '''
-        print(msg)
+        print(msg, flush=True)
         
-    DeviceInfo.set_current_device(gpu_devices)
-    print(f'===== Set current device to {DeviceInfo.get_current_device()} =======',flush=True)
-    print('==== waiting for config_gen ==== ',flush=True)
+    DeviceInfo.set_visible_devices(gpu_devices)
+    print(f'===== Set visible device to {DeviceInfo.get_visible_devices()} =======',flush=True)
+    print('===== Waiting for tuning space build ... ',flush=True)
     totalLen = BuildTuningSpace(tuning_param_file, cacheTuningSPaceFile, tuningSpaceGenMode)
-    print(f'==== config_gen Done! ==== ',flush=True)
+    print(f'===== Tuning space build OK! ==== ',flush=True)
     
     if not onlyGenerateCfg :
         tm =  ParallelTaskManager(
+            gpu_devices,
             totalLen, cacheTuningSPaceFile, perfPAth, 
             benchmarkcnt=10, 
             warmupcnt=1, 
-            devId=DeviceInfo.get_current_device(), 
             keepTopNum = 15,
             torchDynamicLogPath='', 
             nTorchEpsInitTest=10

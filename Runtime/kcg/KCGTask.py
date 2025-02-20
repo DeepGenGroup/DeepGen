@@ -54,17 +54,20 @@ class KernelTestResult :
         self.kpm.assignWithJson(jsonObj['config'])
 
 class PerfTester :
-    _a = None
-    _b = None
-    torch_eps = 0  # torch的eps，用于计算 speedup
-    D = None
-    BestPerf = [] #: List[KernelTestResult]
-    torchDynamicEps = []  # torch的动态eps，用于描述torch的性能变化（卡的稳定性）
-    check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
-    _torchEpsStoreFile = PathManager().default_cache_dir() + '/benchmarkTorchEps.log'
-    currentDevId = 0
-    @staticmethod
-    def _compare_with_error(tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
+    def __init__(self,devId:int):
+        self.matA = None
+        self.matB = None
+        self.matC = None
+        self.matD = None
+        DeviceInfo.set_visible_devices([devId])
+        self.torch_eps = 0  # torch的eps，用于计算 speedup
+        self.BestPerf = [] #: List[KernelTestResult]
+        self.torchDynamicEps = []  # torch的动态eps，用于描述torch的性能变化（卡的稳定性）
+        self.check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
+        self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/benchmarkTorchEps_{devId}.log'
+        self._devId = devId
+    
+    def _compare_with_error(self, tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
         abs_diff = torch.abs(tensor1 - tensor2)
         rel_diff = abs_diff / (torch.abs(tensor1) + 1e-5)  # 避免除以零的情况
         # 比较绝对误差和相对误差
@@ -73,55 +76,43 @@ class PerfTester :
         max_error = torch.max(torch.abs(tensor1 - tensor2))
         return diff_elements, max_error
     
-    @staticmethod
-    def setDevice(devId : int) :
-        if PerfTester.currentDevId != devId :
-            PerfTester.currentDevId = devId
-            # 切换设备后，需要重新初始化 a,b 到指定设备上
-            PerfTester._a = None
-            PerfTester._b = None
+    def _init_AB(self, kpm:KernelArgMatmul, inConfig:UserInputs) :
+        self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:0')
+        self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:0')
     
-    @staticmethod
-    def _init_AB(kpm:KernelArgMatmul, inConfig : UserInputs) :
-        PerfTester._a = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{PerfTester.currentDevId}')
-        PerfTester._b = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{PerfTester.currentDevId}')
-    
-    @staticmethod
-    def _inner_test_torch() :
+    def _inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
-        d = torch.matmul(PerfTester._a, PerfTester._b)
+        self.matD = torch.matmul(matrixA, matrixB)
         ev_end.record()
         torch.cuda.synchronize()
         eps = ev_start.elapsed_time(ev_end)
-        return (d,eps)
+        return (self.matD, eps)
     
-    @staticmethod
-    def _init_torch_eps(nTorchEpsInitTest) :
+    def _init_torch_eps(self,nTorchEpsInitTest) :
         eps_torch_list = []
         for i in range(0, nTorchEpsInitTest) :
-            d,eps_torch = PerfTester._inner_test_torch()
+            d,eps_torch = self._inner_test_torch(self.matA, self.matB)
             eps_torch_list.append(eps_torch)
-        if not PerfTester._read_torch_eps_from_file() :
-            PerfTester.torch_eps = np.median(eps_torch_list)
-        PerfTester.D = d
-        with open(PerfTester._torchEpsStoreFile,'w') as f :
-            f.write(str(PerfTester.torch_eps))
+        if not self._read_torch_eps_from_file() :
+            self.torch_eps = np.median(eps_torch_list)
+        with open(self._torchEpsStoreFile,'w') as f :
+            f.write(str(self.torch_eps))
     
-    @staticmethod
-    def _read_torch_eps_from_file() :
+    def _read_torch_eps_from_file(self) :
         try :
-            with open(PerfTester._torchEpsStoreFile,'r+') as f:
-                PerfTester.torch_eps = float(f.readline()) 
+            with open(self._torchEpsStoreFile,'r+') as f:
+                self.torch_eps = float(f.readline()) 
         except Exception as e:
             return False
         except IOError as e:
             return False
         return True
         
-    @staticmethod
-    def _inner_test_kcg(a : torch.tensor, b : torch.tensor, c : torch.tensor, packedKernel : CompiledKernel,start_event : torch.cuda.Event, end_event : torch.cuda.Event) :
+    def _inner_test_kcg(self, a : torch.tensor, b : torch.tensor, c : torch.tensor, 
+                        packedKernel : CompiledKernel,
+                        start_event : torch.cuda.Event, end_event : torch.cuda.Event) :
         start_event.record()
         packedKernel.run(a,b,c)
         end_event.record()
@@ -129,148 +120,131 @@ class PerfTester :
         elapsed_time = start_event.elapsed_time(end_event)
         return c,elapsed_time
     
-    @staticmethod
-    def _test_perf(kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50, devId = -1) -> KernelTestResult:
-        if devId < 0:
-            devId = PerfTester.currentDevId
+    def _test_perf(self, kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, 
+                   benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50) -> KernelTestResult:
         result = KernelTestResult(kpm)
-        a = PerfTester._a
-        b = PerfTester._b
-        c = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{devId}')
-        d = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{devId}')
-        atrans = torch.transpose(a,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
-        assert(a.is_contiguous())
-        assert(b.is_contiguous())
+        packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
+        self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
+        self.matD = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
+        atrans = torch.transpose(self.matA,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
+        assert(self.matA.is_contiguous())
+        assert(self.matB.is_contiguous())
         assert(atrans.is_contiguous())
-        # print(inConfig.kernelParam.dtypeTorch('A'))
-        # print(inConfig.kernelParam.dtypeTorch('B'))
-        # print(inConfig.kernelParam.dtypeTorch('C'))
-        M, K = a.shape
-        K, N = b.shape
-        print(f"is_contiguous: a {a.is_contiguous()}, b {b.is_contiguous()}, aT {atrans.is_contiguous()}")
+        M, K = self.matA.shape
+        K, N = self.matB.shape
         res = []
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
-        # start_event_torch = torch.cuda.Event(enable_timing=True)
-        # end_event_torch = torch.cuda.Event(enable_timing=True)
-        a_ = None
+        aUse = None
         
         if kpm.isATranspose :
-            print('transpose test')
-            a_ = atrans
+            aUse = atrans
         else:
-            print('normal test')
-            a_ = a
-        for i in range(0,warmupCount) : # warmup
-            torch.matmul(a,b)
-            packedKernel.run(a_,b,c)
+            aUse = self.matA
+        # warmup
+        for i in range(0,warmupCount) : 
+            torch.matmul(aUse, self.matB)
+            packedKernel.run(aUse, self.matB, self.matC)
             
         # 计算torch的eps
-        if PerfTester.torch_eps <= 0:
-            PerfTester._init_torch_eps(nTorchEpsInitTest)
+        if self.torch_eps <= 0:
+            d = self._init_torch_eps(nTorchEpsInitTest)
         
         # benchmark
         for i in range(0,benchmarkCount) : 
-            c,eps = PerfTester._inner_test_kcg(a_,b,c,packedKernel,start_event,end_event)
+            self.matC,eps = self._inner_test_kcg(aUse, self.matB, self.matC, packedKernel, start_event, end_event)
             res.append(eps)
-            # time.sleep(0.01)
-        print("c=",c)
+        print("c=",self.matC)
 
-        if torch.allclose(c,PerfTester.D, atol=1e-1, rtol=1e-1):
+        if torch.allclose(self.matC, self.matD, atol=1e-1, rtol=1e-1):
             print('test correct!')
             result.isCorrect = True
-            result.torch_elapseTimeMs = PerfTester.torch_eps
+            result.torch_elapseTimeMs = self.torch_eps
             result.kcg_elapseTimeMs = np.median(res)
-            print(f"DeepGen median time: {result.kcg_elapseTimeMs} ms")
-            print(f"rocblas median time: {result.torch_elapseTimeMs} ms")
+            print(f"median time(ms) : Deepgen = {result.kcg_elapseTimeMs} , PyTorch= {result.torch_elapseTimeMs}")
             result.acc = result.torch_elapseTimeMs/result.kcg_elapseTimeMs
             print(f"speed up: {result.acc}")
         else:
             result.isCorrect = False
-            diff,max_error= PerfTester._compare_with_error(d,c)
+            diff,max_error= self._compare_with_error(self.matD, self.matC)
             result.maxError = max_error
             result.diffRate = diff/(M*N)
-            print(f'test fail! maxerror={max_error}, diff=[{diff} / {M*N}], diffrate={result.diffRate}')
-            # hipprof --pmc python ./test.py 
+            print(f'test fail! maxerror={max_error}, diffrate={result.diffRate}')
         return result
-
     
-    @staticmethod
-    def _getBestPerf(perfData : List[KernelTestResult], topNum = 1) -> List[KernelTestResult]:
-        for d in perfData:
-            if d.isCorrect :
-                PerfTester.BestPerf.append(d)
-                PerfTester.BestPerf.sort(key=lambda x: x.acc, reverse=True)
-                if len(PerfTester.BestPerf) > topNum :
-                    PerfTester.BestPerf = PerfTester.BestPerf[0:topNum]
-        return PerfTester.BestPerf
+    def _getBestPerf(self, perfData : List[KernelTestResult], topNum = 1) -> List[KernelTestResult]:
+        for data in perfData:
+            if data.isCorrect :
+                self.BestPerf.append(data)
+                self.BestPerf.sort(key=lambda x: x.acc, reverse=True)
+                if len(self.BestPerf) > topNum :
+                    self.BestPerf = self.BestPerf[0:topNum]
+        return self.BestPerf
       
-    @staticmethod
-    def jsonfyBestPerfs(best_perfs: List[KernelTestResult]) -> Dict :
+    def jsonfyBestPerfs(self) -> Dict :
         obj = {"results" : []}
-        for r in best_perfs :
+        for r in self.BestPerf :
             obj["results"].append(r.jsonfy())
         return obj
     
-    @staticmethod
-    def check_torch_dynamic_perf(torchPerfLogName,index) :
+    def check_torch_dynamic_perf(self,torchPerfLogName,index) :
         t = []
         for i in range(0,10) :
-            res,eps = PerfTester._inner_test_torch()
+            res,eps = self._inner_test_torch()
             t.append(eps)
         new_torchEps = np.median(t)
-        PerfTester.torchDynamicEps.append(new_torchEps)
-        with open(torchPerfLogName,mode = 'a+') as ff :
+        self.torchDynamicEps.append(new_torchEps)
+        with open(torchPerfLogName, mode = 'a+') as ff :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    @staticmethod
-    def runPerfTests(lock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, device = '0', topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50) : 
+    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
         while True:
-            lock.acquire()
-            pklFiles = glob.glob(PathManager().pikle_dir() + '/*.pkl')
-            lock.release()
+            pathLock.acquire()
+            pklFiles = glob.glob(PathManager.pikle_dir() + f'/{self._devId}/*.pkl')
             if len(pklFiles) <= 0 :
                 if endsignal.value > 0:
+                    # end proc
+                    pathLock.release()
                     break
                 else:
-                    time.sleep(5)
-            # 输出所有找到的文件路径
-            for pkl in pklFiles:
-                arr = deserialize_from_file(pkl)
-                valid_kernels += arr
-            total_kernel_count += len(valid_kernels)
-            print(f"====== Glob .pkl files : {len(pklFiles)}, Valid Kernels : {len(valid_kernels)} ========")
-            for pkl in pklFiles:
+                    pathLock.release()
+                    time.sleep(2)
+            else : 
                 try:
-                    os.remove(pkl)
-                    print(f"deleted: {pkl}")
+                    for pkl in pklFiles:
+                        arr = deserialize_from_file(pkl)
+                        valid_kernels += arr
+                    total_kernel_count += len(valid_kernels)
+                    print(f"====== Glob .pkl files : {len(pklFiles)}, Valid Kernels : {len(valid_kernels)} ========")
+                    for pkl in pklFiles:
+                        os.remove(pkl)
+                        print(f"deleted: {pkl}")
                 except Exception as e:
-                    print(f"exception occur when delete {pkl}: {e}")
+                    print(f"exception occur when deal {pkl}: {e}")
+                pathLock.release()
 
-            # for t in valid_kernels :
-            #     print(f"{t[1].hsacoPath},  {t[1].kernelFuncName}")
             perf_data = []
-            # serialize test perf
-            PerfTester.setDevice(int(device))
+            
             for (kpm,inConfig,packedKernel) in valid_kernels :
                 dyTorchCounter+=1
-                if PerfTester._a is None or PerfTester._b is None :
-                    PerfTester._init_AB(kpm,inConfig)
-                perf_data.append(PerfTester._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount, nTorchEpsInitTest,int(device)))        
-                if len(torchDynamicLogPath) > 0 and int(dyTorchCounter) % int(PerfTester.check_dynamic_torch_perf) == 0:
-                    PerfTester.check_torch_dynamic_perf(torchDynamicLogPath, dyTorchCounter)
+                if self.matA is None or self.matB is None :
+                    self._init_AB(kpm,inConfig)
+                perf_data.append(self._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount, nTorchEpsInitTest))        
+                if len(torchDynamicLogPath) > 0 and int(dyTorchCounter) % int(self.check_dynamic_torch_perf) == 0:
+                    self.check_torch_dynamic_perf(torchDynamicLogPath, dyTorchCounter)
             valid_kernels.clear()
-            PerfTester._getBestPerf(perf_data, topNum)
-            if len(PerfTester.BestPerf) > 0 and outputPAth is not None :
+            self._getBestPerf(perf_data, topNum)
+            if len(self.BestPerf) > 0 and outputPAth is not None :
                 with open(outputPAth,mode='w') as f:
-                    obj = PerfTester.jsonfyBestPerfs(PerfTester.BestPerf)
+                    obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
-        print(f"=====[ PerfTest Finished ] =======\n Results store in : {str(outputPAth)} ")
+
+        print(f"=====[ PerfTest on Device {self._devId} Finished ] =======\n Results store in : {str(outputPAth)} ")
     
 
 class SerialCompileTask :
@@ -280,18 +254,9 @@ class SerialCompileTask :
         # Print("===== KCGCompiler ctor ========")
         kernelCompiler = KCGCompiler()
         # Print("===== call compileKernel(kpm)[0] ========")
-        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0]
-        # Print("===== test info ========")
-        # Print("hsacoPath = ", hsacoPath)
-        # Print("kernelName = ", kernelName)
-        # Print("gridDimX = ", gridDimX)
-        # Print("gridDimY = ", gridDimY)
-        # Print("gridDimZ = ", gridDimZ)
-        # Print("blockDimX = ", blockDimX)
-        # Print("blockDimY = ", blockDimY)
-        # Print("blockDimZ = ", blockDimZ)    
-        Print("========= hsacoPath = ",hsacoPath)
-        Print("========= kernelName = ",kernelName)
+        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0] 
+        # Print("========= hsacoPath = ",hsacoPath)
+        # Print("========= kernelName = ",kernelName)
         inConfig = UserInputs(hsacoPath,kernelName,kpm)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
@@ -306,13 +271,13 @@ class SerialCompileTask :
     
     def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0) -> List:
         # 读取 JSON 文件
-        output_path = PathManager.pikle_dir() + f'/valid_kernels_{namePrefix}_{lbs}_{ubs}.pkl'
+        output_path = f"{PathManager.pikle_dir()}/{deviceId}/valid_kernels_{namePrefix}_{lbs}_{ubs}.pkl"
         valid_kernels = [] 
         if ubs < 0:
             lbs = 0; ubs =1
         for i in range(lbs,ubs) :
             kernelCfg = kernelArg
-            r = self._task_compile_kernel(kernelCfg,i,deviceId)   #维持执行的进程总数为processes，当一个进程执行完毕后会添加新的进程进去    
+            r = self._task_compile_kernel(kernelCfg,i, deviceId)  
             valid_kernels.append(r)
         lock.acquire()
         serialize_to_file(output_path,valid_kernels)
@@ -321,63 +286,104 @@ class SerialCompileTask :
 
 
 class ParallelTaskManager :
-    def __init__(self, total_cfg_count , tuningSpaceJson : str , perf_out_path : str, benchmarkcnt = 5, warmupcnt = 1, devId=0, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50):
-        ctx = multiprocessing.get_context('spawn')
-        self.Process = ctx.Process
-        self.lock = ctx.Lock()
-        self.subProcList = []
+    ctx = multiprocessing.get_context('spawn')
+    Process = ctx.Process
+    def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50):
+        self.locks = [] # ParallelTaskManager.ctx.Lock()
+        self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
         self.CFG_COUNT = total_cfg_count
         self.task_groups = []
         self.m_totalKernels = []
-        self.endSignal = ctx.Manager().Value(ctypes.c_int,0)
-        self.perfTestFinalId = ctx.Manager().Value(ctypes.c_int,0)
+        self.endSignal = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)
+        self.perfTestFinalId = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)
         self.perf_out_path = perf_out_path
-        self.perfProcMonitor = self.Process(target=self._perfMonitorFunc,args=())  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
+        self.perfProcMonitors = []
         self.nBenchMark = benchmarkcnt
         self.nWarmup = warmupcnt
-        self.devId = devId
+        self.devIds = devids
         self.topNum = keepTopNum
         self.torchDynamicLogPath = torchDynamicLogPath
         self.nTorchEpsInitTest = nTorchEpsInitTest
-        
-    def _perfMonitorFunc(self) :
-        id = 0
-        outfilename = f"{self.perf_out_path}_{str(id)}.json"
-        self.perfProc = self.Process(target=PerfTester.runPerfTests, 
-                                     args=(self.lock,self.endSignal,outfilename,self.nBenchMark, self.nWarmup, str(self.devId), self.topNum,
-                                           self.torchDynamicLogPath , self.nTorchEpsInitTest))
-        self.perfProc.start()
-        while True:
-            self.perfProc.join()
-            if self.endSignal.value == 1 :  # 进程收到结束信号正常结束
-                return
-            else:
-                print("======= [W] PerfTester Broken. Restart it ==========")
-                # id +=1
-                # outfilename = f"{self.perf_out_path}_{str(id)}.json"
-                
+         
+    @staticmethod
+    def _innerCreateTesterProc(dev,lock,
+        endSignal,
+        outfilename,
+        nBenchMark,
+        nWarmup,
+        topNum,
+        torchDynamicLogPath,
+        nTorchEpsInitTest) :
+        tester = PerfTester(dev)
+        parsedBests = []
+        try:
+            if os.path.exists(outfilename):
                 with open(outfilename) as f :
                     obj = json.load(f)
                     for cfg in obj['results'] :
                         kpm = KernelArgMatmul(0,0,0,1,1,1)
                         ktr = KernelTestResult(kpm)
                         ktr.parseFromJson(cfg)
-                        PerfTester.BestPerf.append(ktr)
-                self.perfProc = self.Process(target=PerfTester.runPerfTests, 
-                                             args=(self.lock,self.endSignal,outfilename,self.nBenchMark, self.nWarmup, str(self.devId), self.topNum, 
-                                                   self.torchDynamicLogPath, self.nTorchEpsInitTest))
-                self.perfProc.start()
-    
-    def _createSubProc(self,func,*params) :
-        p = self.Process(target = func, args = (*params,))
+                        parsedBests.append(ktr)
+        except Exception :
+            pass
+        if len(parsedBests) > 0 :
+            tester.BestPerf = parsedBests
+        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest)
+        
+    @staticmethod
+    def _perfMonitorFunc(devId, 
+        lock,
+        endSignal,
+        perf_out_path,
+        nBenchMark,
+        nWarmup,
+        topNum,
+        torchDynamicLogPath,
+        nTorchEpsInitTest) :
+        outfilename = f"{perf_out_path}_card{devId}.json"
+        p = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+            args=(devId, lock, endSignal,outfilename,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
         p.start()
-        self.subProcList.append(p)
+        while True:
+            p.join()
+            if endSignal.value == 1 :  # 进程收到结束信号正常结束
+                print(f"======= PerfTester {devId} Stopped OK ==========")
+                return
+            else:
+                print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
+                p = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, args=(devId, lock, endSignal,outfilename,nBenchMark,
+                                              nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
+                p.start()
     
-    def _waitAll(self) :
-        for s in self.subProcList :
+    def _initPerfMonitors(self) :
+        for devid in self.devIds :
+            lock = ParallelTaskManager.ctx.Lock()
+            self.locks.append(lock)
+            monitor = ParallelTaskManager.Process(target=ParallelTaskManager._perfMonitorFunc,
+                args=(devid,
+                    lock,
+                    self.endSignal,
+                    self.perf_out_path,
+                    self.nBenchMark,
+                    self.nWarmup,
+                    self.topNum,
+                    self.torchDynamicLogPath,
+                    self.nTorchEpsInitTest)
+                )  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
+            monitor.start()
+            self.perfProcMonitors.append(monitor)
+    
+    def _createCompileTask(self,func,*params) :
+        p = ParallelTaskManager.Process(target = func, args = (*params,))
+        p.start()
+        self.compileProcs.append(p)
+    
+    def _waitAllCompilers(self) :
+        for s in self.compileProcs :
             s.join()
-        self.subProcList.clear()
+        self.compileProcs.clear()
     
     ## 从json文件里读取 cfgs，转化为 List[KernelArgMatmul] 
     def _get_kernelargMatmul(self, cfgstr : int, tse : TuningSpaceEncoder_Matmul) -> KernelArgMatmul : 
@@ -418,7 +424,7 @@ class ParallelTaskManager :
         procCount = 0
         dealed = 0
         if needPerfTest:
-            self.perfProcMonitor.start()
+            self._initPerfMonitors()
         if needCompile :
             tse = None
             cfgstrs = []
@@ -427,18 +433,27 @@ class ParallelTaskManager :
                 tse = TuningSpaceEncoder_Matmul(obj['template'])
                 cfgstrs = obj['cfgs']
             
+            # make sub pkl dirs for each visible card
+            pickleDirs = []
+            for devid in self.devIds :
+                path = f"{PathManager.pikle_dir()}/{devid}"
+                os.makedirs(path,exist_ok=True)
+                pickleDirs.append(path)
             sct = SerialCompileTask()
             for i in range(len(cfgstrs)) :
-                print(f"=========== Dealing : cfgstrs[{i}] ================")
+                selectDevID = dealed % len(self.devIds)
+                # print(f"=========== Dealing : cfgstrs[{i}] ================")
                 config = self._get_kernelargMatmul(cfgstrs[i],tse)
-                self._createSubProc(sct.compile_kernels,self.lock,config,i,i+1,'nameprefix',self.devId)
+                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID])
                 procCount += 1; dealed += 1
                 if procCount >= maxProcess or i == self.CFG_COUNT-1:
                     print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
-                    self._waitAll()
+                    self._waitAllCompilers()
                     procCount = 0
             print(f"========= All Compile tasks Finished [{self.CFG_COUNT}] ! ============")
         self.endSignal.value = 1
         
+        # 处理完毕，发出结束信号，等待全部进程结束
         if needPerfTest :
-            self.perfProcMonitor.join()
+            for p in self.perfProcMonitors :
+                p.join()

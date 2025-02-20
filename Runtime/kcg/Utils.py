@@ -59,6 +59,8 @@ def delete_files_in_directory(directory):
             # 如果是文件，删除它
             if os.path.isfile(file_path):
                 os.remove(file_path)
+            else:
+                shutil.rmtree(file_path)
         print(f"Deleted files in {directory}")
     else:
         print(f"The directory {directory} does not exist.")
@@ -282,14 +284,30 @@ class DeviceInfo :
     @staticmethod
     def set_current_device(idx):
         import torch
+        torch.cuda.set_device(idx)
+
+    @staticmethod
+    def set_visible_devices(devids : List):
+        import torch
         import os
         envname = 'CUDA_VISIBLE_DEVICES'
         if is_hip() :
             envname = 'HIP_VISIBLE_DEVICES'
-        os.environ[envname] = str(idx)
-        print(f"==== set {envname} : {idx}  =====",flush=True)
-        # torch.cuda.set_device(idx)
+        expr = ''
+        for id in devids:
+            expr += str(id) + ','
+        os.environ[envname] = expr[0:-1]
+        print(f"==== set {envname}={os.environ[envname]}  =====",flush=True)
 
+    
+    @staticmethod
+    def get_visible_devices():
+        import os
+        envname = 'CUDA_VISIBLE_DEVICES'
+        if is_hip() :
+            envname = 'HIP_VISIBLE_DEVICES'
+        return os.environ[envname] 
+    
     @staticmethod
     def get_device_capability(idx):
         import torch

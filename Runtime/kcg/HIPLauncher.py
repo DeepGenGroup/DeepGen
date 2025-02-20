@@ -281,7 +281,6 @@ class HIPLauncher :
                 self.__loadKernel()
             # compile launcher.so
             self.m_launcherLibPath = make_stub(self.m_kernelLib)
-		
         if self.m_cWrapper is None :
 			# import launcher.so as module
             spec = importlib.util.spec_from_file_location("__kcg_launcher", self.m_launcherLibPath)
@@ -290,9 +289,10 @@ class HIPLauncher :
             self.m_cWrapper = getattr(mod, "launch")
         return self.m_cWrapper
 
-    def launchKernel(self,devId:int,*args):
+    def launchKernel(self,*args):
         wrapper = self._getWrapper()
-        stream = DeviceInfo.get_cuda_stream(devId)
+        devid = self.m_kernelLib.m_device
+        stream = DeviceInfo.get_cuda_stream(devid)
         if wrapper is None:
             raise Exception("kcg: _getWrapper failed")
         gridDims = self.m_kernelLib.m_gridDims

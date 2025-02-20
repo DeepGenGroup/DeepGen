@@ -12,14 +12,14 @@ class CompiledKernel:
                  blockDims:list,
                  device = DeviceInfo.get_current_device()):
         self.signature = kernel_signature
-        self.device = device
         print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
         self.m_loader = HIPLoaderST()
         self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-        
-    def run(self,*args,**kwargs):
+    
+    def setDevice(self,devId : int) :
+        self.m_launcher.m_kernelLib.m_device = devId
+    
+    def run(self,*args):
         if self.m_launcher is not None:
-            # print("[D] run")
-            self.m_launcher.launchKernel(int(self.device), *args)
-        
+            self.m_launcher.launchKernel(*args)
     
