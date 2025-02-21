@@ -6,6 +6,7 @@
 #include "Conversion/LoweringPasses.h"
 #include "Target/LLVMIRTranslation.h"
 #include "Target/HSACOTranslation.h"
+#include "Target/PTXTranslation.h"
 
 namespace KernelCodeGen
 {

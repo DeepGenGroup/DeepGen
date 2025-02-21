@@ -420,4 +420,21 @@ mlir::affine::AffineForOp createRearCalculateForOp(mlir::OpBuilder builder, mlir
   return rearLoop;
 }
 
+int32_t getNoBodyOpCount(mlir::Operation* op) {
+  // 获取没有body的op数量
+  int32_t count = 0;
+  for (auto &op : op->getRegion(0).front().getOperations()) {
+    if (auto forOp_ = mlir::dyn_cast<mlir::affine::AffineForOp>(op)) {
+      auto result = getLoopBoundAndStep(forOp_);
+      int32_t loopNum = (std::get<1>(result) - std::get<0>(result)) / std::get<2>(result);
+      count += getNoBodyOpCount(forOp_) * loopNum;
+    } else if (auto ifOp = mlir::dyn_cast<mlir::affine::AffineIfOp>(op)) {
+      count += getNoBodyOpCount(ifOp);
+    } else if (!mlir::dyn_cast<mlir::affine::AffineYieldOp>(op)) {
+      count++;
+    }
+  }
+  return count;
+}
+
 }

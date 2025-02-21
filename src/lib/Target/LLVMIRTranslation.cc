@@ -173,8 +173,7 @@ static void amendLLVMFunc(llvm::Function *func, const NVVMMetadata &metadata,
     } break;
     case Target::ROCm: {
       func->setCallingConv(llvm::CallingConv::AMDGPU_KERNEL);
-      func->addFnAttr("amdgpu-flat-work-group-size",
-                      "1, " + std::to_string(threadsPerCTA));
+      func->addFnAttr("amdgpu-flat-work-group-size", "1, " + std::to_string(threadsPerCTA));
       if (wavesPerEU > 0)
         func->addFnAttr("amdgpu-waves-per-eu", std::to_string(wavesPerEU));
       func->addFnAttr("denormal-fp-math-f32", "preserve-sign");
@@ -205,7 +204,7 @@ static void extractNVVMMetadata(mlir::ModuleOp module, llvm::DenseMap<llvm::Stri
     }
 
     // kernel
-    if (op->hasAttr(AttrKernelFunc)) {
+    if (op->hasAttr(AttrCUDAKernelFunc) || op->hasAttr(AttrROCmKernelFunc)) {
       meta.isKernel = true;
       hasMetadata = true;
     }
@@ -262,9 +261,9 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
     return std::filesystem::path(fileinfo.dli_fname);
     }();
         // static const auto runtime_path =
-        //     this_library_path.parent_path().parent_path() / "third_party" / "cuda" /
+        //     this_library_path.parent_path() / "third_party" / "cuda" /
         //     "lib" / "libdevice.10.bc";
-    const std::string runtime_path = "/home/xushilong/CodeGenDemo/third_party/cuda/lib/libdevice.10.bc" ;
+    const std::string runtime_path = "~/DeepGen/third_party/cuda/lib/libdevice.10.bc" ;
     if (fs::exists(runtime_path)) {
       // externLibs.try_emplace(libdevice, runtime_path.string());
       externLibs.try_emplace(libdevice, runtime_path);
@@ -278,10 +277,9 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
       // static const auto compiletime_path = this_file_path.parent_path()
       //                                          .parent_path()
       //                                          .parent_path()
-      //                                          .parent_path() /
-      //                                      "python" / "triton" / "third_party" /
+      //                                      / "third_party" /
       //                                      "cuda" / "lib" / "libdevice.10.bc";
-      static std::string compiletime_path = "/home/xushilong/CodeGenDemo/third_party/cuda/lib/libdevice.10.bc";
+      static std::string compiletime_path = "~/DeepGen/third_party/cuda/lib/libdevice.10.bc";
       if (!fs::exists(compiletime_path)) {
         std::string error_msg = "Can't find libdevice at neither " + runtime_path + " nor " + compiletime_path;
         llvm::report_fatal_error(error_msg.c_str());
@@ -377,29 +375,6 @@ std::string translateMLIRToLLVMIR(mlir::ModuleOp module, Target target, const in
   llvmModule->print(os, nullptr);
   os.flush();
   return str;
-}
-
-// 弃用
-std::string tranlateAndSaveLLVMIR(mlir::ModuleOp module) {
-  std::string llvmPath{"/home/pangyunfei/xie/CodeGenDemo/build/llvmir.ll"};
-  std::string mlirPtah{"/home/pangyunfei/xie/CodeGenDemo/build/llvm-dialect.mlir"};
-  // 存储mlir
-  std::error_code ec;
-  llvm::raw_fd_ostream outputFile(mlirPtah, ec);
-  if (ec) {
-    llvm::errs() << "Error: " << ec.message() << "\n";
-    return "";
-  }
-  module->print(outputFile);
-  outputFile.close();
-  // 运行指令
-  std::stringstream command;
-  command << "~/DeepGen/bin/mlir-translate ";
-  command << mlirPtah << " -mlir-to-llvmir > " << llvmPath;
-
-  int result = system(command.str().c_str());
-
-  return llvmPath;
 }
 
 }

@@ -18,11 +18,11 @@ mlir::Value bufferizeLoopCarryVar(mlir::affine::AffineForOp &carryVarLoop, std::
 void reorder(const std::vector<mlir::affine::AffineForOp> &forOp);
 
 // mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp> &forOp);
-mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps);
+mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps, std::string GPUIndexDesc="");
 
 void loopToParallelZ(mlir::affine::AffineForOp loop, mlir::affine::AffineParallelOp &parallelOp);
 
-llvm::SmallVector<mlir::Value> parallelToOneDim(mlir::affine::AffineParallelOp &parallelOp, int* outUpperBound = nullptr);
+llvm::SmallVector<mlir::Value> parallelToOneDim(mlir::affine::AffineParallelOp &parallelOp, int* outUpperBound=nullptr);
 
 template <typename ParentOpType>
 mlir::Value alloc_buffer(ParentOpType father, MemorySpace ms, const std::vector<int64_t> shape_, mlir::Type dtype, std::string bufDesc) {

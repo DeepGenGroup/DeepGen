@@ -1,5 +1,4 @@
 #include "KernelCodeGen.h"
-#include "Target/HSACOTranslation.h"
 #include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
@@ -39,20 +38,21 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp &mod, std::map<std::string, in
 }
 
 
-bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext& context, const std::string& libsPath, const std::string& gfx_arch) {
+bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target, const std::string& arch) {
 #define FLAG 1
   mlir::PassManager pm(&context);
   // pm.addPass(createAddDebugLogPass());
-  pm.addPass(createAddExternalLibPass(libsPath, gfx_arch));      // 给mlir module添加lib属性
-  // pm.addPass(createExtractAffineParallelPass());  // affine.parallel 根据内外层，将loopIvs 替换为bid、tid
-  pm.addPass(createParallelToROCDLPass());                         // 自定义 affine parallelOp -> gpu block/threadidx -> rocdl.workitem/workgroup.id.x/y
+  pm.addPass(createAddExternalLibPass(target, arch));      // 给mlir module添加lib属性
+
+  // pm.addPass(createExtractAffineParallelPass());         // affine.parallel 根据内外层，将loopIvs 替换为bid、tid
+  pm.addPass(createParallelToGPUPass());                   // affine paralleOp to GPU indexOp
 #if FLAG
   pm.addPass(createCombineMemrefPass());
   // pm.addPass(createFlattenMemrefPass());
 #endif
   pm.addPass(ReplaceAllocToGetglobalPass());
 #if FLAG
-  pm.addPass(createAffineFullUnrollPass());                      // 对打了unroll属性的affine loop进行循环展开，展开次数和性能有很大关系
+  pm.addPass(createAffineUnrollPass());                      // 对打了unroll属性的affine loop进行循环展开，展开次数和性能有很大关系
   // pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createSimplifyAffineStructuresPass());   // if的简化
 #endif
   pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createAffineLoopInvariantCodeMotionPass());   // 循环不变量移动
@@ -81,7 +81,7 @@ bool firstLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
 }
 
 
-bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
+bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target) {
   mlir::PassManager pm(&context);
   // pm.addPass(createROCDLIdOpModifyPass());                      // 自定义 rocdl idop加attr (弃用)
   pm.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
@@ -113,6 +113,9 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
   funcOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // func loewring 到 llvm 时，其index转到llvm上是使用i32类型
   funcOptions.useBarePtrCallConv = true;                                    // 使用裸指针，而不使用结构体指针表示memref类型
   pm.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));               // func -> llvm
+
+  pm.addPass(createLLVMFuncOpAddGPUAttrPass(target));                       // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
+  pm.addPass(createGPUToROCDLOrNVVMPass(target, INDEX_BIT_WIDTH));          // GPU indexOp to rocdl/nvvm indexOp
   // pm.addPass(createEraseRedundantUnCCastPass());                         // 手动写的去除多余UnrealizedCast
   // pm.addPass(mlir::createReconcileUnrealizedCastsPass());                // 内置去除多余cast的pass
   pm.addPass(mlir::createCanonicalizerPass());
@@ -124,10 +127,10 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
   // pm.addPass(createConvertGPUPrintToLLVMPass());
   
   // pm.addPass(mlir::createGpuToLLVMConversionPass());
-
   if (mlir::failed(pm.run(mod))){
     return false;
-  }  
+  }
+
   return true;  
 }
 
@@ -135,14 +138,14 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
 bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod) {
   // mod.dump();
   LOG_DEBUG(" === start mlir =====\n",mod) ;
-  
-  transforms(mod, context, HIP_BITCODE_PATH , arch);
+
+  transforms(mod, context, target, arch);
   LOG_DEBUG(" === after transforms =====\n",mod) ;
 
   firstLowering(mod, context);
   LOG_DEBUG(" === after firstLowering =====\n",mod) ;
 
-  secondLowering(mod, context);
+  secondLowering(mod, context, target);
   LOG_DEBUG(" === after secondLowering =====\n",mod) ;
   
   return true;
@@ -150,40 +153,57 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod) {
 
 
 std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
-  const int wavesPerEU = 0;
-  const std::string gfx_triple{"amdgcn-amd-amdhsa"};
-  const std::string gfx_features{""};
-#if 0  // 使用外部mlir调试
-  mlir::MLIRContext testContext;
-  testContext.loadDialect<
-    func::FuncDialect,memref::MemRefDialect,scf::SCFDialect,gpu::GPUDialect,
-    arith::ArithDialect,cf::ControlFlowDialect,LLVM::LLVMDialect,ROCDL::ROCDLDialect
-  >();
-  const char* llvmdialectfileName = "/home/xushilong/CodeGenDemo/ceshiData/kcg/testBadcase.mlir";
-  auto temp = mlir::parseSourceFile<ModuleOp>(llvmdialectfileName,&testContext);
-  auto testmod = temp.get();
-  std::string llvmIR = std::move(translateMLIRToLLVMIR(testmod, target, wavesPerEU));
-#endif
-
-#if 1  // 
-  std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
-  // std::tuple<std::string, std::string> result = translateLLVMIRToHSACO(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
-  // return std::get<1>(result);
-#endif
-  // std::cout << "\n====llvmIR\n" << llvmIR << std::endl;
 
 #if 0
-  // test insert 
-  std::ifstream ifs("/home/pangyunfei/xushilong/CodeGenDemo/ceshiData/kcg/testLLVMIR.mlir");
+  if (target == Target::ROCm) {
+    const int wavesPerEU = 0;
+    std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
+
+    const std::string gfx_triple{"amdgcn-amd-amdhsa"};
+    const std::string gfx_features{""};
+    return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
+  } else {
+    std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
+
+    const int capability = 80;
+    const int version = 81;
+    auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);
+    return paths.second;
+  }
+#endif
+
+#if 1  // 外部导入 mlir llvm
+  mlir::MLIRContext testContext;
+  testContext.loadDialect<
+    func::FuncDialect,memref::MemRefDialect,scf::SCFDialect,gpu::GPUDialect, NVVM::NVVMDialect, 
+    arith::ArithDialect,cf::ControlFlowDialect,LLVM::LLVMDialect,ROCDL::ROCDLDialect
+  >();
+  const char* llvmdialectfileName = "/home/xiebaokang/projects/mymlir/DeepGen/_tmp/our.mlir";
+  auto temp = mlir::parseSourceFile<ModuleOp>(llvmdialectfileName,&testContext);
+  auto testmod = temp.get();
+  std::string llvmIR = std::move(translateMLIRToLLVMIR(testmod, target, 0));
+  llvm::outs() << "======================llvm ir\n" << llvmIR << "\n";
+  // const int capability = 80;
+  // const int version = 81;
+  // auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);
+  // return paths.second;
+#endif
+
+#if 0  // 外部导入 llvm ir
+  std::ifstream ifs("/home/xiebaokang/projects/mymlir/DeepGen/_tmp/our.llvm");
   std::stringstream buffer;
   if(ifs.is_open()){
     buffer << ifs.rdbuf();
     ifs.close();
   }
   auto llvmIR = buffer.str();
+  // llvm::outs() << "======================llvm ir\n" << llvmIR << "\n";
+  const int capability = 80;
+  const int version = 81;
+  auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);
+  return paths.second;
 #endif
 
-  return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
 }
 
 }

@@ -1,5 +1,5 @@
 #! /bin/bash
-mydir="/home/xushilong/DeepGen"
+mydir="/home/xiebaokang/projects/mymlir/DeepGen"
 export PYTHONPATH=$mydir/Runtime
 cd ${mydir}/Runtime/kcg
 

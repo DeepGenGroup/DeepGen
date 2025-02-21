@@ -5,8 +5,7 @@
 
 namespace KernelCodeGen {
 
-std::string translateMLIRToLLVMIR(mlir::ModuleOp module, Target target, const int wavesPerEU);
+std::string translateMLIRToLLVMIR(mlir::ModuleOp module, Target target, const int wavesPerEU=0);
 
-std::string tranlateAndSaveLLVMIR(mlir::ModuleOp module);
 }
 #endif

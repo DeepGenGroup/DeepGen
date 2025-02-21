@@ -298,32 +298,32 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     auto loopM = loops[0], loopN = loops[1], loopK = loops[2];
     auto buffers = matmulBuffers[matmul];
     auto A = buffers.A, B = buffers.B, C = buffers.C;
-    LOG_DEBUG("===== original mlir =======\n",module);
+    // LOG_DEBUG("===== original mlir =======\n",module);
 
     auto m_axes = Rewriter::split(loopM, 3, {config["THREAD_SIZE_M"], config["BLOCK_SIZE_M"]});
     auto n_axes = Rewriter::split(loopN, 3, {config["THREAD_SIZE_N"], config["BLOCK_SIZE_N"]});
     auto m_outer = m_axes[0], m_mider = m_axes[1], m_inner = m_axes[2];
     auto n_outer = n_axes[0], n_mider = n_axes[1], n_inner = n_axes[2];
     Rewriter::reorder({m_outer, n_outer, m_mider, n_mider, m_inner, n_inner});
-    LOG_DEBUG("===== after split & reorder =======\n",module);
+    // LOG_DEBUG("===== after split & reorder =======\n",module);
 
-    auto gridLevel = Rewriter::parallel({m_outer, n_outer});
-    auto blockLevel = Rewriter::parallel({m_mider, n_mider});
-    LOG_DEBUG("===== after parallel =======\n",module);
+    auto gridLevel = Rewriter::parallel({m_outer, n_outer}, std::string(BLOCKIDX));
+    auto blockLevel = Rewriter::parallel({m_mider, n_mider}, std::string(THREADIDX));
+    // LOG_DEBUG("===== after parallel =======\n",module);
 
     std::vector<mlir::affine::AffineForOp> tileCLoops{m_inner, n_inner};
     auto regC = Rewriter::bufferizeLoopCarryVar(loopK, tileCLoops, "regC");
-    LOG_DEBUG("===== after bufferizeLoopCarryVar =======\n",module);
+    // LOG_DEBUG("===== after bufferizeLoopCarryVar =======\n",module);
 
     auto k_axes = Rewriter::split(loopK, 3, {config["LOCAL_SPLIT_U"], config["BLOCK_SIZE_K"]});
     auto k_outer = k_axes[0], k_mider = k_axes[1], k_inner = k_axes[2];
-    LOG_DEBUG("===== after split =======\n",module);
+    // LOG_DEBUG("===== after split =======\n",module);
 
     Rewriter::loopToParallelZ(k_inner, blockLevel);
-    LOG_DEBUG("===== after loopToParallelZ =======\n",module);
+    // LOG_DEBUG("===== after loopToParallelZ =======\n",module);
 
     Rewriter::reorder({k_outer, k_mider, m_inner, n_inner});
-    LOG_DEBUG("===== after reorder =======\n",module);
+    // LOG_DEBUG("===== after reorder =======\n",module);
 
     int64_t blockThreads = Analyzer::getThreadPerBlock(blockLevel);
     auto glob_load_total_width_a = config["BLOCK_SIZE_K"] * config["BLOCK_SIZE_M"] / blockThreads;
@@ -337,14 +337,14 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     auto tempA = Rewriter::alloc_buffer(blockLevel, MemorySpace::local, {glob_load_total_width_a}, elementA, "tempA");
     auto smB = Rewriter::alloc_buffer(gridLevel, MemorySpace::shared, {config["BLOCK_SIZE_K"], config["BLOCK_SIZE_N"]}, elementB, "smB");
     auto smA = Rewriter::alloc_buffer(gridLevel, MemorySpace::shared, {config["BLOCK_SIZE_K"], config["BLOCK_SIZE_M"]}, elementA, "smA");
-    LOG_DEBUG("===== before alloc_buffer =======\n",module);
+    // LOG_DEBUG("===== before alloc_buffer =======\n",module);
 
     int blockDimX = 0;
     int gridDimX = 0;
     Rewriter::parallelToOneDim(blockLevel, &blockDimX);
     // tools::opSetAttr(module,AttrGridDim, gridDimX);
     // tools::opSetAttr(module,AttrBlockDim, blockDimX);
-    LOG_DEBUG("===== before parallelToOneDim =======\n",module);
+    // LOG_DEBUG("===== before parallelToOneDim =======\n",module);
     
     auto blockIdx = Analyzer::getParallelIdx(gridLevel);
     auto threadIdx = Analyzer::getParallelIdx(blockLevel);
@@ -356,7 +356,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     // test(loadTileBMap);
     auto loadTileB = Rewriter::read(B, tempB, loadTileBMap, {blockIdx[1], threadIdx[0], k_outer.getInductionVar()}, 
                                     {config["GLOB_LOAD_WIDTH_B"]}, loadTileA, Position::after);
-    LOG_DEBUG("===== before read A/B =======\n",module);
+    // LOG_DEBUG("===== before read A/B =======\n",module);
 
     auto storeTileAMap = getTempToSharedMapSMA(builder, config);
     // test(storeTileAMap);
@@ -366,7 +366,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     auto storeTileB = Rewriter::write(tempB, smB, storeTileBMap, {threadIdx[0]}, {config["GLOB_LOAD_WIDTH_B"]}, storeTileA, Position::after);
     auto gpuBarrierPrefix = Rewriter::barrier(loadTileA, Position::before);
     auto gpuBarrierSuffix = Rewriter::barrier(storeTileB, Position::after);
-    LOG_DEBUG("===== write A/B =======\n",module);
+    // LOG_DEBUG("===== write A/B =======\n",module);
 
     auto loadFragAMap = getSharedToRegMapSMA(builder, config);
     // test(loadFragAMap);
@@ -376,13 +376,13 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     // test(loadFragBMap);
     auto loadFragB = Rewriter::read(smB, regB, loadFragBMap, {threadIdx[0], k_mider.getInductionVar()}, 
                                     {config["WARP_SCATTER_WIDTH_B"], config["THREAD_SCATTER_WIDTH_B"]}, loadFragA, Position::after);
-    LOG_DEBUG("===== read sh_A/B =======\n",module);
+    // LOG_DEBUG("===== read sh_A/B =======\n",module);
 
     auto cacheRead = getCalculateMapReg(builder, config);
     // test(cacheRead);
     Rewriter::cache_read(n_inner, A, regA, cacheRead, {m_inner.getInductionVar()});
     Rewriter::cache_read(n_inner, B, regB, cacheRead, {n_inner.getInductionVar()});
-    LOG_DEBUG("===== load regA & cache_read =======\n",module);
+    // LOG_DEBUG("===== load regA & cache_read =======\n",module);
 
     auto writeCbody = Rewriter::get_write(blockLevel, C);
     assert(writeCbody.size() == 1);
@@ -391,7 +391,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     auto m_inner_0 = m_inner_axes[0], m_inner_1 = m_inner_axes[1], m_inner_2 = m_inner_axes[2];
     auto n_inner_0 = n_inner_axes[0], n_inner_1 = n_inner_axes[1], n_inner_2 = n_inner_axes[2];
     Rewriter::reorder({m_inner_0, n_inner_0, m_inner_1, n_inner_1, m_inner_2, n_inner_2});
-    LOG_DEBUG("===== load split & reorder regC to C =======\n",module);
+    // LOG_DEBUG("===== load split & reorder regC to C =======\n",module);
 
     mlir::Value smC, regC_;
     if (config["LOCAL_SPLIT_U"] > 1) {
@@ -404,30 +404,30 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
       Rewriter::cache_write(m_inner_0, C, smC, cacheWriteShCMap, 
                             {threadIdx[0], m_inner_0.getInductionVar(),n_inner_0.getInductionVar(), m_inner_1.getInductionVar(), 
                             n_inner_1.getInductionVar(), m_inner_2.getInductionVar(), n_inner_2.getInductionVar()});
-      LOG_DEBUG("===== load cache_write regC to C =======\n",module);
+      // LOG_DEBUG("===== load cache_write regC to C =======\n",module);
 
       auto reduceCMap = getReduceMapSMC(builder, config);
       // test(reduceCMap);
       auto reduceCLoop = Rewriter::splitUReduce(smC, regC_, reduceCMap, {threadIdx[0]}, config["LOCAL_SPLIT_U"], config["GLOB_STORE_WIDTH"], m_inner_0, Position::after);
       auto reduceLoop_0 = reduceCLoop.first, reduceLoop_1 = reduceCLoop.second;
-      LOG_DEBUG("===== load splitUReduce =======\n",module);
+      // LOG_DEBUG("===== load splitUReduce =======\n",module);
 
       auto writeCMap = getReduceMapRegC(builder, config);
       // test(writeCMap);
       Rewriter::splitUWrite(regC_, C, writeCMap, {blockIdx[0], blockIdx[1], threadIdx[0]}, config["LOCAL_SPLIT_U"], config["GLOB_STORE_WIDTH"], reduceLoop_1, Position::after);
       auto StoreBarrier1 = Rewriter::barrier(m_inner_0, Position::after);
-      LOG_DEBUG("===== load write to C =======\n",module);
+      // LOG_DEBUG("===== load write to C =======\n",module);
     } else {
       auto cacheWriteCMap = getRegToGlobMapC(builder, config);
       // test(cacheWriteCMap);
       Rewriter::cache_write(m_inner_0, C, C, cacheWriteCMap, {blockIdx[0], blockIdx[1], threadIdx[0], 
                             m_inner_0.getInductionVar(),n_inner_0.getInductionVar(), m_inner_1.getInductionVar(), 
                             n_inner_1.getInductionVar(),m_inner_2.getInductionVar(), n_inner_2.getInductionVar()});
-      LOG_DEBUG("===== load cache_write regC to C =======\n",module);
+      // LOG_DEBUG("===== load cache_write regC to C =======\n",module);
     }
 
     Rewriter::vectorize(n_inner_2, config["THREAD_SCATTER_WIDTH_B"]);
-    LOG_DEBUG("===== vectorize =======\n",module);
+    // LOG_DEBUG("===== vectorize =======\n",module);
     
     mlir::affine::AffineForOp regRearForOp;
     std::vector<mlir::affine::AffineForOp> shPerfetchRegForOp, perfetchSharedForOp, regPerfetchRegForOp;
@@ -440,7 +440,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
       perfetchSharedForOp = shResult.second.second;
       loadTileA = shLoadRegForOps[0], loadTileB = shLoadRegForOps[1];
       storeTileA = loadSharedForOps[0], storeTileB = loadSharedForOps[1];
-      LOG_DEBUG("===== sharedPrefetch =======\n",module);
+      // LOG_DEBUG("===== sharedPrefetch =======\n",module);
     }
   
     if (config["REG_PREFETCH"]) {
@@ -451,28 +451,28 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
       regPerfetchRegForOp = regResult.second.first;
       regRearForOp = regResult.second.second;
       loadFragA = regLoadRegForOps[0], loadFragB = regLoadRegForOps[1];
-      LOG_DEBUG("===== registersPrefetch =======\n",module);
+      // LOG_DEBUG("===== registersPrefetch =======\n",module);
     }
 
     if (config["SHARED_PREFETCH"] && config["REG_PREFETCH"]) {
       Rewriter::doublePerfetchAdjust(perfetchSharedForOp, shPerfetchRegForOp, regPerfetchRegForOp, regRearForOp, {smA, smB}, {regA, regB});
-      LOG_DEBUG("===== doublePerfetchAdjust =======\n",module);
+      // LOG_DEBUG("===== doublePerfetchAdjust =======\n",module);
     }
 
     if (config["LOCAL_SPLIT_U"] > 1) {
       Rewriter::bufferCombine({{smA, smB}, {smC}}, "smABC");
       Rewriter::bufferCombine({{regC}, {regC_}}, "regC");
-      LOG_DEBUG("===== bufferCombine =======\n",module);
+      // LOG_DEBUG("===== bufferCombine =======\n",module);
     }
 
     // int gridDims = 0;
     // Rewriter::parallelToOneDim(gridLevel, &gridDims);
     // tools::opSetAttr(module,AttrGridDim,gridDims);
     Rewriter::BlockMapping(gridLevel, config["BLOCK_MAPPING"]);
-    LOG_DEBUG("===== BlockMapping gridLevel =======\n",module);
+    // LOG_DEBUG("===== BlockMapping gridLevel =======\n",module);
 
     Rewriter::unrollAttribute(module, config["UNROLL_NUM"]);
-    LOG_DEBUG("===== unrollAttribute =======\n",module);
+    // LOG_DEBUG("===== unrollAttribute =======\n",module);
   }
 }
 

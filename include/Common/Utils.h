@@ -158,7 +158,8 @@ struct NVVMMetadata {
 
 /************* attribute names & other naming rules ***********/ 
 
-#define AttrKernelFunc    "nvvm.kernel"
+#define AttrROCmKernelFunc    "rocdl.kernel"
+#define AttrCUDAKernelFunc    "nvvm.kernel"
 #define AttrMaxBlockThreads    "nvvm.maxntid"
 #define AttrVisibility    "sym_visibility" 
 #define AttrExternLib     "kcg.externlibs"
@@ -167,15 +168,12 @@ struct NVVMMetadata {
 #define AttrDescription   "kcg.desc"
 #define AttrGridDim       "func.grid.dim"
 #define AttrBlockDim      "func.block.dim"
-#define AttrKernelFunc     "nvvm.kernel"
-#define AttrVisibility     "sym_visibility" 
-#define AttrExternLib      "kcg.externlibs"
-#define AttrRootFunc       "kcg.rootfunc"
-#define AttrKernelType     "kcg.kerneltype"
-#define AttrDescription    "kcg.desc"
-#define AttrGridDim        "func.grid.dim"
-#define AttrBlockDim       "func.block.dim"
 #define AttrBufDescription "kcg.bufDesc"
+/*--- AttrGPUIndex :(blockIdx, threadIdx) ---*/
+#define AttrGPUIndex      "gpu.index"
+#define BLOCKIDX          "blockIdx"
+#define THREADIDX         "threadIdx"
+/*-------------------------------------------*/
 
 #define SHM_VAR_NAME(i) (std::string("kcg_shm")+std::to_string(i))
 
@@ -220,12 +218,12 @@ struct NVVMMetadata {
 
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
-// #define LOG_DEBUG(message,mod)  \
-// {\
-//   llvm::outs() << message;llvm::outs().flush(); mod.dump();\
-// }
+#define LOG_DEBUG(message,mod)  \
+{\
+  llvm::outs() << message;llvm::outs().flush(); mod.dump();\
+}
 
-#define LOG_DEBUG(message,mod)  0
+// #define LOG_DEBUG(message,mod)  0
 
 /*******************  common tool functions ****************/
 

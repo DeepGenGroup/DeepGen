@@ -133,6 +133,7 @@ void loopToParallelZ(mlir::affine::AffineForOp loop, mlir::affine::AffineParalle
   upOperands.append(parallelOp.getUpperBoundsOperands().begin(), parallelOp.getUpperBoundsOperands().end());
 
   // create new parallelOp
+  auto gpuidx = parallelOp->getAttr(AttrGPUIndex);
   mlir::OpBuilder builder = getBuilder(parallelOp, Position::before);
   mlir::affine::AffineParallelOp newParallelOp = builder.create<mlir::affine::AffineParallelOp>(
     builder.getUnknownLoc(), mlir::TypeRange(), llvm::ArrayRef<mlir::arith::AtomicRMWKind>(),
@@ -159,6 +160,11 @@ void loopToParallelZ(mlir::affine::AffineForOp loop, mlir::affine::AffineParalle
   loop.erase();
 
   parallelOp = newParallelOp;
+  // origin attr
+  if (gpuidx) {
+    auto gpuidxAttr = mlir::dyn_cast<mlir::StringAttr>(gpuidx);
+    parallelOp->setAttr(AttrGPUIndex, gpuidxAttr);
+  }
 }
  
 // Swap two nested loops.
@@ -316,7 +322,7 @@ void reorder(const std::vector<mlir::affine::AffineForOp>& loops) {
   } while (swapped);
 }
 
-mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps) {
+mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps, std::string GPUIndexDesc) {
   // X, Y, Z
   assert(forOps.size() <= 3);
   llvm::SmallVector<mlir::AffineMap> lbMaps;
@@ -362,6 +368,8 @@ mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineFo
     forOp.getInductionVar().replaceAllUsesWith(applyResults[count--]);
     forOp.erase();
   }
+  if (!GPUIndexDesc.empty())
+    parallelOp->setAttr(AttrGPUIndex, builder.getStringAttr(GPUIndexDesc));
   return parallelOp;
 }
 
@@ -369,6 +377,7 @@ llvm::SmallVector<mlir::Value> parallelToOneDim(mlir::affine::AffineParallelOp &
   // 将parallelOp转成一维表示
   std::vector<int64_t> uppers;
   auto builder = getBuilder(parallelOp, Position::before);
+  auto gpuidx = parallelOp->getAttr(AttrGPUIndex);
   int64_t upperBound = 1;
   for (auto i : parallelOp.getUpperBoundsMap().getConstantResults()) {
     upperBound *= i;
@@ -419,6 +428,11 @@ llvm::SmallVector<mlir::Value> parallelToOneDim(mlir::affine::AffineParallelOp &
   }
   parallelOp.erase();
   parallelOp = newOp;
+
+  if (gpuidx) {
+    auto gpuidxAttr = mlir::dyn_cast<mlir::StringAttr>(gpuidx);
+    parallelOp->setAttr(AttrGPUIndex, gpuidxAttr);
+  }
 
   return newIVs;
 }
@@ -760,14 +774,26 @@ void BlockMapping(mlir::affine::AffineParallelOp gridLevel, int64_t groupWidth, 
   }
 }
 
-void unrollAttribute(mlir::ModuleOp module, int unrollNum) {
+void unrollAttribute(mlir::ModuleOp module, int32_t unrollNum) {
   // 添加unroll属性
   module.walk<mlir::WalkOrder::PostOrder>([&](mlir::affine::AffineForOp forOp) {
+    int32_t noBodyOpNum = getNoBodyOpCount(forOp);
     auto loopBAS = getLoopBoundAndStep(forOp);
-    int64_t loopNum = (std::get<1>(loopBAS) - std::get<0>(loopBAS)) / std::get<2>(loopBAS);
-    if (loopNum >= unrollNum) return;
-    mlir::OpBuilder builder(forOp->getContext());
-    forOp->setAttr(std::string("affine.loop"), builder.getStringAttr("unroll"));
+    int32_t loopNum = (std::get<1>(loopBAS) - std::get<0>(loopBAS)) / std::get<2>(loopBAS);
+    // llvm::outs() << "Count: " << noBodyOpNum << "\n";
+    if (noBodyOpNum <= 128) {
+      // if (loopNum > unrollNum) {
+      //   if (loopNum % unrollNum == 0) {
+          mlir::OpBuilder builder(forOp->getContext());
+          forOp->setAttr(std::string("affine.loop"), builder.getStringAttr("unroll"));
+          forOp->setAttr(std::string("affine.unroll.num"), builder.getI32IntegerAttr(unrollNum));
+      //   }
+      // } else {
+        // mlir::OpBuilder builder(forOp->getContext());
+        // forOp->setAttr(std::string("affine.loop"), builder.getStringAttr("unroll"));
+        // forOp->setAttr(std::string("affine.unroll.num"), builder.getI32IntegerAttr(unrollNum));
+    //   }
+    }
   });
 }
 

@@ -26,7 +26,7 @@ mlir::func::FuncOp buildFunction(mlir::ModuleOp module, const std::string& funcN
   funcOp->setAttr(std::string("func.state"), builder.getStringAttr("cpu"));
   funcOp->setAttr(std::string("func.op.name"), builder.getStringAttr(OpName));
   funcOp->setAttr(std::string(AttrVisibility), builder.getStringAttr("public"));
-  funcOp->setAttr(std::string(AttrKernelFunc), builder.getI32IntegerAttr(1));
+  // funcOp->setAttr(std::string(AttrKernelFunc), builder.getI32IntegerAttr(1));
   
   auto& entryBlock = funcOp.front();
   builder.setInsertionPointToStart(&entryBlock);

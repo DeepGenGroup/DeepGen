@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 #include "KernelCodeGen.h"
-#include "Target/HSACOTranslation.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "Common/Utils.h"
@@ -262,7 +261,8 @@ std::vector<KernelInfo> generateKernels(
     std::function<KernelInfo(Config&)> task = [i,&kernelNames](Config& cfg)->KernelInfo
     {
       // std::cout << cfg << std::endl;
-      KernelCodeGenerator generator(Target::ROCm, "906");
+      // KernelCodeGenerator generator(Target::ROCm, "906");
+      KernelCodeGenerator generator(Target::CUDA, "80");
       const auto config = cfg;
       const auto name = kernelNames[i];
       KernelInfo info;
@@ -285,15 +285,15 @@ std::vector<KernelInfo> generateKernels(
       // std::cout << "==== lowering status: " << (res2?"SUCCESS":"FAILED") << "\n";
       std::string hsacoPath = generator.translate(kernel);
       // std::cout << "==== translate res :" << "\n";
-      std::cout << hsacoPath << "\n";
-      info.m_hsacoPath = hsacoPath;
-      info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
-      auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
-      auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
-      info.m_gridDims = gridDim;
-      info.m_blockDims = blockDim;
-      // result[config] = info;
-      std::cout << "==== kernel name : " << info.m_kernelName << "\n";
+      // std::cout << hsacoPath << "\n";
+      // info.m_hsacoPath = hsacoPath;
+      // info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
+      // auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
+      // auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
+      // info.m_gridDims = gridDim;
+      // info.m_blockDims = blockDim;
+      // // result[config] = info;
+      // std::cout << "==== kernel name : " << info.m_kernelName << "\n";
       return info;
     };  // end std::function<>
     result.push_back(task(configs[i]));
@@ -419,16 +419,16 @@ int main(){
 
   std::vector<Config> configs = {
     {
-      {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 48}, {KEY_BLOCK_SIZE_K, 32}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 6}, 
-      {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 2}, 
-      {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 1}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
+      {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 32}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 4}, 
+      {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 4}, 
+      {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 2}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
       {KEY_WARP_SCATTER_WIDTH_A, 2}, {KEY_WARP_SCATTER_WIDTH_B, 2}, {KEY_THREAD_SCATTER_WIDTH_A, 2}, {KEY_THREAD_SCATTER_WIDTH_B, 2}, 
-      {KEY_LOCAL_SPLIT_U, 2}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 64}, {KEY_GLOB_STORE_WIDTH, 2}, 
+      {KEY_LOCAL_SPLIT_U, 1}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 64}, {KEY_GLOB_STORE_WIDTH, 4}, 
       {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_REDUCE_C_CONTINUOUS, 1}, 
       {KEY_DTYPE_A, (int)KcgDtype::float32},
       {KEY_DTYPE_B, (int)KcgDtype::float32},
       {KEY_DTYPE_C, (int)KcgDtype::float32},
-      {KEY_M, 1024},{KEY_N, 1056},{KEY_K, 1024}, 
+      {KEY_M, 1024},{KEY_N, 1024},{KEY_K, 1024}, 
       {KEY_IS_A_TRANSPOSE, 1}
     },
   };

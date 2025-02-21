@@ -407,7 +407,7 @@ void moveCalculateForOp(mlir::Operation* posOp, mlir::affine::AffineForOp &forOp
 mlir::affine::AffineForOp createRearCalculateForOp(mlir::OpBuilder builder, mlir::affine::AffineForOp calculateForOp, 
                                                    std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps);
 
-int getNoBodyOpCount(mlir::Operation* ops);
+int32_t getNoBodyOpCount(mlir::Operation* op);
 
 }
 
