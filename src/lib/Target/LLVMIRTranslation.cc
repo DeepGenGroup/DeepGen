@@ -97,7 +97,7 @@ static std::function<Error(Module *)> makeOptimizingPipeline(unsigned optLevel, 
 
     std::string pluginFile = KernelCodeGen::tools::getenv("AMDGCN_INSTRUMENTATION_LIB");
     if (!pluginFile.empty()) {
-        llvm::errs() << "Adding AMDGCN instrumentation pass to Triton pipeline" << "\n";
+        llvm::errs() << "Adding AMDGCN instrumentation pass to pipeline" << "\n";
         auto passPlugin = llvm::PassPlugin::Load(pluginFile);
         if (!passPlugin) {
                 llvm::Error Err = passPlugin.takeError();

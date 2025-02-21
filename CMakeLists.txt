@@ -6,9 +6,14 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/projects/llvm-install")
-set(DEBUG_AMDGCN_OUTPUT_PATH "~/projects/mymlir/DeepGen/test.amdgcn") 
+set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
+set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 set(USER_LLD_PATH "/opt/dtk/llvm/bin/ld.lld") 
+set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas") 
+set(CUDA_CAP        70)
+set(PTXAS_VERSION   83)
+set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
+
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
 set(PYTHON_CONDA_ENV_DIR "~/miniconda3/envs/dcupy/")
 # close some warnings
@@ -21,12 +26,28 @@ add_compile_options(
   -Wno-return-local-addr
   -Wno-parentheses
   -Wno-cast-qual
+  -Wno-unused-but-set-parameter
+  -Wno-deprecated-declarations
+  -Wno-unused-value
   )
+  # 定义一个可以选择多个现有值的宏
+set(TARGET_PLATFORM "ROCM" CACHE STRING "Select platfrom" FORCE)
+set_property(CACHE TARGET_PLATFORM PROPERTY STRINGS "CUDA;ROCM")
+message(STATUS "Selected value for MULTI_VALUE_MACRO: ${MULTI_VALUE_MACRO}")
+
 ##########################################################################
   
 set(BC_DUMP_PATH ${CMAKE_SOURCE_DIR}/_dump)
 set(HIP_BITCODE_PATH ${CMAKE_SOURCE_DIR}/third_party/hip/bitcode)
 set(CUDA_BITCODE_PATH ${CMAKE_SOURCE_DIR}/third_party/cuda/lib)
+if(TARGET_PLATFORM STREQUAL "CUDA")
+  add_definitions(-DUSE_CUDA)
+  include_directories(${CUDA_INCLUDE_DIR})
+endif()
+if(TARGET_PLATFORM STREQUAL "ROCM")
+  add_definitions(-DUSE_ROCM)
+endif()
+
 # generate config.h with user-config variables
 configure_file(config.h.in ${CMAKE_SOURCE_DIR}/include/config.h)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)

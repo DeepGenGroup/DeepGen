@@ -29,6 +29,7 @@
 #include "llvm/ADT/SmallVector.h"
 #include "mlir/Conversion/Passes.h.inc"
 #include "config.h"
+#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
 
 // conversion
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"

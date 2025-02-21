@@ -6,7 +6,7 @@
 
 namespace KernelCodeGen {
 
-std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createConvertGPUPrintToLLVMPass();
+// std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createConvertGPUPrintToLLVMPass();
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createAddDebugLogPass();
 

@@ -3,7 +3,10 @@
 
 #define DEBUG_AMDGCN_OUTPUT_PATH        "${DEBUG_AMDGCN_OUTPUT_PATH}"
 #define USER_LLD_PATH                   "${USER_LLD_PATH}"
+#define USER_PTXAS_PATH                 "${USER_PTXAS_PATH}"
 #define HIP_BITCODE_PATH                "${HIP_BITCODE_PATH}"
 #define CUDA_BITCODE_PATH                "${CUDA_BITCODE_PATH}"
 #define BC_DUMP_PATH                    "${BC_DUMP_PATH}"
+#define PTXAS_VERSION                   @PTXAS_VERSION@
+#define CUDA_CAP                        @CUDA_CAP@
 #endif // __KCG_CONFIG_H__

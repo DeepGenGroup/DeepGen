@@ -1,4 +1,4 @@
-#ifdef SUPPORT_CUDA
+#ifdef USE_CUDA
 #include "cuda.h"
 #include <dlfcn.h>
 #include <stdbool.h>
@@ -10,7 +10,7 @@ static bool gpuAssert(CUresult code, const char *file, int line) {
   if (code == CUDA_SUCCESS)
     return true;
 
-  const char *prefix = "Triton Error [CUDA]: ";
+  const char *prefix = "DeepGen Error [CUDA]: ";
   const char *str;
   cuGetErrorString(code, &str);
   char err[1024] = {0};
