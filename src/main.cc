@@ -285,15 +285,15 @@ std::vector<KernelInfo> generateKernels(
       // std::cout << "==== lowering status: " << (res2?"SUCCESS":"FAILED") << "\n";
       std::string hsacoPath = generator.translate(kernel);
       // std::cout << "==== translate res :" << "\n";
-      // std::cout << hsacoPath << "\n";
-      // info.m_hsacoPath = hsacoPath;
-      // info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
-      // auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
-      // auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
-      // info.m_gridDims = gridDim;
-      // info.m_blockDims = blockDim;
-      // // result[config] = info;
-      // std::cout << "==== kernel name : " << info.m_kernelName << "\n";
+      std::cout << hsacoPath << "\n";
+      info.m_hsacoPath = hsacoPath;
+      info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
+      auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
+      auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
+      info.m_gridDims = gridDim;
+      info.m_blockDims = blockDim;
+      // result[config] = info;
+      std::cout << "==== kernel name : " << info.m_kernelName << "\n";
       return info;
     };  // end std::function<>
     result.push_back(task(configs[i]));
@@ -419,11 +419,11 @@ int main(){
 
   std::vector<Config> configs = {
     {
-      {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 32}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 4}, 
+      {KEY_BLOCK_SIZE_M, 128}, {KEY_BLOCK_SIZE_N, 128}, {KEY_BLOCK_SIZE_K, 8}, {KEY_THREAD_SIZE_M, 8}, {KEY_THREAD_SIZE_N, 8}, 
       {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 4}, 
-      {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 2}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
+      {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 4}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 4},
       {KEY_WARP_SCATTER_WIDTH_A, 2}, {KEY_WARP_SCATTER_WIDTH_B, 2}, {KEY_THREAD_SCATTER_WIDTH_A, 2}, {KEY_THREAD_SCATTER_WIDTH_B, 2}, 
-      {KEY_LOCAL_SPLIT_U, 1}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 64}, {KEY_GLOB_STORE_WIDTH, 4}, 
+      {KEY_LOCAL_SPLIT_U, 1}, {KEY_BLOCK_MAPPING, 4}, {KEY_WARP_SIZE, 32}, {KEY_GLOB_STORE_WIDTH, 4}, 
       {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_REDUCE_C_CONTINUOUS, 1}, 
       {KEY_DTYPE_A, (int)KcgDtype::float32},
       {KEY_DTYPE_B, (int)KcgDtype::float32},

@@ -57,6 +57,7 @@ bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target, 
 #endif
   pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createAffineLoopInvariantCodeMotionPass());   // 循环不变量移动
   // pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createSimplifyAffineStructuresPass());  // 加入后会导致shm conflict 增加
+  pm.addPass(createAmendAllocaOpAddrSpacePass(target));    // 按照 target 给 allocaOp 修改地址空间
   pm.addPass(createSymbolDCEPass());
   pm.addPass(createCSEPass());
   // pm.addPass(createCanonicalizerPass());  // 加入后会导致性能大幅下降。conflict增加
@@ -154,7 +155,7 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod) {
 
 std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
 
-#if 0
+#if 1
   if (target == Target::ROCm) {
     const int wavesPerEU = 0;
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
@@ -172,7 +173,7 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
   }
 #endif
 
-#if 1  // 外部导入 mlir llvm
+#if 0  // 外部导入 mlir llvm
   mlir::MLIRContext testContext;
   testContext.loadDialect<
     func::FuncDialect,memref::MemRefDialect,scf::SCFDialect,gpu::GPUDialect, NVVM::NVVMDialect, 

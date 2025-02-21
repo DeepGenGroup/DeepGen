@@ -10,6 +10,8 @@ namespace KernelCodeGen {
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createAddDebugLogPass();
 
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createAmendAllocaOpAddrSpacePass(Target target);
+
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createParallelToGPUPass();
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createExtractAffineParallelPass();

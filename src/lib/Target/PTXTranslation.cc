@@ -130,30 +130,31 @@ std::string translate_llvmir_to_ptx(const std::string llvmIR, int capability, in
   llvm::SMDiagnostic error;
   std::unique_ptr<llvm::Module> module = llvm::parseIR(buffer->getMemBufferRef(), error, context);
   auto ptxCode = translateLLVMIRToPTX(*module, capability, version);
-  return ptxCode;
-}
 
-std::string compile_ptx_to_cubin(const std::string &ptxCode, const std::string &ptxasPath, int capability) {
-  // compile ptx with ptxas
+  // save ptx code
   llvm::SmallString<64> fsrc;
-  llvm::SmallString<64> flog;
   llvm::sys::fs::createTemporaryFile("compile-ptx-src", "", fsrc);
-  llvm::sys::fs::createTemporaryFile("compile-ptx-log", "", flog);
-  std::string fbin = std::string(fsrc) + ".cubin";
-  llvm::FileRemover logRemover(flog);
-  llvm::FileRemover binRemover(fbin);
-  const char *_fsrc = fsrc.c_str();
-  const char *_flog = flog.c_str();
-  const char *_fbin = fbin.c_str();
-  std::ofstream ofs(_fsrc);
+  std::string ptxSrc = std::string(fsrc) + ".ptx";
+  std::ofstream ofs(ptxSrc);
   ofs << ptxCode << std::endl;
   ofs.close();
+  return ptxSrc;
+}
+
+std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &ptxasPath, int capability) {
+  // compile ptx with ptxas
+  llvm::SmallString<64> flog;
+  llvm::sys::fs::createTemporaryFile("compile-ptx-log", "", flog);
+  auto name =  ptxPath.substr(0, ptxPath.size()-3);
+  std::string fbin = std::string(name) + "cubin";
+  // llvm::FileRemover logRemover(flog);
+  // llvm::FileRemover binRemover(fbin);
+  const char *_flog = flog.c_str();
   std::string cmd;
   int err;
-  cmd = ptxasPath + " -v --gpu-name=sm_" +
-        std::to_string(capability) + (capability == 90 ? "a " : " ") +
-        _fsrc + " -o " + _fsrc + ".cubin 2> " + _flog;
-
+  cmd = ptxasPath + " -v --gpu-name=sm_" + std::to_string(capability) + (capability == 90 ? "a " : " ") +
+        ptxPath + " -o " + fbin + " 2> " + _flog;
+  // llvm::outs() << cmd << "\n";
   err = system(cmd.c_str());
   if (err != 0) {
     err >>= 8;
@@ -162,8 +163,7 @@ std::string compile_ptx_to_cubin(const std::string &ptxCode, const std::string &
     if (err == 255) {
       throw std::runtime_error("Internal Triton PTX codegen error: \n" + log);
     } else if (err == 128 + SIGSEGV) {
-      throw std::runtime_error("Please run `ptxas " + fsrc.str().str() +
-                                "` to confirm that this is a bug in `ptxas`\n" + log);
+      throw std::runtime_error("Please run `ptxas " + ptxPath + "` to confirm that this is a bug in `ptxas`\n" + log);
     } else {
       throw std::runtime_error("`ptxas` failed with error code " + std::to_string(err) + ": \n" + log);
     }
@@ -175,18 +175,10 @@ std::string compile_ptx_to_cubin(const std::string &ptxCode, const std::string &
 
 std::pair<std::string, std::string> generatePTXAndCubinFromLLIRFile(const std::string llvmIR, int capability, int version) {
   std::string ptxasPath = "/home/xiebaokang/projects/mymlir/DeepGen/third_party/cuda/bin/ptxas";
-  std::string ptxPath = "/home/xiebaokang/projects/mymlir/DeepGen/_tmp/test.ptx";
-  std::string ptxCode = translate_llvmir_to_ptx(llvmIR, capability, version);
-  std::string cabinPath = compile_ptx_to_cubin(ptxCode, ptxasPath, capability);
+  // std::string ptxPath = "/home/xiebaokang/projects/mymlir/DeepGen/_tmp/test.ptx";
+  std::string ptxPath = translate_llvmir_to_ptx(llvmIR, capability, version);
+  std::string cabinPath = compile_ptx_to_cubin(ptxPath, ptxasPath, capability);
 
-  std::ofstream ptxFile(ptxPath);
-  if (ptxFile.is_open()) {
-      ptxFile << ptxCode;
-      ptxFile.close();
-      // std::cout << "Result saved to " << ptxPath << std::endl;
-  } else {
-      // std::cerr << "Unable to open file: " << ptxPath << std::endl;
-  }
   return std::make_pair(ptxPath, cabinPath);
 }
 

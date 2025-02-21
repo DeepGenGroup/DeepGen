@@ -33,9 +33,55 @@
 
 // conversion
 #include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
+#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 using namespace mlir;
 namespace KernelCodeGen {
+
+// ===================================================================
+//                  amend memerf alloca Addrspace       
+// ===================================================================
+// 将memref.alloca的地址空间进行修改，local=0为cuda/loacl=5为rocm
+struct AmendAllocaOpAddrSpace : public OpRewritePattern<memref::AllocaOp> {
+  using OpRewritePattern<memref::AllocaOp>::OpRewritePattern;
+private:
+  Target target;
+public:
+  AmendAllocaOpAddrSpace(MLIRContext *context, Target target) 
+  : OpRewritePattern<memref::AllocaOp>(context),  target(target) {}
+
+  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp, PatternRewriter &rewriter) const final {
+    MemRefType originalType = allocaOp.getType();
+    int newAddressSpace = 0;
+    if (target == Target::ROCm) {
+      newAddressSpace = 5;
+    }
+    MemRefType newType = MemRefType::get(originalType.getShape(), 
+                                         originalType.getElementType(),{}, newAddressSpace);
+    allocaOp.getResult().setType(newType);
+    return success();
+  }
+};
+
+// memref.alloca的地址空间进行修改pass
+struct AmendAllocaOpAddrSpacePass : public PassWrapper<AmendAllocaOpAddrSpacePass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AmendAllocaOpAddrSpacePass)
+    explicit AmendAllocaOpAddrSpacePass(Target target) : target(target) {};
+  private:
+    Target target;
+  
+  void runOnOperation() override {
+    RewritePatternSet patterns(&getContext());
+
+    patterns.add<AmendAllocaOpAddrSpace>(&getContext(), target);
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))){
+      return signalPassFailure();
+    }
+
+  }
+};
+
+
 
 // ===================================================================
 //                  affine parallel to gpu index        
@@ -1228,6 +1274,10 @@ struct AddDebugLogPass : public PassWrapper<AddDebugLogPass, OperationPass<Modul
 // ===============================================================
 //                           Using Passes
 // ===============================================================
+std::unique_ptr<OperationPass<ModuleOp>> createAmendAllocaOpAddrSpacePass(Target target) {
+  return std::make_unique<AmendAllocaOpAddrSpacePass>(target);
+}
+
 std::unique_ptr<OperationPass<ModuleOp>> createParallelToGPUPass() {
   return std::make_unique<ParallelToGPUPass>();
 }

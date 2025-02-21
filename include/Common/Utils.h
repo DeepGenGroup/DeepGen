@@ -87,8 +87,8 @@ enum class Target {
 enum class MemorySpace {
   global = 1,
   shared = 3,
-  // local = 0,
-  local = 5,
+  // local = 5,
+  local = 0,
   constant = 4,
   unallocated = 7,
   inplace = 6,
