@@ -42,6 +42,18 @@
 #include "llvm/ADT/SmallVector.h"
 #include "llvm/ExecutionEngine/ExecutionEngine.h"
 #include "llvm/ExecutionEngine/SectionMemoryManager.h"
+
+#include "llvm/IR/IRBuilder.h"
+#include "llvm/IR/LegacyPassManager.h"
+#include "llvm/IR/Module.h"
+#include "llvm/IR/Verifier.h"
+#include "llvm/MC/TargetRegistry.h"
+#include "llvm/Pass.h"
+#include "llvm/Support/CommandLine.h"
+#include "llvm/Support/TargetSelect.h"
+#include "llvm/Target/TargetMachine.h"
+#include "llvm/Transforms/IPO/AlwaysInliner.h"
+
 #include "llvm/IR/CallingConv.h"
 #include "llvm/IR/Constants.h"
 #include "llvm/IR/IRBuilder.h"
@@ -75,7 +87,9 @@
 #include <fstream>
 #include <iostream>
 #include "Target/LLVMIRTranslation.h"
-
+#ifdef USE_CUDA
+#include <cuda_runtime.h>
+#endif
 using namespace mlir;
 
 namespace KernelCodeGen
@@ -119,11 +133,19 @@ initialize_module(llvm::Module *module, const std::string &triple,
 
 void init_llvm()
 {
+#ifdef USE_ROCM
     LLVMInitializeAMDGPUTarget();
     LLVMInitializeAMDGPUTargetInfo();
     LLVMInitializeAMDGPUTargetMC();
     LLVMInitializeAMDGPUAsmParser();
     LLVMInitializeAMDGPUAsmPrinter();
+#endif
+#ifdef USE_CUDA
+    LLVMInitializeNVPTXTargetInfo();
+    LLVMInitializeNVPTXTarget();
+    LLVMInitializeNVPTXTargetMC();
+    LLVMInitializeNVPTXAsmPrinter();
+#endif
 }
 
 std::string generate_amdgcn_assembly(llvm::Module *module,
@@ -289,12 +311,12 @@ std::tuple<std::string, std::string> translateLLVMIRToHSACO(
 }
 
 std::string generateAmdgcnAndHsacoFromLLIRFile(
-    const std::string module,
+    const std::string &llvmIR,
     const std::string &gfx_arch,
     const std::string &gfx_triple,
     const std::string &gfx_features)
 {
-    auto ret = translateLLVMIRToHSACO(module, gfx_arch, gfx_triple, gfx_features);
+    auto ret = translateLLVMIRToHSACO(llvmIR, gfx_arch, gfx_triple, gfx_features);
     std::string amdgcn = std::get<0>(ret);
     std::string hsacoPath = std::get<1>(ret);
 
