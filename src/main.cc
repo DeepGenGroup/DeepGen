@@ -262,7 +262,7 @@ std::vector<KernelInfo> generateKernels(
     {
       // std::cout << cfg << std::endl;
       // KernelCodeGenerator generator(Target::ROCm, "906");
-      KernelCodeGenerator generator(Target::CUDA, "80");
+      KernelCodeGenerator generator(Target::CUDA, "70");
       const auto config = cfg;
       const auto name = kernelNames[i];
       KernelInfo info;
@@ -286,7 +286,7 @@ std::vector<KernelInfo> generateKernels(
       std::string hsacoPath = generator.translate(kernel);
       // std::cout << "==== translate res :" << "\n";
       std::cout << hsacoPath << "\n";
-      info.m_hsacoPath = hsacoPath;
+      info.m_binaryPath = hsacoPath;
       info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
       auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
       auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
@@ -341,7 +341,7 @@ static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
       blockDims[i] = kernel.m_blockDims[i];
     }
     PyObject* item = Py_BuildValue("(ssiiiiii)",
-      kernel.m_hsacoPath.c_str(),
+      kernel.m_binaryPath.c_str(),
       kernel.m_kernelName.c_str(),
       gridDims[0],gridDims[1],gridDims[2],
       blockDims[0],blockDims[1],blockDims[2]

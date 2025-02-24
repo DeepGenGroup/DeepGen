@@ -13,14 +13,15 @@ class EnumOperator(Enum):
 
 
 class UserInputs:
-    def __init__(self,hsaco_path:str,kernel_func_name:str,kernelParam : KernelArgMatmul):
+    def __init__(self,binary_path:str,kernel_func_name:str,kernelParam : KernelArgMatmul, backend : EnumBackendType):
         self.operatorKind = EnumOperator.Matmul
-        self.hsacoPath = hsaco_path
+        self.binaryPath = binary_path
         self.kernelFuncName = kernel_func_name
         self.kernelParam = kernelParam
         self.m_gridDims = [1,1,1]
         self.m_blockDims = [1,1,1]
-
+        self.backend = backend
+        
     def gridDims(self):  # 行优先矩阵，行方向为x方向，尺寸为n
         return self.m_gridDims
     
@@ -59,7 +60,8 @@ class CompiledKernelFactory :
         if info.operatorKind==EnumOperator.Matmul :
             signature = getMatmulSignature(info.kernelParam.dtypeTorch('A'),info.kernelParam.dtypeTorch('B'),info.kernelParam.dtypeTorch('C'))
             return CompiledKernel(
-                info.hsacoPath,
+                info.backend,
+                info.binaryPath,
                 info.kernelFuncName,
                 info.sharedMem(),
                 signature,

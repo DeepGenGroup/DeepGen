@@ -208,7 +208,7 @@ class KernelFunction :
         # JITFunction can be instantiated as kernel
         # when called with a grid using __getitem__
         self.kernel = None
-        self.debug = True if os.environ.get("TRITON_DEBUG", "0") == "1" else debug
+        self.debug = True if os.environ.get("KCG_DEBUG", "0") == "1" else debug
         self.noinline = noinline
 
         # tma info

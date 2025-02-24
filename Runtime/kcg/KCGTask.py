@@ -83,10 +83,11 @@ class PerfTester :
     def _inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
+        torch.cuda.synchronize()
         ev_start.record()
         self.matD = torch.matmul(matrixA, matrixB)
-        ev_end.record()
         torch.cuda.synchronize()
+        ev_end.record()
         eps = ev_start.elapsed_time(ev_end)
         return (self.matD, eps)
     
@@ -113,10 +114,11 @@ class PerfTester :
     def _inner_test_kcg(self, a : torch.tensor, b : torch.tensor, c : torch.tensor, 
                         packedKernel : CompiledKernel,
                         start_event : torch.cuda.Event, end_event : torch.cuda.Event) :
+        torch.cuda.synchronize()
         start_event.record()
         packedKernel.run(a,b,c)
-        end_event.record()
         torch.cuda.synchronize()
+        end_event.record()
         elapsed_time = start_event.elapsed_time(end_event)
         return c,elapsed_time
     
@@ -247,7 +249,7 @@ class PerfTester :
     
 
 class SerialCompileTask :
-    def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
+    def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int, backendtype : EnumBackendType) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -256,7 +258,7 @@ class SerialCompileTask :
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0] 
         # Print("========= hsacoPath = ",hsacoPath)
         # Print("========= kernelName = ",kernelName)
-        inConfig = UserInputs(hsacoPath,kernelName,kpm)
+        inConfig = UserInputs(hsacoPath,kernelName,kpm,backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Matmul
@@ -268,7 +270,7 @@ class SerialCompileTask :
         logger = logging.getLogger(logfile)
         return logger
     
-    def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0) -> List:
+    def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0, backendtype = EnumBackendType.HIP) -> List:
         # 读取 JSON 文件
         output_path = f"{PathManager.pikle_dir()}/{deviceId}/valid_kernels_{namePrefix}_{lbs}_{ubs}.pkl"
         valid_kernels = [] 
@@ -276,7 +278,7 @@ class SerialCompileTask :
             lbs = 0; ubs =1
         for i in range(lbs,ubs) :
             kernelCfg = kernelArg
-            r = self._task_compile_kernel(kernelCfg,i, deviceId)  
+            r = self._task_compile_kernel(kernelCfg,i, deviceId,backendtype)  
             valid_kernels.append(r)
         lock.acquire()
         serialize_to_file(output_path,valid_kernels)
@@ -419,7 +421,7 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, maxProcess = 10, startFromSubjson = '', needCompile = True, needPerfTest = True) :
+    def run(self, backendtype : EnumBackendType, maxProcess = 10, startFromSubjson = '', needCompile = True, needPerfTest = True) :
         procCount = 0
         dealed = 0
         if needPerfTest:
@@ -443,7 +445,7 @@ class ParallelTaskManager :
                 selectDevID = dealed % len(self.devIds)
                 # print(f"=========== Dealing : cfgstrs[{i}] ================")
                 config = self._get_kernelargMatmul(cfgstrs[i],tse)
-                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID])
+                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID], backendtype)
                 procCount += 1; dealed += 1
                 if procCount >= maxProcess or i == self.CFG_COUNT-1:
                     print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")

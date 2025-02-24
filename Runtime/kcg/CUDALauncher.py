@@ -14,32 +14,37 @@ from kcg.Cache import *
 from kcg.Cache import *
 from kcg.Utils import *
 from kcg.Kernel import *
-from kcg.Loader import HIPLoaderST
+from kcg.Loader import CudaLoaderST
 import importlib.util
-# HIP_BACKEND_MODE = False
+# ----- stub --------
 
-# if HIP_BACKEND_MODE:
-#     from ..._C.librocm_backend_for_triton import triton as _triton
-# else:
-#     from ..._C.libtriton import triton as _triton
+
+def make_so_cache_key(version_hash, signature, constants, ids, **kwargs):
+    # Get unique key for the compiled code
+    signature = {k: 'ptr' if v[0] == '*' else v for k, v in signature.items()}
+    key = f"{version_hash}-{''.join(signature.values())}-{constants}-{ids}"
+    for kw in kwargs:
+        key = f"{key}-{kwargs.get(kw)}"
+    key = hashlib.md5(key.encode("utf-8")).hexdigest()
+    return key
 
 
 def make_stub(kernelLibFile : KernelLibFile) -> str :
     so_cache_key = str(kernelLibFile.hash())
     so_cache_manager = FileCacheManager(so_cache_key)
     # so_name = f"{so_cache_key + kernelLibFile.m_kernelFuncName}.so"
-    so_name = f"LaunHip_{kernelLibFile.signature_str()}.so"
+    so_name = f"LaunCuda_{kernelLibFile.signature_str()}.so"
     # retrieve stub from cache if it exists
     cache_path = so_cache_manager.get_file(so_name)
     if cache_path is None:
         # with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = PathManager().default_cache_dir()
-        src = generate_launcher_hip(kernelLibFile)
-        src_path = os.path.join(tmpdir, "stub_main_hip.c")
+        src = generate_launcher_cuda(kernelLibFile)
+        src_path = os.path.join(tmpdir, "stub_main_cuda.c")
         with open(src_path, "w") as f:
             for line in src:
                 f.write(line)  # generate stub code
-        with open('/home/xushilong/CodeGenDemo/tempstub_hip.c', "w") as f:
+        with open('/home/xushilong/CodeGenDemo/tempstub_cuda.c', "w") as f:
             for line in src:
                 f.write(line)  # generate stub code
         so = build(so_name, src_path, tmpdir)
@@ -49,9 +54,12 @@ def make_stub(kernelLibFile : KernelLibFile) -> str :
         return cache_path
 
 
+# ----- source code generation --------
+
+
 def ty_to_cpp(ty):
     if ty[0] == '*':
-        return "hipDeviceptr_t"
+        return "hipDeviceptr_t" if is_hip() else "CUdeviceptr"
     return {
         "i1": "int32_t",
         "i8": "int8_t",
@@ -67,7 +75,8 @@ def ty_to_cpp(ty):
         "fp64": "double",
     }[ty]
 
-def generate_launcher_hip(kernelLib : KernelLibFile):
+
+def generate_launcher_cuda(kernelLib : KernelLibFile):
     # start_desc = len(signature)
     # warp_size = DeviceInfo.get_warp_size()
     kernelSignature : dict = kernelLib.m_signature
@@ -104,25 +113,28 @@ def generate_launcher_hip(kernelLib : KernelLibFile):
             "int64_t": "L",
         }[ty]
 
-    format = "iiiiiiiiiiiKKOOO" + ''.join([format_of(_extracted_type(ty)) for i,ty in kernelSignature.items()])
+    format = "iiiiiiiiiKKOOO" + ''.join([format_of(_extracted_type(ty)) for i,ty in kernelSignature.items()])
 
     # generate glue code
+    # folded_without_constexprs = [c for c in ids['ids_of_folded_args'] if c not in ids['ids_of_const_exprs']]
     params = [i for i,ty in kernelSignature.items()]
+
     src = f"""
-#define __HIP_PLATFORM_AMD__
-#include <hip/hip_runtime.h>
-#include <Python.h>
+#include \"cuda.h\"
 #include <stdbool.h>
+#include <Python.h>
 #include <dlfcn.h>
 
-static inline void gpuAssert(hipError_t code, const char *file, int line)
+static inline void gpuAssert(CUresult code, const char *file, int line)
 {{
-   if (code != HIP_SUCCESS)
+   if (code != CUDA_SUCCESS)
    {{
-      const char* prefix = "KCG Error [HIP]: ";
-      const char* str = hipGetErrorString(code);
+      const char* prefix = "DeepGen Error [CUDA]: ";
+      const char* str;
+      cuGetErrorString(code, &str);
       char err[1024] = {{0}};
-      snprintf(err, 1024, "%s Code: %d, Messsage: %s", prefix, code, str );
+      strcat(err, prefix);
+      strcat(err, str);
       PyGILState_STATE gil_state;
       gil_state = PyGILState_Ensure();
       PyErr_SetString(PyExc_RuntimeError, err);
@@ -130,18 +142,64 @@ static inline void gpuAssert(hipError_t code, const char *file, int line)
    }}
 }}
 
-#define HIP_CHECK(ans) {{ gpuAssert((ans), __FILE__, __LINE__); }}
+#define CUDA_CHECK(ans) {{ gpuAssert((ans), __FILE__, __LINE__); }}
 
-static void _launch(int gridX, int gridY, int gridZ, int blockX, int blockY, int blockZ, int num_ctas, int clusterDimX, int clusterDimY, int clusterDimZ, int shared_memory, hipStream_t stream, hipFunction_t function{', ' + arg_decls if len(arg_decls) > 0 else ''}) {{
-  // printf("_launch hip kernel\\n");
+typedef CUresult (*cuLaunchKernelEx_t)(const CUlaunchConfig* config, CUfunction f, void** kernelParams, void** extra);
+
+static cuLaunchKernelEx_t getLaunchKernelExHandle() {{
+  // Open the shared library
+  void* handle = dlopen("libcuda.so", RTLD_LAZY);
+  if (!handle) {{
+    PyErr_SetString(PyExc_RuntimeError, "Failed to open libcuda.so");
+    return NULL;
+  }}
+  // Clear any existing error
+  dlerror();
+  cuLaunchKernelEx_t cuLaunchKernelExHandle = (cuLaunchKernelEx_t)dlsym(handle, "cuLaunchKernelEx");
+  // Check for errors
+  const char *dlsym_error = dlerror();
+  if (dlsym_error) {{
+    PyErr_SetString(PyExc_RuntimeError, "Failed to retrieve cuLaunchKernelEx from libcuda.so");
+    return NULL;
+  }}
+  return cuLaunchKernelExHandle;
+}}
+
+static void _launch(int gridX, int gridY, int gridZ, int num_warps, int num_ctas, int clusterDimX, int clusterDimY, int clusterDimZ, int shared_memory, CUstream stream, CUfunction function{', ' + arg_decls if len(arg_decls) > 0 else ''}) {{
   void *params[] = {{ {', '.join(f"&arg{i}" for i in params)} }};
   if (gridX*gridY*gridZ > 0) {{
-      HIP_CHECK(hipModuleLaunchKernel(function, gridX, gridY, gridZ, blockX, blockY, blockZ, shared_memory, stream, params, 0));
+    if (num_ctas == 1) {{
+      CUDA_CHECK(cuLaunchKernel(function, gridX, gridY, gridZ, 32*num_warps, 1, 1, shared_memory, stream, params, 0));
+    }} else {{
+      CUlaunchAttribute launchAttr[2];
+      launchAttr[0].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_DIMENSION;
+      launchAttr[0].value.clusterDim.x = clusterDimX;
+      launchAttr[0].value.clusterDim.y = clusterDimY;
+      launchAttr[0].value.clusterDim.z = clusterDimZ;
+      launchAttr[1].id = CU_LAUNCH_ATTRIBUTE_CLUSTER_SCHEDULING_POLICY_PREFERENCE;
+      launchAttr[1].value.clusterSchedulingPolicyPreference = CU_CLUSTER_SCHEDULING_POLICY_SPREAD;
+      CUlaunchConfig config;
+      config.gridDimX = gridX * clusterDimX;
+      config.gridDimY = gridY * clusterDimY;
+      config.gridDimZ = gridZ * clusterDimZ;
+      config.blockDimX = 32 * num_warps;
+      config.blockDimY = 1;
+      config.blockDimZ = 1;
+      config.sharedMemBytes = shared_memory;
+      config.hStream = stream;
+      config.attrs = launchAttr;
+      config.numAttrs = 2;
+      static cuLaunchKernelEx_t cuLaunchKernelExHandle = NULL;
+      if (cuLaunchKernelExHandle == NULL) {{
+        cuLaunchKernelExHandle = getLaunchKernelExHandle();
+      }}
+      CUDA_CHECK(cuLaunchKernelExHandle(&config, function, params, 0));
     }}
   }}
+}}
 
 typedef struct _DevicePtrInfo {{
-    hipDeviceptr_t dev_ptr;
+    CUdeviceptr dev_ptr;
     bool valid;
 }} DevicePtrInfo;
 
@@ -150,7 +208,7 @@ static inline DevicePtrInfo getPointer(PyObject *obj, int idx) {{
   ptr_info.dev_ptr = 0;
   ptr_info.valid = true;
   if (PyLong_Check(obj)) {{
-    ptr_info.dev_ptr = (hipDeviceptr_t)PyLong_AsUnsignedLongLong(obj);
+    ptr_info.dev_ptr = PyLong_AsUnsignedLongLong(obj);
     return ptr_info;
   }}
   if (obj == Py_None) {{
@@ -168,30 +226,30 @@ static inline DevicePtrInfo getPointer(PyObject *obj, int idx) {{
       ptr_info.valid = false;
       return ptr_info;
     }}
-    ptr_info.dev_ptr = (hipDeviceptr_t)PyLong_AsUnsignedLongLong(ret);
+    ptr_info.dev_ptr = PyLong_AsUnsignedLongLong(ret);
     if(!ptr_info.dev_ptr)
       return ptr_info;
     uint64_t dev_ptr;
-    hipError_t status = hipPointerGetAttribute(&dev_ptr, HIP_POINTER_ATTRIBUTE_DEVICE_POINTER, ptr_info.dev_ptr);
-    if (status == hipErrorInvalidValue) {{
+    int status = cuPointerGetAttribute(&dev_ptr, CU_POINTER_ATTRIBUTE_DEVICE_POINTER, ptr_info.dev_ptr);
+    if (status == CUDA_ERROR_INVALID_VALUE) {{
         PyErr_Format(PyExc_ValueError,
                      "Pointer argument (at %d) cannot be accessed from Triton (cpu tensor?)", idx);
         ptr_info.valid = false;
     }}
-    ptr_info.dev_ptr = (hipDeviceptr_t)dev_ptr;
-    Py_DECREF(ret);
+    ptr_info.dev_ptr = dev_ptr;
+    Py_DECREF(ret);  // Thanks ChatGPT!
     return ptr_info;
   }}
   PyErr_SetString(PyExc_TypeError, "Pointer argument must be either uint64 or have data_ptr method");
+  ptr_info.valid = false;
   return ptr_info;
 }}
 
 static PyObject* launch(PyObject* self, PyObject* args) {{
-   // printf("launch\\n");
   int gridX, gridY, gridZ;
   uint64_t _stream;
   uint64_t _function;
-  int blockX, blockY, blockZ; 
+  int num_warps;
   int num_ctas;
   int clusterDimX;
   int clusterDimY;
@@ -201,35 +259,26 @@ static PyObject* launch(PyObject* self, PyObject* args) {{
   PyObject *launch_exit_hook = NULL;
   PyObject *compiled_kernel = NULL;
   {' '.join([f"{_extracted_type(ty)} _arg{i}; " for i, ty in kernelSignature.items()])}
-  if(!PyArg_ParseTuple(args, \"{format}\", &gridX, &gridY, &gridZ, &blockX,&blockY,&blockZ, &num_ctas, &clusterDimX, &clusterDimY, &clusterDimZ, &shared_memory, &_stream, &_function, &launch_enter_hook, &launch_exit_hook, &compiled_kernel{', ' + ', '.join(f"&_arg{i}" for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''})) {{
+  if(!PyArg_ParseTuple(args, \"{format}\", &gridX, &gridY, &gridZ, &num_warps, &num_ctas, &clusterDimX, &clusterDimY, &clusterDimZ, &shared_memory, &_stream, &_function, &launch_enter_hook, &launch_exit_hook, &compiled_kernel{', ' + ', '.join(f"&_arg{i}" for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''})) {{
     return NULL;
   }}
-  // printf("hiplauncher parsed : \\n");
-  // printf("- gridX : %d \\n",gridX);
-  // printf("- gridY : %d \\n",gridY);
-  // printf("- gridZ : %d \\n",gridZ);
-  // printf("- blockX : %d \\n",blockX);
-  // printf("- blockY : %d \\n",blockY);
-  // printf("- blockZ : %d \\n",blockZ);
-  // printf("- num_ctas : %d \\n",num_ctas);
-  // printf("- clusterDimX : %d \\n",clusterDimX);
-  // printf("- clusterDimY : %d \\n",clusterDimY);
-  // printf("- clusterDimZ : %d \\n",clusterDimZ);
-  // printf("- shared_memory : %d \\n",shared_memory);
-  if (launch_enter_hook != Py_None) {{
-    PyObject_CallObject(launch_enter_hook, args);
+
+  if (launch_enter_hook != Py_None && !PyObject_CallObject(launch_enter_hook, args)) {{
+    return NULL;
   }}
 
 
   // raise exception asap
   {"; ".join([f"DevicePtrInfo ptr_info{i} = getPointer(_arg{i}, {i}); if (!ptr_info{i}.valid) return NULL;" if ty[0] == "*" else "" for i, ty in kernelSignature.items()])};
   Py_BEGIN_ALLOW_THREADS;
-  // printf("- call _launch function \\n");
-  _launch(gridX, gridY, gridZ, blockX, blockY, blockZ, num_ctas, clusterDimX, clusterDimY, clusterDimZ, shared_memory, (hipStream_t)_stream, (hipFunction_t)_function{', ' + ', '.join(f"ptr_info{i}.dev_ptr" if ty[0]=="*" else f"_arg{i}"for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''});
+  _launch(gridX, gridY, gridZ, num_warps, num_ctas, clusterDimX, clusterDimY, clusterDimZ, shared_memory, (CUstream)_stream, (CUfunction)_function{', ' + ', '.join(f"ptr_info{i}.dev_ptr" if ty[0]=="*" else f"_arg{i}"for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''});
   Py_END_ALLOW_THREADS;
+  if (PyErr_Occurred()) {{
+    return NULL;
+  }}
 
-  if (launch_exit_hook != Py_None) {{
-    PyObject_CallObject(launch_exit_hook, args);
+  if (launch_exit_hook != Py_None && !PyObject_CallObject(launch_exit_hook, args)) {{
+    return NULL;
   }}
 
   // return None
@@ -262,17 +311,17 @@ PyMODINIT_FUNC PyInit___kcg_launcher(void) {{
     return src
 
 
-class HIPLauncher :
+class CUDALauncher :
     def __init__(self, kernelBinaryPath,kernelFuncName,shmSize,signature:dict,gridDims:list,blockDims:list,device=DeviceInfo.get_current_device()):
         self.m_cWrapper = None
-        self.m_kernelLib = KernelLibFile(kernelBinaryPath,EnumBackendType.HIP,kernelFuncName,shmSize,signature,gridDims,blockDims,device)
+        self.m_kernelLib = KernelLibFile(kernelBinaryPath,EnumBackendType.CUDA,kernelFuncName,shmSize,signature,gridDims,blockDims,device)
         self.m_launcherLibPath = None  # launcher.so 的路径
         
     def __hash__(self):
-        return "launchHIP_"+self.m_kernelLib.hash()
+        return "launchCUDA_"+self.m_kernelLib.hash()
     
     def __loadKernel(self):
-        loader = HIPLoaderST()
+        loader = CudaLoaderST()
         loader.loadBinary(self.m_kernelLib)
     
     def _getWrapper(self) -> Callable:
@@ -314,8 +363,8 @@ class HIPLauncher :
                 self,*args )
 
         if wrapper is None :
-            # print("[D] error cwrapper")
+            print("[D] error cwrapper")
             pass
         else:
-            # print("[D] success cwrapper")
+            print("[D] success cwrapper")
             pass

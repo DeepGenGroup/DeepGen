@@ -2,9 +2,11 @@ from kcg.Kernel import *
 from kcg.Utils import *
 from kcg.Loader import HIPLoaderST,CudaLoaderST,is_hip
 from kcg.HIPLauncher import HIPLauncher
+from kcg.CUDALauncher import CUDALauncher
 
 class CompiledKernel:
     def __init__(self,
+                 backend : EnumBackendType,
                  kernelBinaryPath:str, 
                  kernelName:str, shmSize:int, 
                  kernel_signature,
@@ -12,10 +14,16 @@ class CompiledKernel:
                  blockDims:list,
                  device = DeviceInfo.get_current_device()):
         self.signature = kernel_signature
-        # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
-        self.m_loader = HIPLoaderST()
-        self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-    
+        if backend == EnumBackendType.HIP :
+            # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
+            self.m_loader = HIPLoaderST()
+            self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
+        if backend == EnumBackendType.CUDA :
+            # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
+            self.m_loader = CudaLoaderST()
+            self.m_launcher = CUDALauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
+            
+        
     def setDevice(self,devId : int) :
         self.m_launcher.m_kernelLib.m_device = devId
     

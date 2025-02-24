@@ -129,7 +129,7 @@ enum class KcgKernelType : int {
 using Config = std::map<std::string, int>;
 
 struct KernelInfo {
-  std::string m_hsacoPath;
+  std::string m_binaryPath;
   std::string m_kernelName;
   std::vector<int> m_gridDims = {1,1,1};
   std::vector<int> m_blockDims = {1,1,1};

@@ -166,8 +166,8 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
 
-    const int capability = 80;
-    const int version = 81;
+    const int capability = CUDA_CAP;
+    const int version = PTXAS_VERSION;
     auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);
     return paths.second;
   }
