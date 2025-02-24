@@ -15,4 +15,4 @@ _tmp/
 perfRecordlog_*.json
 *__pycache__
 build/
-_TempCodes/
+_TempCodes/bin
