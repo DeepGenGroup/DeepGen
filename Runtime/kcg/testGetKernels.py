@@ -19,6 +19,7 @@ if __name__ == '__main__' :
     gpu_devices = [6,7]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
+    backendType = EnumBackendType.HIP
     
     ######################################################################################
     if len(sys.argv) > 1 :
@@ -50,5 +51,5 @@ if __name__ == '__main__' :
             torchDynamicLogPath='', 
             nTorchEpsInitTest=30
         )
-        tm.run(maxProcess= nProcess , startFromSubjson = '', needCompile=True, needPerfTest=True)
+        tm.run(backendtype=backendType, maxProcess= nProcess , startFromSubjson = '', needCompile=True, needPerfTest=True)
 
