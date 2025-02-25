@@ -130,7 +130,7 @@ class CreateMatmulConfig:
               new_tals.append(line)
     return new_tals
 
-  def getSplitU(self, tileAndlayouts):
+  def getSplitU(self, tileAndlayouts,max_thread_num):
     # splitU + sm limit
     new_tals = []
     for tal in tileAndlayouts:
@@ -147,9 +147,11 @@ class CreateMatmulConfig:
             sm_size = 2 * single_sm_size
           else:                                             # 无 double smAB buf
             sm_size = single_sm_size
-        if sm_size * self.word_width <= self.max_sm_size:   # sm size 是否超出 sm 总大小
-          line = (tal[0], tal[1], tal[2], tal[3], tal[4], tal[5], tal[6], tal[7], spU)
-          new_tals.append(line)
+        if sm_size * self.word_width <= self.max_sm_size :   # sm size 是否超出 sm 总大小 
+          th_num = tal[3][0] * tal[3][1] * tal[4][0] * tal[4][1]
+          if spU * th_num <= max_thread_num : 
+            line = (tal[0], tal[1], tal[2], tal[3], tal[4], tal[5], tal[6], tal[7], spU)
+            new_tals.append(line)
     return new_tals
 
   def getOther(self, tileAndlayouts):
@@ -190,7 +192,7 @@ class CreateMatmulConfig:
     temp_tals = self.getBlockK(tals)
     temp_tals = self.getScatterWidth(temp_tals)
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
-    temp_tals = self.getSplitU(temp_tals)
+    temp_tals = self.getSplitU(temp_tals, max_thread_num = max_thread_num)
     temp_tals = self.getOther(temp_tals)
 
     kams = []
