@@ -74,7 +74,7 @@
 #include <cstdio>
 #include <sstream>
 
-
+#define OUT
 
 namespace KernelCodeGen {
 
@@ -218,12 +218,12 @@ struct NVVMMetadata {
 
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
-#define LOG_DEBUG(message,mod)  \
-{\
-  llvm::outs() << message;llvm::outs().flush(); mod.dump();\
-}
+// #define LOG_DEBUG(message,mod)  \
+// {\
+//   llvm::outs() << message;llvm::outs().flush(); mod.dump();\
+// }
 
-// #define LOG_DEBUG(message,mod)  0
+#define LOG_DEBUG(message,mod)  0
 
 /*******************  common tool functions ****************/
 

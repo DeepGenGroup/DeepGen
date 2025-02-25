@@ -40,7 +40,7 @@ namespace KernelCodeGen
 
     bool optimize(mlir::ModuleOp& mod, std::map<std::string, int> config);
 
-    bool lowering(mlir::ModuleOp& mod);
+    bool lowering(mlir::ModuleOp& mod, std::vector<int>& griddims, std::vector<int>& blockdims);
 
     std::string translate(mlir::ModuleOp& mod);
     

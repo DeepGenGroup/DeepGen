@@ -262,7 +262,7 @@ std::vector<KernelInfo> generateKernels(
     {
       // std::cout << cfg << std::endl;
       // KernelCodeGenerator generator(Target::ROCm, "906");
-      KernelCodeGenerator generator(Target::CUDA, "70");
+      KernelCodeGenerator generator(Target::CUDA, "80");
       const auto config = cfg;
       const auto name = kernelNames[i];
       KernelInfo info;
@@ -281,17 +281,23 @@ std::vector<KernelInfo> generateKernels(
 
       auto res1 = generator.optimize(kernel, config);
       // std::cout << "==== optimize status: " << (res1?"SUCCESS":"FAILED") << "\n";
-      auto res2 = generator.lowering(kernel);
+      auto res2 = generator.lowering(kernel, info.m_gridDims, info.m_blockDims);
       // std::cout << "==== lowering status: " << (res2?"SUCCESS":"FAILED") << "\n";
       std::string hsacoPath = generator.translate(kernel);
       // std::cout << "==== translate res :" << "\n";
-      std::cout << hsacoPath << "\n";
+      std::cout << "binarypath = " << hsacoPath << "\n";
       info.m_binaryPath = hsacoPath;
       info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
-      auto gridDim = tools::getIntArrayAttr(kernel,AttrGridDim);
-      auto blockDim = tools::getIntArrayAttr(kernel,AttrBlockDim);
-      info.m_gridDims = gridDim;
-      info.m_blockDims = blockDim;
+
+      // std::cout << "======== info.m_blockDims :\n";
+      // for(auto e : info.m_blockDims){
+      //   std::cout << e << "," ;
+      // }
+      // std::cout << "======== info.m_gridDims :\n";
+      // for(auto e : info.m_gridDims){
+      //   std::cout << e << "," ;
+      // }
+
       // result[config] = info;
       std::cout << "==== kernel name : " << info.m_kernelName << "\n";
       return info;

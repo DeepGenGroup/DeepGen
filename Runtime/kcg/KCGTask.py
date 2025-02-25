@@ -268,9 +268,12 @@ class SerialCompileTask :
         kernelCompiler = KCGCompiler()
         # Print("===== call compileKernel(kpm)[0] ========")
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0] 
+        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         # Print("========= hsacoPath = ",hsacoPath)
         # Print("========= kernelName = ",kernelName)
-        inConfig = UserInputs(hsacoPath,kernelName,kpm,backendtype)
+        print(f"==== backend is {backendtype}")
+        inConfig = UserInputs(hsacoPath,kernelName,kpm, backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Matmul
@@ -474,3 +477,4 @@ class ParallelTaskManager :
         if needPerfTest :
             for p in self.perfProcMonitors :
                 p.join()
+                print("======== Perf monitors stopped ========")

@@ -1,4 +1,3 @@
-#ifdef USE_CUDA
 #include "cuda.h"
 #include <dlfcn.h>
 #include <stdbool.h>
@@ -245,6 +244,7 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
                         &device)) {
     return NULL;
   }
+  // printf("********** culoader parsed (name data,shm,dev): %s,%s,%d,%d\n",name,data,shared,device);
   CUfunction fun;
   CUmodule mod;
   int32_t n_regs = 0;
@@ -259,10 +259,14 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
         cuDevicePrimaryCtxRetain(&pctx, device));
     CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuCtxSetCurrent(pctx));
   }
+  // printf("********** 2\n");
 
-  CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuModuleLoadData(&mod, data));
+  CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuModuleLoad(&mod, data));
+  // printf("********** 3\n");
   CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
       cuModuleGetFunction(&fun, mod, name));
+  // printf("********** 4\n");
+
   // get allocated registers and spilled registers from the function
   CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
       cuFuncGetAttribute(&n_regs, CU_FUNC_ATTRIBUTE_NUM_REGS, fun));
@@ -271,18 +275,24 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
   n_spills /= 4;
   // set dynamic shared memory if necessary
   int shared_optin;
+  // printf("********** 5\n");
   CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuDeviceGetAttribute(
       &shared_optin, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN,
       device));
+  // printf("********** 6\n");
   if (shared > 49152 && shared_optin > 49152) {
+    // printf("********** 7\n");
     CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
         cuFuncSetCacheConfig(fun, CU_FUNC_CACHE_PREFER_SHARED));
     int shared_total, shared_static;
+    // printf("********** 8\n");
     CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuDeviceGetAttribute(
         &shared_total, CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_MULTIPROCESSOR,
         device));
+          // printf("********** 9\n");
     CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(cuFuncGetAttribute(
         &shared_static, CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES, fun));
+          // printf("********** 10\n");
     CUDA_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
         cuFuncSetAttribute(fun, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES,
                            shared_optin - shared_static));
@@ -292,6 +302,7 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
   if (PyErr_Occurred()) {
     return NULL;
   }
+  // printf("********** OK\n");
   return Py_BuildValue("(KKii)", (uint64_t)mod, (uint64_t)fun, n_regs,
                        n_spills);
 }
@@ -477,4 +488,3 @@ PyMODINIT_FUNC PyInit_loader_cuda(void) {
   return m;
 }
 
-#endif

@@ -14,12 +14,12 @@ if __name__ == '__main__' :
     # 是否只生产 tuning space 并存入 cacheTuningSPaceFile
     onlyGenerateCfg = False 
     # 最大进程数
-    nProcess = 100 
+    nProcess = 1
     # 可见设备
-    gpu_devices = [6,7]  
+    gpu_devices = [6]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
-    backendType = EnumBackendType.HIP
+    backendType = EnumBackendType.CUDA
     
     ######################################################################################
     if len(sys.argv) > 1 :
@@ -39,7 +39,7 @@ if __name__ == '__main__' :
         
     print('===== Waiting for tuning space build ... ',flush=True)
     totalLen = BuildTuningSpace(tuning_param_file, cacheTuningSPaceFile, tuningSpaceGenMode)
-    print(f'===== Tuning space build OK! ==== ',flush=True)
+    print(f'===== Tuning space build OK! size = {totalLen} ==== ',flush=True)
     
     if not onlyGenerateCfg :
         tm =  ParallelTaskManager(

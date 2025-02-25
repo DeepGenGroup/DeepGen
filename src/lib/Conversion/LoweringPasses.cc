@@ -326,7 +326,7 @@ struct LLVMFuncOpAddGPUAttrPass : public PassWrapper<LLVMFuncOpAddGPUAttrPass, O
       } else {
         funcOp->setAttr(AttrROCmKernelFunc, builder.getIntegerAttr(builder.getI1Type(), 1));
       }
-      funcOp->setAttr(AttrMaxBlockThreads, builder.getI32ArrayAttr(256));  // 这个固定了
+      // funcOp->setAttr(AttrMaxBlockThreads, builder.getI32ArrayAttr(256));  // 这个固定了
     });
   }
 };

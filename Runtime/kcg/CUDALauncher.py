@@ -44,9 +44,6 @@ def make_stub(kernelLibFile : KernelLibFile) -> str :
         with open(src_path, "w") as f:
             for line in src:
                 f.write(line)  # generate stub code
-        with open('/home/xushilong/CodeGenDemo/tempstub_cuda.c', "w") as f:
-            for line in src:
-                f.write(line)  # generate stub code
         so = build(so_name, src_path, tmpdir)
         with open(so, "rb") as f:
             return so_cache_manager.put(f.read(), so_name, binary=True)
@@ -168,7 +165,7 @@ static cuLaunchKernelEx_t getLaunchKernelExHandle() {{
 static void _launch(int gridX, int gridY, int gridZ, int num_warps, int num_ctas, int clusterDimX, int clusterDimY, int clusterDimZ, int shared_memory, CUstream stream, CUfunction function{', ' + arg_decls if len(arg_decls) > 0 else ''}) {{
   void *params[] = {{ {', '.join(f"&arg{i}" for i in params)} }};
   if (gridX*gridY*gridZ > 0) {{
-    if (num_ctas == 1) {{
+    if (num_ctas == 1 || clusterDimX ==0 || clusterDimY == 0 || clusterDimZ == 0) {{
       CUDA_CHECK(cuLaunchKernel(function, gridX, gridY, gridZ, 32*num_warps, 1, 1, shared_memory, stream, params, 0));
     }} else {{
       CUlaunchAttribute launchAttr[2];
@@ -346,13 +343,16 @@ class CUDALauncher :
             raise Exception("kcg: _getWrapper failed")
         gridDims = self.m_kernelLib.m_gridDims
         blockDims = self.m_kernelLib.m_blockDims
-        clusterDims = [1,1,1]  # Grid > Cluster > CTA(=Block=WorkGroup) > Wavefront(=Warp) > workitem(=thread) 
+        clusterDims = [0,0,0]  # Grid > Cluster > CTA(=Block=WorkGroup) > Wavefront(=Warp) > workitem(=thread) 
         enterHookFunc = None
         exitHookFunc = None
         numCTAs = gridDims[0]*gridDims[1]*gridDims[2]
         # print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ")
-        wrapper(gridDims[0],gridDims[1],gridDims[2],blockDims[0],blockDims[1],blockDims[2],
-                # m.num_ctas,
+        numWarps = int(blockDims[0]*blockDims[1]*blockDims[2] / 32)
+        # print(f'numwarps={numWarps}')
+        if numWarps < 1 :
+          numWarps = 1
+        wrapper(gridDims[0],gridDims[1],gridDims[2], numWarps,
                 numCTAs,
                 clusterDims[0],clusterDims[1],clusterDims[2],
                 self.m_kernelLib.m_shmSize,

@@ -107,9 +107,8 @@ def quiet():
 
 @functools.lru_cache()
 def cuda_include_dir():
-    base_dir = os.path.join(os.path.dirname(__file__), os.path.pardir)
-    cuda_path = os.path.join(base_dir, "third_party", "cuda")
-    return os.path.join(cuda_path, "include")
+    ret = PathManager.cuda_install_dir() + "/include"
+    return ret
 
 
 def build(name, src, srcdir):
@@ -325,6 +324,14 @@ class PathManager :
     @staticmethod
     def project_dir()->str:
         return Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
+    
+    @staticmethod
+    def cuda_install_dir()->str:
+        return '/usr/local/cuda'
+    
+    @staticmethod
+    def third_party_dir()->str:
+        return f"{PathManager.project_dir()}/third_party"
     
     @staticmethod
     def pikle_dir() ->str :

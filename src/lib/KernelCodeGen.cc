@@ -136,7 +136,7 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
 }
 
 
-bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod) {
+bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims) {
   // mod.dump();
   LOG_DEBUG(" === start mlir =====\n",mod) ;
 
@@ -145,6 +145,20 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod) {
 
   firstLowering(mod, context);
   LOG_DEBUG(" === after firstLowering =====\n",mod) ;
+
+  bool findKernel = false;
+  auto op = mod.getOperation();
+
+  op->walk([&](mlir::func::FuncOp f){
+    if(findKernel){
+      return;
+    }
+    if(f.getOperation()->hasAttr(AttrGridDim) ||f.getOperation()->hasAttr(AttrBlockDim) ){
+      findKernel = true;
+      griddims = tools::getIntArrayAttr(f,AttrGridDim);
+      blockdims = tools::getIntArrayAttr(f,AttrBlockDim);
+    }
+  });
 
   secondLowering(mod, context, target);
   LOG_DEBUG(" === after secondLowering =====\n",mod) ;

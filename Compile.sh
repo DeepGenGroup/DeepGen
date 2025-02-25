@@ -1,5 +1,8 @@
 #! /bin/bash
-is_as_pymodule='OFF'
+is_as_pymodule='ON'
+
+mkdir build
+mkdir _dump
 cd build  
 cmake .. -DCOMPILE_AS_PYMODULE=$is_as_pymodule
-make -j8
+make -j16
