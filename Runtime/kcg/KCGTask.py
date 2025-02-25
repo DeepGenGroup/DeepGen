@@ -60,12 +60,18 @@ class PerfTester :
         self.matC = None
         self.matD = None
         DeviceInfo.set_visible_devices([devId])
-        self.torch_eps = 0  # torch的eps，用于计算 speedup
+        DeviceInfo.set_current_device(0)
+        self.torch_eps = -1.0  # torch的eps，用于计算 speedup
         self.BestPerf = [] #: List[KernelTestResult]
         self.torchDynamicEps = []  # torch的动态eps，用于描述torch的性能变化（卡的稳定性）
         self.check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
-        self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/benchmarkTorchEps_{devId}.log'
+        self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/BenchmarkTorchEps_{devId}.log'
         self._devId = devId
+        if not torch.cuda.is_available() :
+            torch.cuda.init()
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+            
     
     def _compare_with_error(self, tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
         abs_diff = torch.abs(tensor1 - tensor2)
@@ -83,23 +89,24 @@ class PerfTester :
     def _inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
-        torch.cuda.synchronize()
         ev_start.record()
-        self.matD = torch.matmul(matrixA, matrixB)
-        torch.cuda.synchronize()
+        d = torch.matmul(matrixA, matrixB)
         ev_end.record()
+        torch.cuda.synchronize()
+        self.matD = d
         eps = ev_start.elapsed_time(ev_end)
         return (self.matD, eps)
     
     def _init_torch_eps(self,nTorchEpsInitTest) :
-        eps_torch_list = []
-        for i in range(0, nTorchEpsInitTest) :
-            self.matD, eps_torch = self._inner_test_torch(self.matA, self.matB)
-            eps_torch_list.append(eps_torch)
         if not self._read_torch_eps_from_file() :
-            self.torch_eps = np.median(eps_torch_list)
+            eps_torch_list = []
+            for i in range(0, nTorchEpsInitTest) :
+                self.matD, eps_torch = self._inner_test_torch(self.matA, self.matB)
+                eps_torch_list.append(eps_torch)
+                self.torch_eps = np.median(eps_torch_list)
         with open(self._torchEpsStoreFile,'w') as f :
             f.write(str(self.torch_eps))
+        print('======== _init_torch_eps Done! ========= ')
     
     def _read_torch_eps_from_file(self) :
         try :
@@ -114,16 +121,18 @@ class PerfTester :
     def _inner_test_kcg(self, a : torch.tensor, b : torch.tensor, c : torch.tensor, 
                         packedKernel : CompiledKernel,
                         start_event : torch.cuda.Event, end_event : torch.cuda.Event) :
-        torch.cuda.synchronize()
+        # torch.cuda.synchronize()
         start_event.record()
         packedKernel.run(a,b,c)
-        torch.cuda.synchronize()
         end_event.record()
+        torch.cuda.synchronize()
         elapsed_time = start_event.elapsed_time(end_event)
         return c,elapsed_time
     
     def _test_perf(self, kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, 
                    benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50) -> KernelTestResult:
+        if self.matA is None or self.matB is None :
+            self._init_AB(kpm,inConfig)
         result = KernelTestResult(kpm)
         packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
         self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
@@ -221,10 +230,13 @@ class PerfTester :
                         arr = deserialize_from_file(pkl)
                         valid_kernels += arr
                     total_kernel_count += len(valid_kernels)
-                    print(f"====== Glob .pkl files : {len(pklFiles)}, Valid Kernels : {len(valid_kernels)} ========")
+                    # DEBUG: 模拟进程crashed
+                    # if total_kernel_count > 10 :
+                    #     raise Exception('A Debug Exception')
+                    # print(f"====== Glob .pkl files : {len(pklFiles)}, Valid Kernels : {len(valid_kernels)} ========")
                     for pkl in pklFiles:
                         os.remove(pkl)
-                        print(f"deleted: {pkl}")
+                        # print(f"deleted: {pkl}")
                 except Exception as e:
                     print(f"exception occur when deal {pkl}: {e}")
                 pathLock.release()
@@ -316,6 +328,7 @@ class ParallelTaskManager :
         topNum,
         torchDynamicLogPath,
         nTorchEpsInitTest) :
+
         tester = PerfTester(dev)
         parsedBests = []
         try:
@@ -332,6 +345,7 @@ class ParallelTaskManager :
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
         tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest)
+        del tester; tester = None
         
     @staticmethod
     def _perfMonitorFunc(devId, 
@@ -343,20 +357,22 @@ class ParallelTaskManager :
         topNum,
         torchDynamicLogPath,
         nTorchEpsInitTest) :
-        outfilename = f"{perf_out_path}_card{devId}.json"
-        p = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,outfilename,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
-        p.start()
+        perfLog = f"{perf_out_path}_card{devId}.json"
+        worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
+        worker.start()
         while True:
-            p.join()
+            worker.join()
             if endSignal.value == 1 :  # 进程收到结束信号正常结束
                 print(f"======= PerfTester {devId} Stopped OK ==========")
                 return
             else:
                 print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
-                p = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, args=(devId, lock, endSignal,outfilename,nBenchMark,
+                del worker; worker = None
+                time.sleep(1)
+                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, args=(devId, lock, endSignal,perfLog,nBenchMark,
                                               nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
-                p.start()
+                worker.start()
     
     def _initPerfMonitors(self) :
         for devid in self.devIds :
