@@ -440,7 +440,7 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, backendtype : EnumBackendType, maxProcess = 10, startFromSubjson = '', needCompile = True, needPerfTest = True) :
+    def run(self, backendtype : EnumBackendType, maxProcess = 10, needCompile = True, needPerfTest = True) :
         procCount = 0
         dealed = 0
         if needPerfTest:

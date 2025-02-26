@@ -1,29 +1,45 @@
 # KCG 项目介绍
-## 1 项目结构
+## 1.项目&目录结构
+**_cache** : 缓存目录，存放程序运行时的编译器缓存文件（kernel loader&launcher的so及stubcode、benchmarkTorchEps记录   
+**_dump** : 临时目录，存放MLIR生成kernel过程里·生成的bc和o文件   
+**_override** : 暂无作用   
+**_pkls** : 运行时存放生成的kernel信息序列化后的pkl文件。perftester会根据自己的卡号周期   性检测对应文件夹下的pkl，反序列化之并做perftest   
+**_TempCodes** : 其他code，不是项目本体代码   
+**_tmp** : 其他缓存目录   
+**.vscode/c_cpp_properties.json :** intellisense 使用的头文件目录、宏定义   
+**.vscode/launch.json** : debug配置    
+**.vscode/settings.json** : 文件后缀名关联以及颜色主题   
+**bin : DeepGen编译后的**库/可执行文件存放位置   
+**build** : 构建目录   
+**cmake** : MLIR使用的cmake   
+**doc** : 项目文档   
+**include** : MLIR后端的头文件   
+**Runtime** : python后端   
+**scripts/Benchmark**.sh ：从前端启动DeepGen   
+**scripts/ClearTmpKernels.py** ：删除/tmp目录下的kernel文件   
+**scripts/GetCudaInfo**.py ：获取cuda的计算力和ptxas信息，用于填入CMakeLists的对应变量   
+**scripts/StopBenchmark**.sh ：杀死所有DeepGen运行的进程   
+**src** : MLIR后端源代码目录   
+**src/lib** : MLIR后端源码   
+**src/CMakeLists.txt** : MLIR后端CMakeLists   
+**src/main.cc :** MLIR后端源码，定义了exe以及python module的接口   
+**third_party** : cuda和hip的第三方头文件、bitcode、其他所需程序等   
+**TuningCombs** : 存放生成好的调优空间文件   
+**TuningConfigs** : 调优参数配置文件   
+**ClearTemp**.sh : 清理临时目录   
+**CMakeLists.txt** : 根CMakeLists文件。用户变量在这里赋值   
+**Compile.sh** : 编译MLIR后端的脚本   
+**config.h.in** : 用户变量模板文件   
 
-python前端 + MLIR后端
-目前只简单地封装了调用核函数的逻辑，可实现用户在python端传入config，之后进行kenrel生成并执行
-缓存系统还没做。因此目前会生成很多文件
 
-MLIR后端入口点：test/test.cc  提供了lib和exe两种编译选项。在CMakeLists.txt中设置ON或OFF，或者：
-```sh
-cmake .. -DCOMPILE_AS_PYMODULE=ON
-```
 
 ## 2.构建&运行方法
 ### 2.1 构建
-新建build文件夹并进入。之后：
-```sh
-cmake .. -DCOMPILE_AS_PYMODULE=ON
-make -j4
-# 直接cmake .. 也可，会使用CMakeCache.txt中的配置
-```
-
-当需要切换构建选项时，需要删除build 目录下的CMakeCache.txt 否则会不生效
+使用Compile.sh脚本编译。其中`is_as_pymodule`表示将MLIR后端编译为库（ON）或调试用exe文件（OFF）
 
 ### 2.2 参数配置&运行
 1. exe模式   
-参数配置：debug用，只能用固定参数配置，在main函数中修改。只用于测试MLIR后端的lowering过程，不进行gemm的正确性测试
+参数配置：debug用，只能用固定参数配置，在 src/main.cc 的 `main()`函数中修改。只用于测试MLIR后端的代码生成过程，不进行kernel的执行
 运行：
 ```sh
 ${project_folder}/bin/kcg_compiler > log.txt 2>&1
@@ -36,71 +52,50 @@ ${project_folder}/bin/kcg_compiler > log.txt 2>&1
 
 2. lib模式   
 
-启动脚本为 ${project_dir}/Runtime/kcg/Benchmark.sh 其调用testGetKernels.py ,并开启进程池处理编译和测试任务。该进程是会话分离的（nohup），即ssh链接断开后也不会停止
+启动脚本为 ${project_dir}/scripts/Benchmark.sh   
+其调用 testGetKernels.py ,开启进程池处理编译和测试任务。可以将该进程设置为会话分离的（nohup），即ssh链接断开后也不会停止，用于长时间跑测试   
 需要查看总体运行时间，执行 ： 
 ```shell
 ps -eo pid,etime,cmd | grep testGetKernels
 ```
 
 
-3. testGetKernels.py 使用说明
-#### 运行机制   
-1. 该程序首先读取用户的config参数文件，生成参数空间json，并根据 smallJsonLen 的值将空间拆分为若干小json存放在 _tmp 目录下   
-2. 随后开始编译和benchmark。编译的进程池大小由 nProcess 决定。benchmark由守护进程和 perftest进程构成。perftest 执行测试，并将结果存入 perfPAth 为前缀指定的json中。
-守护进程检测到 perftest 意外退出时，会重启perftest进程，并将结果记录到另一个json中。该json的名称从0开始，随着重启次数依次+1 （如 perflog_0.json, perflog_1.json）等
+## 3. 使用说明
+#### 3.1 运行机制   
+1. DeepGen首先读取用户的调优参数文件，生成并剪枝调优空间，存储到json文件。如果检测到调优空间json已存在，则跳过这步
+2. 随后DeepGen根据参数空间json开始编译和benchmark。编译的进程池大小由用户决定。benchmark过程由守护进程（ perfmonitor ）和 工作进程（perftester）构成。perftester 执行测试，并将结果存入 `perfPAth` 为前缀指定的json中。
+perfmonitor 检测到 perftester 意外退出时，会重启perftester进程. perftester会根据用户输入的 `perfPAth` 路径重新读取历史最佳纪录，继续统计并benchmark，直到正常结束
 
-#### 目录说明
-- _pkl : kernel信息文件存在 _pkl 目录下，目前一个pkl对应一个kernel信息。perftest进程会每隔一段时间检测 _pkl 下的文件并测试。测试完成的pkl文件会被删除；
-- _cache : 存放MLIR编译阶段的缓存文件（kernel的loader、launcher的源码和二进制文件）
-- _tmp : 存放调优空间拆分后的json文件
-- _override : 目前无作用
-- _dump : 存放MLIR编译的中间文件(.o,.bc)等
-- TuningConfigs ： 存放调优空间定义文件。通过该文件生成调优空间。默认调优空间文件名称为 cfg_combinations.json 
 
-#### 参数说明
-testGetKernels.py   
-```python
-    # 路径管理器初始化。新建目录并清理目录下文件。通过clearXXX指定是否要删除已有文件
-    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True)
-    # 调优参数配置文件，决定了各个参数的可取值范围
-    tuning_param_file = '/home/xushilong/CodeGenDemo/TuningConfigs/GEMM_configs.json'
-    # 是否使用已生成好的 cfg_combination 文件. 如果为空字符串，则通过 tuning_param_file 生成；否则跳过调优空间生成过程，直接读取 preGeneratedCombinations 指定的json
-    preGeneratedCombinations = '/home/xushilong/CodeGenDemo/cfg_cominations_1.json'
-    # [for debug use] 是否从已生成的 subjson 开始处理。若非空字符串，则会跳过 _tmp 目录下 startFromSubJson 指定文件之前的所有json配置
-    startFromSubJson = '/home/xushilong/CodeGenDemo/_tmp/tmp_json_33400_33600.json'
-    # 输出perf文件前缀，该文件记录了 topK 的最好结果
-    perfPAth = '/home/xushilong/CodeGenDemo/perfRecordlog_5'
-    
-    '''
-        文件生成关系：
-        tuning_param_file -> cfg_combinations.json -> 拆分为 subjson, 存到tmp/中
-        tuning_param_file 定义调优空间
-        cfg_combinations.json 是所有参数的组合
-        subjson 是 cfg_combinations.json 拆成的一堆小文件
-    '''
-    # DeviceInfo.set_current_device(7)
-    print(f'===== Set current device to {DeviceInfo.get_current_device()} =======')
-    print('==== waiting for config_gen ==== ')
-    nProcess = 100 # 用于编译的最大进程数
-    smallJsonLen = nProcess * 5  # 调优空间拆分为单个小json文件时，单个小json含有的configs上限
-    
-    tempfileNames,totalLen = config_gen(tuning_param_file, preGeneratedJson= preGeneratedCombinations , singleLength = smallJsonLen)
-    print('==== config_gen Done! Start deal ==== ')
-    # benchmarkcnt ：单个case执行几次测试
-    # warmupcnt ： 单个case执行几次warmup
-    # keepTopNum ：保留前几的最好结果
-    # needCompile ：是否执行编译过程
-    # needPerfTest ： 是否执行benchmark过程
-    tm =  ParallelTaskManager(totalLen, tempfileNames, perfPAth, benchmarkcnt=10, warmupcnt=1, devId=DeviceInfo.get_current_device(), keepTopNum = 15)
-    tm.run(maxProcess= nProcess , startFromSubjson = '', needCompile=True, needPerfTest=True)
+#### 3.2 脚本参数说明
+
+Benchmark.sh   
+
+```shell   
+#! /bin/bash
+mydir="/home/xushilong/DeepGen"  # 设置用户当前项目的目录
+export PYTHONPATH=$mydir/Runtime
+cd ${mydir}/Runtime/kcg
+
+tuning_param_file=$mydir/TuningConfigs/GEMM_configs_1024.json # 指定调优参数配置
+cacheTuningSPaceFile=$mydir/TuningCombs/tuingspace_gemm_1024x1024.json # 指定调优空间文件名字（不存在会创建，存在则直接使用）
+onlyGenerateCfg=0 # 是否只进行调优空间生成并存入 cacheTuningSPaceFile，不执行编译和benchmark
+
+# 启动指令1 ：使用Benchmark脚本参数启动，会话进程分离，用于长期执行
+nohup python testGetKernels.py $tuning_param_file $cacheTuningSPaceFile $onlyGenerateCfg  > ${mydir}/log.log 2>&1 &
+# 启动指令2 ： 使用python内的参数启动， 会话进程不分离
+# python testGetKernels.py > ${mydir}/log.log 2>&1 &
+# hipprof测试指令
+# hipprof --pmc python testGetKernels.py > log.log 2>&1 &
 
 ```
-Benchmark.sh   
-```shell
-#! /bin/bash
-export PYTHONPATH=~/CodeGenDemo/Runtime
-cd ~/CodeGenDemo/Runtime/kcg
-export HIP_VISIBLE_DEVICES=7  # 指定使用的DCU设备
-nohup python testGetKernels.py > log.log 2>&1 & # 开启任务并将其和会话分离（父进程ID=1）
 
-````
+testGetKernels.py ：参数含义见代码注释
+
+## 4.项目协同文档
+
+周报记录  https://www.notion.so/dbe373c194d844748f693751460dad4a
+
+
+缺陷：
+python直接寻找ptxas等不能满足所有要求。改为用户自行配置路径 （cuda安装路径）
