@@ -20,9 +20,9 @@ if __name__ == '__main__' :
     gpu_devices = [6]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
-    # 当前后端类型
+    # 当前后端类型 & 架构信息
     backendType = EnumBackendType.HIP
-    
+    arch = "906"
     ######################################################################################
     # 命令行参数解析
     if len(sys.argv) > 1 :
@@ -56,6 +56,7 @@ if __name__ == '__main__' :
             nTorchEpsInitTest=30  # 测量torch的baseline时所运行次数（取中位数）
         )
         tm.run(backendtype=backendType ,  # 后端类型
+               archInfo=arch,
                maxProcess= nProcess , # 编译kernel的最大进程数 
                needCompile=True, # 是否执行编译过程
                needPerfTest=True # 是否执行benchmark过程

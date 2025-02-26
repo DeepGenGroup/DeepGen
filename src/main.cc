@@ -14,6 +14,8 @@
 #endif
 
 #define DBG_USE_EXTERN_MLIR 0
+KernelCodeGen::Target __GlobalTarget = KernelCodeGen::Target::CUDA;
+std::string __GlobalPlatDesc = "-";
 
 using namespace KernelCodeGen;
 
@@ -262,7 +264,8 @@ std::vector<KernelInfo> generateKernels(
     {
       // std::cout << cfg << std::endl;
       // KernelCodeGenerator generator(Target::ROCm, "906");
-      KernelCodeGenerator generator(Target::CUDA, "80");
+      // KernelCodeGenerator generator(Target::CUDA, "80");
+      KernelCodeGenerator generator(__GlobalTarget, __GlobalPlatDesc);
       const auto config = cfg;
       const auto name = kernelNames[i];
       KernelInfo info;
@@ -362,10 +365,32 @@ static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
   return retArr;
 }
 
-
+static PyObject* set_platform(PyObject* self, PyObject* args) {
+  int index = 0;
+  char* platInfo = NULL;
+  if(PyArg_ParseTuple(args, "is", &index, &platInfo)){
+    if(index == 2){
+      __GlobalTarget = KernelCodeGen::Target::ROCm;
+    }
+    else if(index == 1){
+      __GlobalTarget = KernelCodeGen::Target::CUDA;
+    }
+    else{
+      std::cout << "DeepGen Error : Invalid Platform id " << index << std::endl;
+      std::abort();
+    }
+    __GlobalPlatDesc = std::string(platInfo);
+    if(__GlobalPlatDesc.size() <= 0){
+      std::cout << "DeepGen Error : Invalid Arch info " << __GlobalPlatDesc << std::endl;
+      std::abort();
+    }
+  }
+  return Py_None;
+}
 
 static PyMethodDef ModuleMethods[] = {
     {"compile_kernel_matmul", compile_kernel_matmul, METH_VARARGS,"compile kernel according to user input tiling and type"},
+    {"set_platform", set_platform, METH_VARARGS,"set target platform and arch"},
     {NULL, NULL, 0, NULL} // sentinel
 };
 

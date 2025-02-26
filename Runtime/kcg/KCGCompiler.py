@@ -10,6 +10,7 @@ class KCGCompiler :
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         self.__compile_kernel_matmul = mod.compile_kernel_matmul
+        self.set_platform = mod.set_platform
     
     def compileKernel(self, param : KernelArgMatmul) -> list:
         return self.__compile_kernel_matmul(

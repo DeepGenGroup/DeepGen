@@ -87,9 +87,9 @@
 #include <fstream>
 #include <iostream>
 #include "Target/LLVMIRTranslation.h"
-#ifdef USE_CUDA
-#include <cuda_runtime.h>
-#endif
+// #ifdef USE_CUDA
+// #include <cuda_runtime.h>
+// #endif
 using namespace mlir;
 
 namespace KernelCodeGen
@@ -133,19 +133,11 @@ initialize_module(llvm::Module *module, const std::string &triple,
 
 void init_llvm()
 {
-#ifdef USE_ROCM
     LLVMInitializeAMDGPUTarget();
     LLVMInitializeAMDGPUTargetInfo();
     LLVMInitializeAMDGPUTargetMC();
     LLVMInitializeAMDGPUAsmParser();
     LLVMInitializeAMDGPUAsmPrinter();
-#endif
-#ifdef USE_CUDA
-    LLVMInitializeNVPTXTargetInfo();
-    LLVMInitializeNVPTXTarget();
-    LLVMInitializeNVPTXTargetMC();
-    LLVMInitializeNVPTXAsmPrinter();
-#endif
 }
 
 std::string generate_amdgcn_assembly(llvm::Module *module,

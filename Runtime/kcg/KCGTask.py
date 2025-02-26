@@ -261,18 +261,24 @@ class PerfTester :
     
 
 class SerialCompileTask :
-    def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int, backendtype : EnumBackendType) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
+    def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
         kernelCompiler = KCGCompiler()
+        _backend = 0
+        if backendtype == EnumBackendType.CUDA :
+            _backend = 1
+        if backendtype == EnumBackendType.HIP :
+            _backend = 2
+        kernelCompiler.set_platform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0] 
-        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         # Print("========= hsacoPath = ",hsacoPath)
         # Print("========= kernelName = ",kernelName)
-        print(f"==== backend is {backendtype}")
+        # print(f"==== backend is {backendtype}")
         inConfig = UserInputs(hsacoPath,kernelName,kpm, backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
@@ -285,7 +291,7 @@ class SerialCompileTask :
         logger = logging.getLogger(logfile)
         return logger
     
-    def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0, backendtype = EnumBackendType.HIP) -> List:
+    def compile_kernels(self, lock, kernelArg: KernelArgMatmul, lbs=0,ubs=-1,namePrefix='',deviceId=0, backendtype = EnumBackendType.HIP, arch = "906") -> List:
         # 读取 JSON 文件
         output_path = f"{PathManager.pikle_dir()}/{deviceId}/valid_kernels_{namePrefix}_{lbs}_{ubs}.pkl"
         valid_kernels = [] 
@@ -293,7 +299,7 @@ class SerialCompileTask :
             lbs = 0; ubs =1
         for i in range(lbs,ubs) :
             kernelCfg = kernelArg
-            r = self._task_compile_kernel(kernelCfg,i, deviceId,backendtype)  
+            r = self._task_compile_kernel(kernelCfg,i, deviceId,backendtype,arch)  
             valid_kernels.append(r)
         lock.acquire()
         serialize_to_file(output_path,valid_kernels)
@@ -440,7 +446,7 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, backendtype : EnumBackendType, maxProcess = 10, needCompile = True, needPerfTest = True) :
+    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True) :
         procCount = 0
         dealed = 0
         if needPerfTest:
@@ -464,7 +470,7 @@ class ParallelTaskManager :
                 selectDevID = dealed % len(self.devIds)
                 # print(f"=========== Dealing : cfgstrs[{i}] ================")
                 config = self._get_kernelargMatmul(cfgstrs[i],tse)
-                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID], backendtype)
+                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID], backendtype, archInfo)
                 procCount += 1; dealed += 1
                 if procCount >= maxProcess or i == self.CFG_COUNT-1:
                     print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
