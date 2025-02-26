@@ -17,7 +17,7 @@ def delete_files_in_directory(directory):
     else:
         print(f"The directory {directory} does not exist.")
 
-for i in range(20):
+for i in range(500):
     try:
         dirs = glob.glob('/tmp/kcg_kernel-*')
         random.shuffle(dirs)

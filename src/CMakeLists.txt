@@ -1,6 +1,6 @@
 set(outName "kcg_compiler")
 
-include_directories("${PYTHON_CONDA_ENV_DIR}/include/python3.10")
+include_directories("${PYTHON_CONDA_ENV_DIR}/include/python${PYTHON_VERSION}")
 if(COMPILE_AS_PYMODULE)
     add_definitions(-DCOMPILE_AS_PYMODULE)
     message("==== compile kcg_compiler as Lib ====")

@@ -5,22 +5,23 @@ if __name__ == '__main__' :
     import sys
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True)
+
     # Tuning 参数空间配置文件
-    tuning_param_file = '/home/xushilong/DeepGen/TuningConfigs/GEMM_configs_2.json'
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_1024_noLSU.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
-    perfPAth = '/home/xushilong/DeepGen/perfRecordlog_7'
+    perfPAth = f'{PathManager.project_dir()}/perfRecordlog_'
     # 调优空间存储文件
-    cacheTuningSPaceFile = '/home/xushilong/DeepGen/TuningCombs/tuingspace_gemm_debug.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_1024noLSU.json'
     # 是否只进行调优空间生成并存入 cacheTuningSPaceFile，不执行kernel编译以及benchmark
     onlyGenerateCfg = False 
     # 最大进程数
-    nProcess = 1
+    nProcess = 100
     # 可见设备列表
     gpu_devices = [6]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
     # 当前后端类型
-    backendType = EnumBackendType.CUDA
+    backendType = EnumBackendType.HIP
     
     ######################################################################################
     # 命令行参数解析

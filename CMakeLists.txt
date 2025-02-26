@@ -6,16 +6,17 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
+set(LLVM_INSTALL_DIR "~/llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 set(USER_LLD_PATH "/opt/dtk/llvm/bin/ld.lld") 
 set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas") 
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
 set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
+set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/triton_rocm")
+set(PYTHON_VERSION "3.8")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
-set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/py310")
 # close some warnings
 add_compile_options(
   -Wno-unused-function
