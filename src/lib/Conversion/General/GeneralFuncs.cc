@@ -87,13 +87,13 @@ mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount) {
   return sumExpr;
 }
 
-mlir::AffineExpr shiftAffineExprDim(mlir::MLIRContext* context, mlir::AffineExpr expr, int shift) {
+mlir::AffineExpr shiftAffineExprDim(mlir::OpBuilder builder, mlir::AffineExpr expr, int shift) {
   // d0 + d1 + d2  =>  shift==1  =>  d1 + d2 + d3
   if (auto dimExpr_ = expr.dyn_cast<mlir::AffineDimExpr>()) {
-    return mlir::getAffineDimExpr(dimExpr_.getPosition() + shift, context);
+    return builder.getAffineDimExpr(dimExpr_.getPosition() + shift);
   } else if (auto binaryExpr_ = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
-    auto LHS = shiftAffineExprDim(context, binaryExpr_.getLHS(), shift);
-    auto RHS = shiftAffineExprDim(context, binaryExpr_.getRHS(), shift);
+    auto LHS = shiftAffineExprDim(builder, binaryExpr_.getLHS(), shift);
+    auto RHS = shiftAffineExprDim(builder, binaryExpr_.getRHS(), shift);
     return mlir::getAffineBinaryOpExpr(binaryExpr_.getKind(), LHS, RHS);
   } else {
     // allowed dim, constant, binaryOp
@@ -118,19 +118,19 @@ mlir::AffineMap addDimToMap(mlir::OpBuilder builder, mlir::AffineMap oldMap) {
   return mlir::AffineMap::get(oldMap.getNumDims() + 1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
 }
 
-mlir::AffineExpr getModifiedExpr(mlir::MLIRContext* context, mlir::AffineExpr inExpr, mlir::AffineExpr replaceExpr, int targetDim, int replaceNumberDims) {
+mlir::AffineExpr getModifiedExpr(mlir::OpBuilder builder, mlir::AffineExpr inExpr, mlir::AffineExpr replaceExpr, int targetDim, int replaceNumberDims) {
   // d0 + d1 + d2  =>  target==1 & replace==[d1 + d2 + d3] =>  d0 + [d1 + d2 + d3] + d4
   if (auto dimExpr_ = inExpr.dyn_cast<mlir::AffineDimExpr>()) {
     if (dimExpr_.getPosition() == targetDim) {
       return replaceExpr;
     } else if (dimExpr_.getPosition() > targetDim) {
-      return mlir::getAffineDimExpr(dimExpr_.getPosition() + replaceNumberDims - 1, context);
+      return builder.getAffineDimExpr(dimExpr_.getPosition() + replaceNumberDims - 1);
     } else {
       return dimExpr_;
     }
   } else if (auto binaryExpr_ = inExpr.dyn_cast<mlir::AffineBinaryOpExpr>()){
-    auto LHS = getModifiedExpr(context, binaryExpr_.getLHS(), replaceExpr, targetDim, replaceNumberDims);
-    auto RHS = getModifiedExpr(context, binaryExpr_.getRHS(), replaceExpr, targetDim, replaceNumberDims);
+    auto LHS = getModifiedExpr(builder, binaryExpr_.getLHS(), replaceExpr, targetDim, replaceNumberDims);
+    auto RHS = getModifiedExpr(builder, binaryExpr_.getRHS(), replaceExpr, targetDim, replaceNumberDims);
     return mlir::getAffineBinaryOpExpr(binaryExpr_.getKind(), LHS, RHS);
   } else {
     // allowed dim, constant, binaryOp
@@ -144,26 +144,25 @@ mlir::AffineMap getModifyedMap(mlir::OpBuilder builder, mlir::AffineMap oldMap, 
   // [d0 + d1, d2, d1 + d2]  replaceExpr==d1 + 2   =>  [d0 + d1 + 2, d2, d1 + 2 + d2]
   llvm::SmallVector<mlir::AffineExpr> newExprs;
   for (auto oldEpr : oldMap.getResults()) {
-    newExprs.push_back(getModifiedExpr(builder.getContext(), oldEpr, replaceExpr, targetDim, 1));
+    newExprs.push_back(getModifiedExpr(builder, oldEpr, replaceExpr, targetDim, 1));
   }
   return mlir::AffineMap::get(oldMap.getNumDims(), 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
 }
 
 mlir::AffineMap mapDimToConstant(mlir::OpBuilder builder, mlir::AffineMap map, int targat, int constant) {
   // {d1, d0 + d1 + d2, d2} & target==1 & replace==0  => {0, d0 + 0 + d1, d2}
-  mlir::MLIRContext* context = builder.getContext();
   auto oldExprs = map.getResults();
   mlir::SmallVector<mlir::AffineExpr> exprs;
   auto constantExpr = builder.getAffineConstantExpr(constant);
   for (auto expr : oldExprs) {
-    auto expr_ = getModifiedExpr(context, expr, constantExpr, targat, 0);
+    auto expr_ = getModifiedExpr(builder, expr, constantExpr, targat, 0);
     if (expr_.dyn_cast<mlir::AffineConstantExpr>() && expr.dyn_cast<mlir::AffineBinaryOpExpr>()) {
       exprs.push_back(constantExpr);
     } else {
       exprs.push_back(expr_);
     }
   }
-  return mlir::AffineMap::get(map.getNumDims()-1, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), context);
+  return mlir::AffineMap::get(map.getNumDims()-1, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
 }
 
 mlir::AffineExpr shiftTargetAffineExprDim(mlir::OpBuilder builder, mlir::AffineExpr expr, int target, int shift) {

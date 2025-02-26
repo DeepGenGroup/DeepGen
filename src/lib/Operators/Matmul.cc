@@ -18,16 +18,25 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
     llvm::errs() << ver.value() << "\n";
     return ;
   }
+  int64_t batch = 1;
+  int64_t m, n, k;
+  if (shape.size() == 4) {
+    batch = shape[0];
+    m = shape[1];
+    n = shape[2];
+    k = shape[3];
+  } else {
+    m = shape[0];
+    n = shape[1];
+    k = shape[2];
+  }
 
-  int64_t m = shape[0];
-  int64_t n = shape[1];
-  int64_t k = shape[2];
   std::vector<mlir::Type> mlirTypeArray;
-  for(auto type : dtypes){
-    auto mlirType = tools::getDType(builder,type);
+  for(auto type : dtypes) {
+    auto mlirType = tools::getDType(builder, type);
     mlirTypeArray.push_back(mlirType);
   }
-  mlir::func::FuncOp funcOp = createFunc(module, shape, mlirTypeArray, kernelName,isTransposeA);
+  mlir::func::FuncOp funcOp = createFunc(module, shape, mlirTypeArray, kernelName, isTransposeA);
   auto& bodyBlock = funcOp.front();
 
   // auto ip = builder.saveInsertionPoint();
@@ -35,13 +44,14 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
   mlir::ValueRange operands = bodyBlock.getArguments();
 
   mlir::Location loc_ = builder.getUnknownLoc();
-  mlir::SmallVector<int64_t, 3> lowerBounds = {0,0};
-  mlir::SmallVector<int64_t, 3> steps = {1,1};
-  mlir::SmallVector<int64_t, 3> upperBounds = {m, n};
+  mlir::SmallVector<int64_t, 3> lowerBounds = {0, 0 ,0};
+  mlir::SmallVector<int64_t, 3> steps = {1, 1, 1};
+  mlir::SmallVector<int64_t, 3> upperBounds = {batch, m, n};
   mlir::affine::buildAffineLoopNest(builder, loc_, lowerBounds, upperBounds, steps,
     [&](mlir::OpBuilder &nestedBuilder, mlir::Location loc, mlir::ValueRange ivs) {
-      auto i = ivs[0];
-      auto j = ivs[1];
+      auto b = ivs[0];
+      auto i = ivs[1];
+      auto j = ivs[2];
 
       auto zero = nestedBuilder.create<mlir::arith::ConstantOp>(loc, nestedBuilder.getFloatAttr(mlirTypeArray[2], 0));
 
@@ -50,19 +60,19 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
         auto k = iv;
         mlir::affine::AffineLoadOp ld_a = nullptr;
         if(!isTransposeA){
-          ld_a = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*A*/operands[0], mlir::ValueRange({i, k}));
+          ld_a = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*A*/operands[0], mlir::ValueRange({b, i, k}));
         }
         else{
-          ld_a = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*A*/operands[0], mlir::ValueRange({k, i}));
+          ld_a = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*A*/operands[0], mlir::ValueRange({b, k, i}));
         }
-        auto ld_b = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*B*/operands[1], mlir::ValueRange({k, j}));
+        auto ld_b = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*B*/operands[1], mlir::ValueRange({b, k, j}));
         auto mul = builder.create<mlir::arith::MulFOp>(nestedLoc, ld_a, ld_b);
         auto add = builder.create<mlir::arith::AddFOp>(nestedLoc, mul, iterArgs[0]);
         builder.create<mlir::affine::AffineYieldOp>(nestedLoc, add.getResult());
       };
       auto Cij = nestedBuilder.create<mlir::affine::AffineForOp>(loc, /*lowerBound*/0, k, /*step*/1, mlir::ValueRange({zero.getResult()}), kLoopBody);
 
-      nestedBuilder.create<mlir::affine::AffineStoreOp>(loc, Cij.getResult(0), /*C*/operands[2], mlir::ValueRange({i, j}));
+      nestedBuilder.create<mlir::affine::AffineStoreOp>(loc, Cij.getResult(0), /*C*/operands[2], mlir::ValueRange({b, i, j}));
     }
   );
   // builder.restoreInsertionPoint(ip);
@@ -71,8 +81,8 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
 
 std::optional<std::string> Matmul::verify(
   mlir::OpBuilder builder, std::vector<int64_t> shape, const std::vector<std::string>& dtypes) {
-  if (shape.size() != 3) {
-    std::string err{"Shape size must is 3."};
+  if (shape.size() != 3 && shape.size() != 4) {
+    std::string err{"Shape size must is 3 or 4."};
     return err;
   }
   if(dtypes.size() != 3) {
@@ -98,19 +108,29 @@ mlir::func::FuncOp Matmul::createFunc(
   bool isTransposeA
   )
 {
-  int64_t m = shape[0];
-  int64_t n = shape[1];
-  int64_t k = shape[2];
+  int64_t batch = 1;
+  int64_t m, n, k;
+  if (shape.size() == 4) {
+    batch = shape[0];
+    m = shape[1];
+    n = shape[2];
+    k = shape[3];
+  } else {
+    m = shape[0];
+    n = shape[1];
+    k = shape[2];
+  }
+
   // std::cout << "[D]createFunc: m=" << m << ";n=" << n << ";k=" << k << "isTransposeA=" << isTransposeA <<std::endl;
   std::vector<int64_t> shape_a;
   if(!isTransposeA){
-   shape_a = std::vector<int64_t>{m, k};
+   shape_a = std::vector<int64_t>{batch, m, k};
   }
   else{
-   shape_a = std::vector<int64_t>{k, m};
+   shape_a = std::vector<int64_t>{batch, k, m};
   }
-  auto shape_b = std::vector<int64_t>{k, n};
-  auto shape_c = std::vector<int64_t>{m, n};
+  auto shape_b = std::vector<int64_t>{batch, k, n};
+  auto shape_c = std::vector<int64_t>{batch, m, n};
   auto ms = MemorySpace::global;
   auto typeA = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_a), dtype[0], {}, static_cast<int>(ms));
   auto typeB = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_b), dtype[1], {}, static_cast<int>(ms));

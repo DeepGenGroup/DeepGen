@@ -277,7 +277,7 @@ std::vector<KernelInfo> generateKernels(
       auto K = config.at(KEY_K);
       bool isATranspose = config.at(KEY_IS_A_TRANSPOSE)> 0;
       auto kernel = generator.create<Operators::Matmul>(
-        std::vector<int64_t>{M, N, K},
+        std::vector<int64_t>{8, M, N, K},
         std::vector<std::string>{dtypeA,dtypeB,dtypeC},
         name,isATranspose
       );
@@ -450,9 +450,9 @@ int main(){
   // cuda
   std::vector<Config> configs = {
     {
-      {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 16}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 4}, 
+      {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 16}, {KEY_THREAD_SIZE_M, 8}, {KEY_THREAD_SIZE_N, 8}, 
       {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 4}, 
-      {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 4}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 4},
+      {KEY_BLOCK_LAYOUT_M, 1}, {KEY_BLOCK_LAYOUT_N, 2}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 4},
       {KEY_WARP_SCATTER_WIDTH_A, 4}, {KEY_WARP_SCATTER_WIDTH_B, 4}, {KEY_THREAD_SCATTER_WIDTH_A, 2}, {KEY_THREAD_SCATTER_WIDTH_B, 2}, 
       {KEY_LOCAL_SPLIT_U, 2}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 32}, {KEY_GLOB_STORE_WIDTH, 4}, 
       {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_REDUCE_C_CONTINUOUS, 1}, 

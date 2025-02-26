@@ -18,10 +18,8 @@ mlir::func::FuncOp buildFunction(mlir::ModuleOp module, const std::string& funcN
     region.emplaceBlock();
   }
   auto& body =  funcOp.front(); //? region.front()  : ;
-  int nums = static_cast<int>(inputsTypes.size());
-  for (int i = 0; i < nums; i++ ) {
-    body.addArguments(inputsTypes[i], builder.getUnknownLoc());
-  }
+  llvm::SmallVector<mlir::Location> locs(inputsTypes.size(), builder.getUnknownLoc());
+  body.addArguments(inputsTypes, locs);
   
   funcOp->setAttr(std::string("func.state"), builder.getStringAttr("cpu"));
   funcOp->setAttr(std::string("func.op.name"), builder.getStringAttr(OpName));

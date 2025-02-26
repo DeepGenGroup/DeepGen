@@ -3,6 +3,7 @@
 
 #include "Analysis/Analyzer.h"
 #include "Conversion/General/Rewriter.h"
+#include "Conversion/Matmul/Matmul.h"
 #include "Common/Utils.h"
 
 #include <unordered_map>

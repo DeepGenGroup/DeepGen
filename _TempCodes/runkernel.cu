@@ -1,5 +1,6 @@
 #include <iostream>
 #include <cuda_runtime.h>
+#include <cublas_v2.h>
 #include <driver_types.h>
 #include <algorithm>
 #include <vector>
@@ -18,30 +19,52 @@ void display(T *host, int len) {
     std::cout << "{" << host[0] << ", ..., " << host[start] << ", ..., "  << host[mid] << ", ..., "  << host[end] << ", ..., " << host[len - 1] << "}\n";
 }
 
-__global__ void gemm_kernel(float* A, float* B, float* C, int m, int n, int k) {
-    int row = blockIdx.y * blockDim.y + threadIdx.y;
-    int col = blockIdx.x * blockDim.x + threadIdx.x;
-    if (row < m && col < n) {
-        float sum = 0.0f;
-        for (int i = 0; i < k; ++i) {
-            sum += A[i*m+row] * B[i*n+col];
-        }
-        C[row * n + col] = sum;
-    }
+// cublas gemm
+cublasStatus_t cublasMatMulTransA(cublasHandle_t handle, const float* A, const float* B, float* C, int M, int N, int K) {
+  float alpha = 1.0f;
+  float beta = 0.0f;
+  cublasStatus_t status;
+  bool handleCreated = false;
+  if (!handle) {
+      status = cublasCreate(&handle);
+      if (status != CUBLAS_STATUS_SUCCESS) {
+          return status;
+      }
+      handleCreated = true;
+  }
+  status = cublasSgemm(handle,
+                      CUBLAS_OP_N,   // A不转置
+                      CUBLAS_OP_T,   // B转置
+                      M,             // 结果矩阵行数
+                      N,             // 结果矩阵列数
+                      K,             // 公共维度
+                      &alpha,
+                      A, M,          // A的维度M×K，lda=M
+                      B, N,          // B的维度NxK，ldb=N
+                      &beta,
+                      C, M);         // C的维度M×N，ldc=M
+
+  // 清理临时创建的句柄
+  if (handleCreated) {
+      cublasDestroy(handle);
+  }
+  return status;
 }
 
+// gpu 验证
 __global__ void verify_kernel(float* C, float* D, int m, int n) {
     int row = blockIdx.y * blockDim.y + threadIdx.y;
     int col = blockIdx.x * blockDim.x + threadIdx.x;
     if (row < m && col < n) {
-      float sub = C[row * n + col] - D[row * n + col];
-      if (sub >= 0.01f || sub <= -0.01f) {
-        printf("error index: (y=%d, x=%d)\nerrer mine: %f   error verify: %f\nsub: %f\n", row, col, C[row * n + col], D[row * n + col], C[row * n + col]-D[row * n + col]);
+      float sub = C[row * n + col] - D[col * m + row];
+      if (sub >= 0.0000001f || sub <= -0.0000001f) {
+        // printf("%d %d\n", row, col);
+        printf("error!\nindex: (y=%d, x=%d)\nmine: %f  verify: %.8f\nsub: %.8f\n", row, col, C[row * n + col], D[col * m + row], sub);
       }
     }
 }
 
-// nvcc -o ./bin/runkernel runkernel.cu -lcuda
+// nvcc -o ./bin/runkernel runkernel.cu -lcuda -lcublas
 int main(int argc, char** argv) {
     int device_count;
     CUresult cuResult = cuInit(0);
@@ -63,7 +86,7 @@ int main(int argc, char** argv) {
 
     // 加载.cubin模块
     CUmodule module;
-    CUresult result = cuModuleLoad(&module, argv[6]);
+    CUresult result = cuModuleLoad(&module, argv[7]);
     if (result != CUDA_SUCCESS) {
         std::cerr << "Failed to load module: " << result << std::endl;
         return -1;
@@ -71,7 +94,7 @@ int main(int argc, char** argv) {
 
     // 获取内核函数句柄
     CUfunction kernel;
-    result = cuModuleGetFunction(&kernel, module, argv[7]);
+    result = cuModuleGetFunction(&kernel, module, argv[8]);
     if (result != CUDA_SUCCESS) {
         std::cerr << "Failed to get kernel function" << std::endl;
         return -1;
@@ -86,12 +109,12 @@ int main(int argc, char** argv) {
     float *C = new float[N * M];
     float *D = new float[N * M];
     for (int i = 0; i < M * K; i++) {
-        A[i] = (rand() % 1000) * 0.01f;
-        // A[i] = 1.0f;
+        // A[i] = (rand() % 1000) * 0.01f;
+        A[i] = 1.0f;
     } 
     for (int i = 0; i < N * K; i++) {
-        B[i] = (rand() % 1000) * 0.01f;
-        // B[i] = 1.0f;
+        // B[i] = (rand() % 1000) * 0.01f;
+        B[i] = 1.0f;
     }
 
     float *d_A, *d_B, *d_C, *d_D;
@@ -105,13 +128,20 @@ int main(int argc, char** argv) {
 
     void* args[] = {&d_A, &d_B, &d_C};
     dim3 dimBlock = {16, 16};
-    dim3 dimGrid = {(N + dimBlock.x - 1) / dimBlock.x, (M + dimBlock.y - 1) / dimBlock.y};
+    dim3 dimGrid = {N  / dimBlock.x, M  / dimBlock.y};
 
     // 调用核函数
-    if (!cuLaunchKernel(kernel, std::stoi(argv[4]), 1, 1, std::stoi(argv[5]), 1, 1, 16384, 0, args, NULL)) {
+    cudaError_t err;
+    cuLaunchKernel(kernel, std::stoi(argv[4]), 1, 1, std::stoi(argv[5]), 1, 1, std::stoi(argv[6]), 0, args, NULL);
+    err = cudaDeviceSynchronize();
+    if (err != cudaSuccess) {
+        printf("设备同步失败: %s\n", cudaGetErrorString(err));
         return 1;
     }
-    gemm_kernel<<<dimGrid, dimBlock>>>(d_A, d_B, d_D, M, N, K);
+
+    cublasHandle_t handle;
+    cublasCreate(&handle);
+    cublasMatMulTransA(handle, d_A, d_B, d_D, M, N, K);
     verify_kernel<<<dimGrid, dimBlock>>>(d_C, d_D, M, N);
 
     // 同步设备

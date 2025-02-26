@@ -45,13 +45,13 @@ MatmulConfigUtils::MatmulConfigUtils(const std::map<std::string,int>& config){
 
 bool MatmulOptimizer::applicable(mlir::ModuleOp& module) {
   clear();
-  auto&& matmulFuncs = Analyzer::collectFunctions(module, "Matmul");
+  auto matmulFuncs = Analyzer::collectFunctions(module, "Matmul");
   if (!matmulFuncs.size()) {
     llvm::errs() << "Optimization failed: No find Matmul funcOp.\n";
     return false;
   }
 
-  for (auto& matmulFunc : matmulFuncs) {
+  for (auto matmulFunc : matmulFuncs) {
     if (matmuls.count(matmulFunc) != 0 || matmulLoops.count(matmulFunc) != 0
       || matmulBuffers.count(matmulFunc) != 0) {
       llvm::errs() << "Optimization failed: Duplicated Matmul in module\n";
@@ -59,8 +59,8 @@ bool MatmulOptimizer::applicable(mlir::ModuleOp& module) {
     }
 
     matmuls.insert(matmulFunc);
-    auto&& loops = Analyzer::collectFuncLoops(matmulFunc);
-    matmulLoops[matmulFunc] = std::move(loops);
+    auto loops = Analyzer::collectFuncLoops(matmulFunc);
+    matmulLoops[matmulFunc] = loops;
     auto funcArgs = matmulFunc.front().getArguments();
 
     MemoryBuffer ABC;
@@ -70,10 +70,6 @@ bool MatmulOptimizer::applicable(mlir::ModuleOp& module) {
     matmulBuffers[matmulFunc] = ABC;
   }
   return true;
-}
-
-void test(mlir::AffineMap map) {
-  LOG_DEBUG("",map);
 }
 
 mlir::AffineMap MatmulOptimizer::getGlobToTempMapA(mlir::OpBuilder& builder, const std::map<std::string, int>& config) {
@@ -292,13 +288,19 @@ mlir::AffineMap MatmulOptimizer::getReduceMapRegC(mlir::OpBuilder& builder, cons
 
 void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string, int> config) {
   mlir::OpBuilder builder(module);
-  for (auto& matmul : matmuls) {
+  for (auto matmul : matmuls) {
     matmul->setAttr(std::string("func.state"), builder.getStringAttr("gpu"));
     auto loops = matmulLoops[matmul];
-    auto loopM = loops[0], loopN = loops[1], loopK = loops[2];
+    auto loopBatch = loops[0]; auto loopM = loops[1], loopN = loops[2], loopK = loops[3];
     auto buffers = matmulBuffers[matmul];
     auto A = buffers.A, B = buffers.B, C = buffers.C;
     // LOG_DEBUG("===== original mlir =======\n",module);
+
+    if (!Matmul::haveBatch(loopBatch)) {
+      llvm::SmallVector<mlir::Value> newBufs = Matmul::amendOneDimBatch(matmul, loopBatch);
+      A = newBufs[0], B = newBufs[1], C = newBufs[2];
+      loopBatch = nullptr;
+    }
 
     auto m_axes = Rewriter::split(loopM, 3, {config["THREAD_SIZE_M"], config["BLOCK_SIZE_M"]});
     auto n_axes = Rewriter::split(loopN, 3, {config["THREAD_SIZE_N"], config["BLOCK_SIZE_N"]});
@@ -307,7 +309,12 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     Rewriter::reorder({m_outer, n_outer, m_mider, n_mider, m_inner, n_inner});
     // LOG_DEBUG("===== after split & reorder =======\n",module);
 
-    auto gridLevel = Rewriter::parallel({m_outer, n_outer}, std::string(BLOCKIDX));
+    mlir::affine::AffineParallelOp gridLevel;
+    if (loopBatch != nullptr) {
+      gridLevel = Rewriter::parallel({loopBatch, m_outer, n_outer}, std::string(BLOCKIDX));
+    } else {
+      gridLevel = Rewriter::parallel({m_outer, n_outer}, std::string(BLOCKIDX));
+    }
     auto blockLevel = Rewriter::parallel({m_mider, n_mider}, std::string(THREADIDX));
     // LOG_DEBUG("===== after parallel =======\n",module);
 
@@ -348,38 +355,40 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     
     auto blockIdx = Analyzer::getParallelIdx(gridLevel);
     auto threadIdx = Analyzer::getParallelIdx(blockLevel);
+    
     auto loadTileAMap = getGlobToTempMapA(builder, config);
-    // test(loadTileAMap);
-    auto loadTileA = Rewriter::read(A, tempA, loadTileAMap, {blockIdx[0], threadIdx[0], k_outer.getInductionVar()}, 
-                                    {config["GLOB_LOAD_WIDTH_A"]}, k_outer, Position::begin);
     auto loadTileBMap = getGlobToTempMapB(builder, config);
-    // test(loadTileBMap);
-    auto loadTileB = Rewriter::read(B, tempB, loadTileBMap, {blockIdx[1], threadIdx[0], k_outer.getInductionVar()}, 
-                                    {config["GLOB_LOAD_WIDTH_B"]}, loadTileA, Position::after);
+    llvm::SmallVector<mlir::Value> ltaOperands, ltbOperands;
+    if (loopBatch != nullptr) {
+      loadTileAMap = Matmul::addBatchDimMap(builder, loadTileAMap);
+      loadTileBMap = Matmul::addBatchDimMap(builder, loadTileBMap);
+      ltaOperands = {blockIdx[0], blockIdx[1], threadIdx[0], k_outer.getInductionVar()};
+      ltbOperands = {blockIdx[0], blockIdx[2], threadIdx[0], k_outer.getInductionVar()};
+    } else {
+      ltaOperands = {blockIdx[0], threadIdx[0], k_outer.getInductionVar()};
+      ltbOperands = {blockIdx[1], threadIdx[0], k_outer.getInductionVar()};
+    }
+    auto loadTileA = Rewriter::read(A, tempA, loadTileAMap, ltaOperands, {config["GLOB_LOAD_WIDTH_A"]}, k_outer, Position::begin);
+    auto loadTileB = Rewriter::read(B, tempB, loadTileBMap, ltbOperands, {config["GLOB_LOAD_WIDTH_B"]}, loadTileA, Position::after);
     // LOG_DEBUG("===== before read A/B =======\n",module);
 
     auto storeTileAMap = getTempToSharedMapSMA(builder, config);
-    // test(storeTileAMap);
     auto storeTileA = Rewriter::write(tempA, smA, storeTileAMap, {threadIdx[0]}, {config["GLOB_LOAD_WIDTH_A"]}, loadTileB, Position::after);
     auto storeTileBMap = getTempToSharedMapSMB(builder, config);
-    // test(storeTileBMap);
     auto storeTileB = Rewriter::write(tempB, smB, storeTileBMap, {threadIdx[0]}, {config["GLOB_LOAD_WIDTH_B"]}, storeTileA, Position::after);
     auto gpuBarrierPrefix = Rewriter::barrier(loadTileA, Position::before);
     auto gpuBarrierSuffix = Rewriter::barrier(storeTileB, Position::after);
     // LOG_DEBUG("===== write A/B =======\n",module);
 
     auto loadFragAMap = getSharedToRegMapSMA(builder, config);
-    // test(loadFragAMap);
     auto loadFragA = Rewriter::read(smA, regA, loadFragAMap, {threadIdx[0], k_mider.getInductionVar()}, 
                                     {config["WARP_SCATTER_WIDTH_A"], config["THREAD_SCATTER_WIDTH_A"]}, k_mider, Position::begin);
     auto loadFragBMap = getSharedToRegMapSMB(builder, config);
-    // test(loadFragBMap);
     auto loadFragB = Rewriter::read(smB, regB, loadFragBMap, {threadIdx[0], k_mider.getInductionVar()}, 
                                     {config["WARP_SCATTER_WIDTH_B"], config["THREAD_SCATTER_WIDTH_B"]}, loadFragA, Position::after);
     // LOG_DEBUG("===== read sh_A/B =======\n",module);
 
     auto cacheRead = getCalculateMapReg(builder, config);
-    // test(cacheRead);
     Rewriter::cache_read(n_inner, A, regA, cacheRead, {m_inner.getInductionVar()});
     Rewriter::cache_read(n_inner, B, regB, cacheRead, {n_inner.getInductionVar()});
     // LOG_DEBUG("===== load regA & cache_read =======\n",module);
@@ -400,29 +409,43 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
       smC = Rewriter::alloc_buffer(/*parallelLevel*/gridLevel, MemorySpace::shared, {config["LOCAL_SPLIT_U"], config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"]}, elementC, "smC");
 
       auto cacheWriteShCMap = getRegToSharedMapSMC(builder, config);
-      // test(cacheWriteShCMap);
       Rewriter::cache_write(m_inner_0, C, smC, cacheWriteShCMap, 
                             {threadIdx[0], m_inner_0.getInductionVar(),n_inner_0.getInductionVar(), m_inner_1.getInductionVar(), 
                             n_inner_1.getInductionVar(), m_inner_2.getInductionVar(), n_inner_2.getInductionVar()});
       // LOG_DEBUG("===== load cache_write regC to C =======\n",module);
 
       auto reduceCMap = getReduceMapSMC(builder, config);
-      // test(reduceCMap);
       auto reduceCLoop = Rewriter::splitUReduce(smC, regC_, reduceCMap, {threadIdx[0]}, config["LOCAL_SPLIT_U"], config["GLOB_STORE_WIDTH"], m_inner_0, Position::after);
       auto reduceLoop_0 = reduceCLoop.first, reduceLoop_1 = reduceCLoop.second;
       // LOG_DEBUG("===== load splitUReduce =======\n",module);
 
       auto writeCMap = getReduceMapRegC(builder, config);
-      // test(writeCMap);
-      Rewriter::splitUWrite(regC_, C, writeCMap, {blockIdx[0], blockIdx[1], threadIdx[0]}, config["LOCAL_SPLIT_U"], config["GLOB_STORE_WIDTH"], reduceLoop_1, Position::after);
+      if (loopBatch != nullptr) {
+        writeCMap = Matmul::addBatchDimMap(builder, writeCMap);
+      }
+      llvm::SmallVector<mlir::Value> wcOperands;
+      for (auto bidx : blockIdx) {
+        wcOperands.push_back(bidx);
+      }
+      wcOperands.push_back(threadIdx[0]);
+      Rewriter::splitUWrite(regC_, C, writeCMap, wcOperands, config["LOCAL_SPLIT_U"], config["GLOB_STORE_WIDTH"], reduceLoop_1, Position::after);
       auto StoreBarrier1 = Rewriter::barrier(m_inner_0, Position::after);
       // LOG_DEBUG("===== load write to C =======\n",module);
     } else {
       auto cacheWriteCMap = getRegToGlobMapC(builder, config);
-      // test(cacheWriteCMap);
-      Rewriter::cache_write(m_inner_0, C, C, cacheWriteCMap, {blockIdx[0], blockIdx[1], threadIdx[0], 
-                            m_inner_0.getInductionVar(),n_inner_0.getInductionVar(), m_inner_1.getInductionVar(), 
-                            n_inner_1.getInductionVar(),m_inner_2.getInductionVar(), n_inner_2.getInductionVar()});
+      if (loopBatch != nullptr) {
+        cacheWriteCMap = Matmul::addBatchDimMap(builder, cacheWriteCMap);
+      }
+      llvm::SmallVector<mlir::Value> cwcOperands;
+      for (auto bidx : blockIdx) {
+        cwcOperands.push_back(bidx);
+      }
+      cwcOperands.push_back(threadIdx[0]);
+      for (int i=0; i<3; i++) {
+        cwcOperands.push_back(m_inner_axes[i].getInductionVar());
+        cwcOperands.push_back(n_inner_axes[i].getInductionVar());
+      }
+      Rewriter::cache_write(m_inner_0, C, C, cacheWriteCMap, cwcOperands);
       // LOG_DEBUG("===== load cache_write regC to C =======\n",module);
     }
 

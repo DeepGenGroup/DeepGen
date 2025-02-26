@@ -18,7 +18,7 @@ std::vector<mlir::func::FuncOp> collectFunctions(mlir::ModuleOp& module, const s
         result.push_back(funcOp);
     }   
   });
-  return std::move(result);
+  return result;
 }
 
 int64_t getThreadPerBlock(mlir::affine::AffineParallelOp parallelLevel) {
@@ -51,7 +51,7 @@ std::vector<mlir::affine::AffineForOp> collectFuncLoops(mlir::func::FuncOp funcO
   funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
     res.push_back(forOp);
   });
-  return std::move(res);
+  return res;
 }
 
 std::set<std::string> collectFuncNames(mlir::ModuleOp& module) {

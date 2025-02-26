@@ -89,11 +89,11 @@ std::set<mlir::Operation*> getValueUsers(mlir::Value var);
 
 mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount);
 
-mlir::AffineExpr shiftAffineExprDim(mlir::MLIRContext* context, mlir::AffineExpr expr, int shift);
+mlir::AffineExpr shiftAffineExprDim(mlir::OpBuilder builder, mlir::AffineExpr expr, int shift);
 
 mlir::AffineMap addDimToMap(mlir::OpBuilder builder, mlir::AffineMap oldMap);
 
-mlir::AffineExpr getModifiedExpr(mlir::MLIRContext* context, mlir::AffineExpr inExpr, mlir::AffineExpr replaceExpr, int targetDim, int replaceNumberDims);
+mlir::AffineExpr getModifiedExpr(mlir::OpBuilder builder, mlir::AffineExpr inExpr, mlir::AffineExpr replaceExpr, int targetDim, int replaceNumberDims);
 
 mlir::AffineMap getModifyedMap(mlir::OpBuilder builder, mlir::AffineMap oldMap, mlir::AffineExpr replaceExpr, int targetDim);
 
@@ -121,12 +121,12 @@ int replaceIndexWithExpr(mlir::Value oldIv, std::vector<mlir::Value>& newIvs, Af
   }
 
   // [d0 + d1 + d2]  =>  target==3  =>  [d3 + d4 + d5]
-  replaceExpr = shiftAffineExprDim(builder.getContext(), replaceExpr, targetDim);
+  replaceExpr = shiftAffineExprDim(builder, replaceExpr, targetDim);
 
   // d0 + d1 + d2 + [d3] + d4  =>  d0 + d1 + d2 + [d3 + d4 + d5] + d6
   auto exprs_ = memOp.getAffineMap().getResults();
   for (auto expr_ : exprs_) {
-    auto expr = getModifiedExpr(builder.getContext(), expr_, replaceExpr, targetDim, newIvs.size());
+    auto expr = getModifiedExpr(builder, expr_, replaceExpr, targetDim, newIvs.size());
     exprs.push_back(expr);
   }  
   return operands.size();
@@ -232,7 +232,7 @@ getPerfetchMapDatas(mlir::OpBuilder builder, loadOrStoreOp lSOp, std::map<mlir::
       // map
       llvm::SmallVector<mlir::AffineExpr> newExprs;
       auto addExprDim = map.getNumDims() - newLoopIvs.size() - otherOperandNum;
-      addExpr = shiftAffineExprDim(builder.getContext(), addExpr, addExprDim);
+      addExpr = shiftAffineExprDim(builder, addExpr, addExprDim);
       newExprs.push_back(addExpr);
       for (auto oldExpr : map.getResults()) {
         auto newExpr = shiftTargetAffineExprDim(builder, oldExpr, addExprDim, 1);
@@ -310,7 +310,7 @@ getCalculateMapDatas(mlir::OpBuilder builder, loadOp lSOp, std::map<mlir::Value,
     // noParallelOperandNum = 0;
     llvm::SmallVector<mlir::AffineExpr> newExprs;
     auto addExprDim = map.getNumDims() - noParallelOperandNum;
-    addExpr = shiftAffineExprDim(builder.getContext(), addExpr, addExprDim);
+    addExpr = shiftAffineExprDim(builder, addExpr, addExprDim);
     newExprs.push_back(addExpr);
     for (auto oldExpr : map.getResults()) {
       auto newExpr = shiftTargetAffineExprDim(builder, oldExpr, addExprDim, 1);
@@ -341,7 +341,7 @@ getRegPerfetchOuterAdjustDatas(mlir::OpBuilder builder, loadOp lSOp, int nestedN
   int index = operands.size() - nestedNum - 1;
   auto map = lSOp.getAffineMap();
   for (int i=1; i<map.getNumResults(); i++) {
-    auto newExpr = getModifiedExpr(builder.getContext(), map.getResult(i), cst0, index, 0);
+    auto newExpr = getModifiedExpr(builder, map.getResult(i), cst0, index, 0);
     newExprs.push_back(newExpr);
   }
   auto newMap = mlir::AffineMap::get(map.getNumDims() - 1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
