@@ -277,7 +277,7 @@ std::vector<KernelInfo> generateKernels(
       auto K = config.at(KEY_K);
       bool isATranspose = config.at(KEY_IS_A_TRANSPOSE)> 0;
       auto kernel = generator.create<Operators::Matmul>(
-        std::vector<int64_t>{8, M, N, K},
+        std::vector<int64_t>{ M, N, K},
         std::vector<std::string>{dtypeA,dtypeB,dtypeC},
         name,isATranspose
       );

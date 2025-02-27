@@ -54,7 +54,7 @@ class KernelTestResult :
         self.kpm.assignWithJson(jsonObj['config'])
 
 class PerfTester :
-    def __init__(self,devId:int):
+    def __init__(self,devId:int,atol:float,rtol:float):
         self.matA = None
         self.matB = None
         self.matC = None
@@ -65,6 +65,8 @@ class PerfTester :
         self.check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
         self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/BenchmarkTorchEps_{devId}.log'
         self._devId = devId
+        self._atol = atol
+        self._rtol = rtol
     
     def _init_cuda(self) :
         DeviceInfo.set_visible_devices([self._devId])
@@ -164,7 +166,7 @@ class PerfTester :
             res.append(eps)
         print("c=",self.matC)
 
-        if torch.allclose(self.matC, self.matD, atol=1e-1, rtol=1e-1):
+        if torch.allclose(self.matC, self.matD, atol=self._atol, rtol=self._rtol):
             print('test correct!')
             result.isCorrect = True
             result.torch_elapseTimeMs = self.torch_eps
@@ -308,7 +310,9 @@ class SerialCompileTask :
 class ParallelTaskManager :
     ctx = multiprocessing.get_context('spawn')
     Process = ctx.Process
-    def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50):
+    def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, 
+                 benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50,
+                 atol= 1e-4, rtol=1e-4):
         self.locks = [] # ParallelTaskManager.ctx.Lock()
         self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
@@ -325,6 +329,8 @@ class ParallelTaskManager :
         self.topNum = keepTopNum
         self.torchDynamicLogPath = torchDynamicLogPath
         self.nTorchEpsInitTest = nTorchEpsInitTest
+        self.atol = atol
+        self.rtol = rtol
          
     @staticmethod
     def _innerCreateTesterProc(dev,lock,
@@ -334,9 +340,9 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest) :
+        nTorchEpsInitTest,atol,rtol) :
 
-        tester = PerfTester(dev)
+        tester = PerfTester(dev,atol=atol,rtol=rtol)
         parsedBests = []
         try:
             if os.path.exists(outfilename):
@@ -363,10 +369,10 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest) :
+        nTorchEpsInitTest,atol,rtol) :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
+            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
         worker.start()
         while True:
             worker.join()
@@ -378,7 +384,7 @@ class ParallelTaskManager :
                 del worker; worker = None
                 time.sleep(1)
                 worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, args=(devId, lock, endSignal,perfLog,nBenchMark,
-                                              nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest))
+                                              nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
                 worker.start()
     
     def _initPerfMonitors(self) :
@@ -394,7 +400,8 @@ class ParallelTaskManager :
                     self.nWarmup,
                     self.topNum,
                     self.torchDynamicLogPath,
-                    self.nTorchEpsInitTest)
+                    self.nTorchEpsInitTest,
+                    self.atol,self.rtol)
                 )  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)

@@ -7,11 +7,11 @@ if __name__ == '__main__' :
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
     # Tuning 参数空间配置文件
-    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_1024_noLSU.json'
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_1024_LSU.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
     perfPAth = f'{PathManager.project_dir()}/perfRecordlog_'
     # 调优空间存储文件
-    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_1024noLSU.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_1024LSU.json'
     # 是否只进行调优空间生成并存入 cacheTuningSPaceFile，不执行kernel编译以及benchmark
     onlyGenerateCfg = False 
     # 最大进程数
@@ -53,7 +53,9 @@ if __name__ == '__main__' :
             warmupcnt=1,  # 每轮执行warmup次数
             keepTopNum = 15,  # 最佳结果保留前xx（取中位数）
             torchDynamicLogPath='',  # 是否周期性记录torch对应kernel的性能变化
-            nTorchEpsInitTest=30  # 测量torch的baseline时所运行次数（取中位数）
+            nTorchEpsInitTest=30,  # 测量torch的baseline时所运行次数（取中位数）
+            atol=1e-1,  # 绝对误差
+            rtol=1e-1   # 相对误差
         )
         tm.run(backendtype=backendType ,  # 后端类型
                archInfo=arch,
