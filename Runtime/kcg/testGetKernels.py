@@ -4,7 +4,7 @@ if __name__ == '__main__' :
     from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
     import sys
     # 路径管理器初始化 & 清理缓存数据（可选）
-    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True)
+    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
     # Tuning 参数空间配置文件
     tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_1024_noLSU.json'
@@ -17,12 +17,12 @@ if __name__ == '__main__' :
     # 最大进程数
     nProcess = 100
     # 可见设备列表
-    gpu_devices = [6]  
+    gpu_devices = [0]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
     # 当前后端类型 & 架构信息
-    backendType = EnumBackendType.HIP
-    arch = "906"
+    backendType = EnumBackendType.CUDA  
+    arch = "70"
     ######################################################################################
     # 命令行参数解析
     if len(sys.argv) > 1 :

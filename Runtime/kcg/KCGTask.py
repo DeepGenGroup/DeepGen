@@ -59,19 +59,18 @@ class PerfTester :
         self.matB = None
         self.matC = None
         self.matD = None
-        DeviceInfo.set_visible_devices([devId])
-        DeviceInfo.set_current_device(0)
         self.torch_eps = -1.0  # torch的eps，用于计算 speedup
         self.BestPerf = [] #: List[KernelTestResult]
         self.torchDynamicEps = []  # torch的动态eps，用于描述torch的性能变化（卡的稳定性）
         self.check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
         self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/BenchmarkTorchEps_{devId}.log'
         self._devId = devId
+    
+    def _init_cuda(self) :
+        DeviceInfo.set_visible_devices([self._devId])
+        DeviceInfo.set_current_device(self._devId)
         if not torch.cuda.is_available() :
             torch.cuda.init()
-            torch.cuda.empty_cache()
-            torch.cuda.synchronize()
-            
     
     def _compare_with_error(self, tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
         abs_diff = torch.abs(tensor1 - tensor2)
@@ -90,10 +89,9 @@ class PerfTester :
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
-        d = torch.matmul(matrixA, matrixB)
+        self.matD = torch.matmul(matrixA, matrixB)
         ev_end.record()
         torch.cuda.synchronize()
-        self.matD = d
         eps = ev_start.elapsed_time(ev_end)
         return (self.matD, eps)
     
@@ -121,7 +119,6 @@ class PerfTester :
     def _inner_test_kcg(self, a : torch.tensor, b : torch.tensor, c : torch.tensor, 
                         packedKernel : CompiledKernel,
                         start_event : torch.cuda.Event, end_event : torch.cuda.Event) :
-        # torch.cuda.synchronize()
         start_event.record()
         packedKernel.run(a,b,c)
         end_event.record()
@@ -131,6 +128,7 @@ class PerfTester :
     
     def _test_perf(self, kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, 
                    benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50) -> KernelTestResult:
+        self._init_cuda()
         if self.matA is None or self.matB is None :
             self._init_AB(kpm,inConfig)
         result = KernelTestResult(kpm)

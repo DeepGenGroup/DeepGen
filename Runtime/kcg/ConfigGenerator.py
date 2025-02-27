@@ -4,6 +4,7 @@ from Utils import *
 import multiprocessing
 from Operators.matmul import *
 from CreateCfgAndCompile import CreateMatmulConfig
+# from NewCfgTest import CreateMatmulConfig
 # 功能：根据 /home/xushilong/CodeGenDemo/TuningConfigs/GEMM_configs_2.json， 输出所有参数的组合并校验。校验通过的加入到 tuning space
 # tuning space 为一个文件夹，文件夹内含很多小json，共同组成一个很大的调优空间
 # tuning space 的命名由用户输入
