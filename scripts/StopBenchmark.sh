@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # 查找所有包含 "Get" 关键字的进程（排除 grep 自身）
-pids=$(pgrep -f "testGetKernels")
+pids=$(pgrep -f "testGetKernels" -u $USER)
 
 if [ -z "$pids" ]; then
     echo "未找到任何 testGetKernels 进程"

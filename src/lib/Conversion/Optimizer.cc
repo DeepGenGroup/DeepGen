@@ -404,6 +404,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
 
     mlir::Value smC, regC_;
     if (config["LOCAL_SPLIT_U"] > 1) {
+      auto LSUBarrier = Rewriter::barrier(m_inner_0, Position::before);
       auto elementC = C.getType().dyn_cast<mlir::MemRefType>().getElementType();
       regC_ = Rewriter::alloc_buffer(/*parallelLevel*/blockLevel, MemorySpace::local, {config["THREAD_SIZE_M"] * config["THREAD_SIZE_N"]}, elementC, "regC");
       smC = Rewriter::alloc_buffer(/*parallelLevel*/gridLevel, MemorySpace::shared, {config["LOCAL_SPLIT_U"], config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"]}, elementC, "smC");
