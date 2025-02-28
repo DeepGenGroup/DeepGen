@@ -370,6 +370,7 @@ class PathManager :
     
     @staticmethod
     def init(clearPkl = False, clearDump = False, clearOverride = False, clearCache = False, clearTmp = False) :
+        print("PathManager initializing ... ",flush=True)
         os.makedirs(PathManager.pikle_dir(),exist_ok=True)
         os.makedirs(PathManager.default_cache_dir(),exist_ok=True)
         os.makedirs(PathManager.default_override_dir(),exist_ok=True)

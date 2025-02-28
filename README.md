@@ -35,7 +35,46 @@
 
 ## 2.构建&运行方法
 ### 2.1 构建
-使用Compile.sh脚本编译。其中`is_as_pymodule`表示将MLIR后端编译为库（ON）或调试用exe文件（OFF）
+使用Compile.sh脚本编译。其中`is_as_pymodule`表示将MLIR后端编译为库（ON）或调试用exe文件（OFF）   
+根路径下的 CMakeLists 说明：
+```cmake
+# project config
+###################################################################
+cmake_minimum_required(VERSION 3.15.0)
+project(KernelCodeGen LANGUAGES CXX C)    # delete CUDA
+set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")    # 默认使用c++17
+
+############################ User config #####################
+set(LLVM_INSTALL_DIR "~/llvm-install")         # llvm安装目录
+set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn")   # 调试用输出amdgcn的路径
+set(USER_LLD_PATH "/opt/dtk/llvm/bin/ld.lld")   # ld.lld 连接器的路径
+set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas")   # ptxas的路径
+set(CUDA_CAP        70)     # CUDA计算能力编号，通过 scripts/GetCudaInfo 获得
+set(PTXAS_VERSION   83)     # PTXAS版本 ，通过 scripts/GetCudaInfo 获得
+set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")     # cuda头文件路径
+set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/triton_rocm")   # python虚拟环境路径
+set(PYTHON_VERSION "3.8")           # python版本号
+
+option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)  # 是否将DeegGen编译为so/exe（exe为debug用，发布版本中取消）
+# close some warnings     编译时暂时取消部分warning。待发布时需完善代码
+add_compile_options(
+  -Wno-unused-function
+  -Wno-unused-variable
+  -Wno-unused-result
+  -Wno-sign-compare
+  -Wno-unused-but-set-variable
+  -Wno-return-local-addr
+  -Wno-parentheses
+  -Wno-cast-qual
+  -Wno-unused-but-set-parameter
+  -Wno-deprecated-declarations
+  -Wno-unused-value
+  )
+
+##########################################################################
+  
+```
 
 ### 2.2 参数配置&运行
 1. exe模式   
