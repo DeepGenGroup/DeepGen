@@ -20,7 +20,7 @@ def get_cuda_capability(capability):
     return capability
 
 def ptx_get_version() -> int:
-    result = subprocess.check_output(["/usr/local/cuda/bin/ptxas", "--version"], stderr=subprocess.STDOUT)
+    result = subprocess.check_output(["ptxas", "--version"], stderr=subprocess.STDOUT)
     if result is not None:
         version = re.search(r".*release (\d+\.\d+).*", result.decode("utf-8"), flags=re.MULTILINE)
         if version is not None:

@@ -321,13 +321,22 @@ class DeviceInfo :
 
 # 路径管理器。存放了各种路径设置
 class PathManager :
+    _s_cuda_install_dir = ""
     @staticmethod
     def project_dir()->str:
         return Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
     
     @staticmethod
     def cuda_install_dir()->str:
-        return '/usr/local/cuda'
+        if len(PathManager._s_cuda_install_dir) <= 0 :
+            import subprocess
+            result = subprocess.run(['which','nvcc'], capture_output=True, text=True)
+            ret = result.stdout.strip()
+            index = ret.find("/bin/nvcc")
+            if index < 0 :
+                assert False, "Cannot found nvcc. PLease set PATH env first!"
+            PathManager._s_cuda_install_dir = ret[0:index]
+        return PathManager._s_cuda_install_dir
     
     @staticmethod
     def third_party_dir()->str:
