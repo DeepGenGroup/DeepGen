@@ -73,6 +73,7 @@ class PerfTester :
         DeviceInfo.set_current_device(self._devId)
         if not torch.cuda.is_available() :
             torch.cuda.init()
+            torch.cuda.empty_cache()
     
     def _compare_with_error(self, tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
         abs_diff = torch.abs(tensor1 - tensor2)
@@ -353,6 +354,7 @@ class ParallelTaskManager :
                         ktr = KernelTestResult(kpm)
                         ktr.parseFromJson(cfg)
                         parsedBests.append(ktr)
+                        # tester.torch_eps = ktr.torch_elapseTimeMs
         except Exception :
             pass
         if len(parsedBests) > 0 :

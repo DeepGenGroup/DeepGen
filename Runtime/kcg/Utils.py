@@ -24,19 +24,6 @@ def is_hip():
     return torch.version.hip is not None
 
 
-def is_main_process(selfPid = os.getpid()):
-    fname = '/home/xushilong/CodeGenDemo/kcg_pid'
-    lines = []
-    ret = False
-    with open(fname,mode='r+') as f :
-        lines = f.readlines()
-    if len(lines) == 0 :
-        ret = True
-        with open(fname,mode='r+') as f :
-            main_pid = str(selfPid)
-            f.write(main_pid)
-    return ret
-
 def serialize_to_file(pkl_path, obj) :
     with open(pkl_path, 'wb') as f:
         pickle.dump(obj, file=f)  # 进行序列化
@@ -452,4 +439,5 @@ def get_dtype_from_int(dtype : int) :
     return None
 
 if __name__ == '__main__' :
-    PathManager.init()
+    # PathManager.init()
+    pass

@@ -15,7 +15,10 @@
 **doc** : 项目文档   
 **include** : MLIR后端的头文件   
 **Runtime** : python后端   
-**scripts/Benchmark**.sh ：从前端启动DeepGen   
+    |- **Runtime/kcg/loaderCCode** : 存放loader的C源码  
+    |- **Runtime/kcg/Operators** : 存放Operator相关代码。后期拓展算子时在此添加算子相关代码   
+    |- **Runtime/kcg/tools** : 工具脚本，不参与Runtime的实际运行     
+**scripts/Benchmark**.sh ：从前端启动DeepGen      
 **scripts/ClearTmpKernels.py** ：删除/tmp目录下的kernel文件   
 **scripts/GetCudaInfo**.py ：获取cuda的计算力和ptxas信息，用于填入CMakeLists的对应变量   
 **scripts/StopBenchmark**.sh ：杀死所有DeepGen运行的进程   
@@ -100,13 +103,13 @@ ps -eo pid,etime,cmd | grep testGetKernels
 
 
 ## 3. 使用说明
-#### 3.1 运行机制   
+### 3.1 运行机制   
 1. DeepGen首先读取用户的调优参数文件，生成并剪枝调优空间，存储到json文件。如果检测到调优空间json已存在，则跳过这步
 2. 随后DeepGen根据参数空间json开始编译和benchmark。编译的进程池大小由用户决定。benchmark过程由守护进程（ perfmonitor ）和 工作进程（perftester）构成。perftester 执行测试，并将结果存入 `perfPAth` 为前缀指定的json中。
 perfmonitor 检测到 perftester 意外退出时，会重启perftester进程. perftester会根据用户输入的 `perfPAth` 路径重新读取历史最佳纪录，继续统计并benchmark，直到正常结束
 
 
-#### 3.2 脚本参数说明
+### 3.2 脚本参数说明
 
 Benchmark.sh   
 
@@ -131,10 +134,22 @@ nohup python testGetKernels.py $tuning_param_file $cacheTuningSPaceFile $onlyGen
 
 testGetKernels.py ：参数含义见代码注释
 
+### 3.3 工具脚本说明
+Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAth}_cardX.json` (记录最佳topK的config)转化为调优空间，以便后期再单独测试（避免大批量运行时torch性能变差的问题）
+
 ## 4.项目协同文档
 
 周报记录  https://www.notion.so/dbe373c194d844748f693751460dad4a
 
+## 5.常见问题
+- 编译DeepGen时提示 Python.h 未找到：   
+*解决：请正确设置CMakeLists.txt 中的Python路径和Python版本号*
 
-缺陷：
-python直接寻找ptxas等不能满足所有要求。改为用户自行配置路径 （cuda安装路径）
+- Runtime报错：Cannot found nvcc. PLease set PATH env first!   
+*解决：请在运行benchmark前，添加 nvcc所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*
+
+- GetCudaInfo 报：No such file or directory: 'ptxas'   
+*解决：请在运行benchmark前，添加 ptxas 所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*
+
+- 中止Benchmark后想继续运行，如何操作？   
+*解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*
