@@ -84,8 +84,8 @@ class PerfTester :
         return diff_elements, max_error
     
     def _init_AB(self, kpm:KernelArgMatmul, inConfig:UserInputs) :
-        self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:0')
-        self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:0')
+        self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{self._devId}')
+        self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{self._devId}')
     
     def _inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
@@ -135,7 +135,7 @@ class PerfTester :
             self._init_AB(kpm,inConfig)
         result = KernelTestResult(kpm)
         packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
-        self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:0')
+        self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{self._devId}')
         atrans = torch.transpose(self.matA,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
         assert(self.matA.is_contiguous())
         assert(self.matB.is_contiguous())
@@ -451,9 +451,10 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True) :
+    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0) :
         procCount = 0
-        dealed = 0
+        dealed = startFrom
+        print(f"=== start from cfg[{startFrom}] =====")
         if needPerfTest:
             self._initPerfMonitors()
         if needCompile :
@@ -471,7 +472,7 @@ class ParallelTaskManager :
                 os.makedirs(path,exist_ok=True)
                 pickleDirs.append(path)
             sct = SerialCompileTask()
-            for i in range(len(cfgstrs)) :
+            for i in range(startFrom,len(cfgstrs)) :
                 selectDevID = dealed % len(self.devIds)
                 # print(f"=========== Dealing : cfgstrs[{i}] ================")
                 config = self._get_kernelargMatmul(cfgstrs[i],tse)
