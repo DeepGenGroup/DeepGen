@@ -13,3 +13,7 @@ doc/测试结果&数据/20250228/perfRecordlog_check_card7-3.json
 原始大批量测试中，torch性能测定偏低，导致acc偏高（1.385）
 对比复测和原始数据，可看出DeepGen表现稳定, 即复测eps和原始eps基本相同。
 实际最佳 acc=1.11，以复测为准
+
+
+## 补充
+doc/测试结果&数据/20250228/DCU-z100/bestperf_20250228_LSU_card7.json 为noLSU的结果。可见1024规模下，开LSU的性能未见提升

@@ -36,8 +36,25 @@
 
 
 
-## 2.构建&运行方法
-### 2.1 构建
+## 2.安装&构建&运行
+### 2.1 安装第三方依赖
+项目使用到的第三方依赖有：
+- MLIR/LLVM(rocm) : https://gitee.com/alanturin/rocm-llvm-project , commit=9fe9db, branch=amd-staging
+- pytorch(建议使用conda虚拟环境)
+- CUDA/ROCM 基础环境   
+对于HygonDCU以及其他有配套工具要求的平台，请安装供应商提供的pytorch或CUDA/ROCM基础环境
+
+MLIR/LLVM compile & setup ：
+```sh
+cmake -G Ninja ../llvm   -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+   -DLLVM_BUILD_EXAMPLES=ON \
+   -DLLVM_TARGETS_TO_BUILD="Native;NVPTX;AMDGPU" \
+   -DCMAKE_BUILD_TYPE=Release \
+   -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_INSTALL_PREFIX=~/llvm-install
+ninja -j16 & ninja install
+```
+
+### 2.2 构建
 使用Compile.sh脚本编译。其中`is_as_pymodule`表示将MLIR后端编译为库（ON）或调试用exe文件（OFF）   
 根路径下的 CMakeLists 说明：
 ```cmake
@@ -79,7 +96,7 @@ add_compile_options(
   
 ```
 
-### 2.2 参数配置&运行
+### 2.3 参数配置&运行
 1. exe模式   
 参数配置：debug用，只能用固定参数配置，在 src/main.cc 的 `main()`函数中修改。只用于测试MLIR后端的代码生成过程，不进行kernel的执行
 运行：
