@@ -254,6 +254,10 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
         auto ROCM_DEFAULT_DIR = "/opt/dtk";
         lld_path = (rocm_path.empty()) ? ROCM_DEFAULT_DIR : rocm_path;
         lld_path += "/llvm/bin/ld.lld";
+        if (!std::filesystem::exists(lld_path)){
+            std::cout << "[FatalError] ld.lld not found" << std::endl;
+            std::abort();
+        }
     }
 
     int lld_result =

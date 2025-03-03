@@ -170,3 +170,11 @@ Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAt
 
 - 中止Benchmark后想继续运行，如何操作？   
 *解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*
+
+- Runtime执行后，未生成kernel（_pkl目录下没有文件生成）
+解决：请检查CMakelist.txt中的以下变量是否正确： 
+`USER_LLD_PATH`（ROCM）
+`USER_PTXAS_PATH`（CUDA）
+`CUDA_CAP`
+`PTXAS_VERSION`
+

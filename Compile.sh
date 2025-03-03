@@ -1,4 +1,5 @@
 #! /bin/bash
+cd $(dirname "$0")
 is_as_pymodule='ON'
 
 mkdir build

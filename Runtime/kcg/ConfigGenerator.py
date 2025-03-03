@@ -3,13 +3,9 @@ import json
 from Utils import *
 import multiprocessing
 from Operators.matmul import *
-from CreateCfgAndCompile import CreateMatmulConfig
-# from NewCfgTest import CreateMatmulConfig
-# 功能：根据 /home/xushilong/CodeGenDemo/TuningConfigs/GEMM_configs_2.json， 输出所有参数的组合并校验。校验通过的加入到 tuning space
-# tuning space 为一个文件夹，文件夹内含很多小json，共同组成一个很大的调优空间
-# tuning space 的命名由用户输入
-# 运行测试时，tuning space可以由缓存载入，不用重复生成
-# 可以通过名字区分算子以及space的配置
+# from CreateCfgAndCompile import CreateMatmulConfig
+from NewCfgTest import CreateMatmulConfig
+
 
 def _process_cfg(encoder : TuningSpaceEncoder_Matmul, cfgs : List[Dict], check_funcs : List[callable], tempfilename:str ) :
     ret = {'results':[]}
@@ -133,12 +129,18 @@ class TuningSpaceManager :
             json.dump(obj,f)
         return len(obj['cfgs'])
         
-def BuildTuningSpace( fname : str , outfname : str, mode = 1, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, maxThreadNum=256, wordBytes = 4) -> int:
+def BuildTuningSpace( tuningConfigFile : str , spacefile : str, mode = 1, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, maxThreadNum=256, wordBytes = 4) -> int:
     import time
     totalLen = 0
-    if not os.path.exists(outfname) :
+    spaceAlreadyExist = False
+    if os.path.exists(spacefile) :
+        with open(spacefile) as f :
+            lines = f.readlines()
+            if len(lines) > 0 :
+                spaceAlreadyExist = True
+    if not spaceAlreadyExist :
         print(f'Tuning space not exists, start generate...',flush=True)
-        tsm = TuningSpaceManager('spacename',fname,outfname)
+        tsm = TuningSpaceManager('spacename',tuningConfigFile,spacefile)
         totalLen = 0
         t0 = time.time()
         if mode == 0:
@@ -148,12 +150,12 @@ def BuildTuningSpace( fname : str , outfname : str, mode = 1, thalfTag=True, tsq
         else:
             assert False , f'Invalid building space mode specifier {mode} . valid:[0,1]'
         t1 = time.time()
-        print(f'Tuning space generate OK, spent {(t1-t0)/60} minutes. space size={totalLen}. Stored in {outfname}')
+        print(f'Tuning space generate OK, spent {(t1-t0)/60} minutes. space size={totalLen}. Stored in {spacefile}')
     else:
-        with open(outfname) as f:
+        with open(spacefile) as f:
             o = json.load(f)
             totalLen = len(o['cfgs'])
-            print(f'Tuning space already exists, skip generate. Read from {outfname}')
+            print(f'Tuning space already exists, skip generate. Read from {spacefile}')
     return totalLen
 
 

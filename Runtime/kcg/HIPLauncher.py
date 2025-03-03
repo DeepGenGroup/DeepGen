@@ -39,9 +39,6 @@ def make_stub(kernelLibFile : KernelLibFile) -> str :
         with open(src_path, "w") as f:
             for line in src:
                 f.write(line)  # generate stub code
-        with open('/home/xushilong/CodeGenDemo/tempstub_hip.c', "w") as f:
-            for line in src:
-                f.write(line)  # generate stub code
         so = build(so_name, src_path, tmpdir)
         with open(so, "rb") as f:
             return so_cache_manager.put(f.read(), so_name, binary=True)

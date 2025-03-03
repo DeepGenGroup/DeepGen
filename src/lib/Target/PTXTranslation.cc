@@ -176,9 +176,12 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
 std::pair<std::string, std::string> generatePTXAndCubinFromLLIRFile(const std::string llvmIR, int capability, int version) {
   std::string ptxasPath = USER_PTXAS_PATH;
   // std::string ptxPath = "/home/xiebaokang/projects/mymlir/DeepGen/_tmp/test.ptx";
+  if (!std::filesystem::exists(ptxasPath)) {
+    std::cout << "[FatalError] ptxas not found : " << ptxasPath << std::endl;
+    std::abort();
+  }
   std::string ptxPath = translate_llvmir_to_ptx(llvmIR, capability, version);
   std::string cabinPath = compile_ptx_to_cubin(ptxPath, ptxasPath, capability);
-
   return std::make_pair(ptxPath, cabinPath);
 }
 
