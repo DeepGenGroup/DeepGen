@@ -99,6 +99,7 @@ class PerfTester :
         return (self.matD, eps)
     
     def _init_torch_eps(self,nTorchEpsInitTest) :
+        self.matD, tempEps = self._inner_test_torch(self.matA, self.matB)
         if not self._read_torch_eps_from_file() :
             eps_torch_list = []
             for i in range(0, nTorchEpsInitTest) :
@@ -158,7 +159,7 @@ class PerfTester :
             packedKernel.run(aUse, self.matB, self.matC)
             
         # 计算torch的eps
-        if self.torch_eps <= 0:
+        if self.torch_eps <= 0 or self.matD is None:
             self._init_torch_eps(nTorchEpsInitTest)
         
         # benchmark
