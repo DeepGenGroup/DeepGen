@@ -25,9 +25,12 @@ def is_hip():
 
 
 def serialize_to_file(pkl_path, obj) :
-    with open(pkl_path, 'wb') as f:
-        pickle.dump(obj, file=f)  # 进行序列化
-
+    try:
+        with open(pkl_path, 'wb') as f:
+            pickle.dump(obj, file=f)  # 进行序列化
+    except Exception as e:
+        print('[E] generatePklError : ',e)
+        
 def deserialize_from_file(pkl_path) :
     with open(pkl_path, 'rb') as f:
         try:
@@ -279,6 +282,7 @@ class DeviceInfo :
         envname = 'CUDA_VISIBLE_DEVICES'
         if is_hip() :
             envname = 'HIP_VISIBLE_DEVICES'
+        # if DeviceInfo.get_visible_devices() is None:
         expr = ''
         for id in devids:
             expr += str(id) + ','
@@ -292,7 +296,7 @@ class DeviceInfo :
         envname = 'CUDA_VISIBLE_DEVICES'
         if is_hip() :
             envname = 'HIP_VISIBLE_DEVICES'
-        return os.environ[envname] 
+        return os.environ.get(envname) 
     
     @staticmethod
     def get_device_capability(idx):

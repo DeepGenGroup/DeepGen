@@ -24,6 +24,11 @@ import json
 from ConfigGenerator import ParseTuningSpace
 # import pymlir
 
+def g_getBaselineStoreFileName(devId) -> str:
+    return PathManager().default_cache_dir() + f'/BenchmarkTorchEps_{devId}.log'
+
+def g_getBaselinePklPath(devid) -> str :
+    return PathManager().default_cache_dir() + f'/gemmBase_{devid}.pkl'
 
 class KernelTestResult :
     def __init__(self,kpm : KernelArgMatmul):
@@ -54,7 +59,8 @@ class KernelTestResult :
         self.kpm.assignWithJson(jsonObj['config'])
 
 class PerfTester :
-    def __init__(self,devId:int,atol:float,rtol:float):
+    
+    def __init__(self,devId:int,atol:float,rtol:float,nTorchEpsInitTest = 50):
         self.matA = None
         self.matB = None
         self.matC = None
@@ -63,17 +69,21 @@ class PerfTester :
         self.BestPerf = [] #: List[KernelTestResult]
         self.torchDynamicEps = []  # torch的动态eps，用于描述torch的性能变化（卡的稳定性）
         self.check_dynamic_torch_perf = 2000  # 每执行完多少个case，检查一下torch的当前性能。记录波动
-        self._torchEpsStoreFile = PathManager().default_cache_dir() + f'/BenchmarkTorchEps_{devId}.log'
+        self._torchEpsStoreFile = g_getBaselineStoreFileName(devId)
         self._devId = devId
         self._atol = atol
         self._rtol = rtol
+        self._isInited = False
+        self.nTorchEpsInitTestCount = nTorchEpsInitTest
     
-    def _init_cuda(self) :
-        DeviceInfo.set_visible_devices([self._devId])
-        DeviceInfo.set_current_device(self._devId)
-        if not torch.cuda.is_available() :
-            torch.cuda.init()
-            torch.cuda.empty_cache()
+    def init_cuda(self) :
+        if not self._isInited :
+            DeviceInfo.set_visible_devices([self._devId])
+            DeviceInfo.set_current_device(self._devId)
+            if not torch.cuda.is_available() :
+                torch.cuda.init()
+                torch.cuda.empty_cache()
+            self._isInited = True
     
     def _compare_with_error(self, tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
         abs_diff = torch.abs(tensor1 - tensor2)
@@ -88,7 +98,11 @@ class PerfTester :
         self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{self._devId}')
         self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{self._devId}')
     
-    def _inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
+    def _init_AB_with_detailed_info(self, m,n,k, datatype : torch.dtype) :
+        self.matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{self._devId}')
+        self.matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{self._devId}')
+    
+    def inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
@@ -98,17 +112,17 @@ class PerfTester :
         eps = ev_start.elapsed_time(ev_end)
         return (self.matD, eps)
     
-    def _init_torch_eps(self,nTorchEpsInitTest) :
-        self.matD, tempEps = self._inner_test_torch(self.matA, self.matB)
+    def _init_torch_eps(self) :
+        self.matD, tempEps = self.inner_test_torch(self.matA, self.matB)
         if not self._read_torch_eps_from_file() :
             eps_torch_list = []
-            for i in range(0, nTorchEpsInitTest) :
-                self.matD, eps_torch = self._inner_test_torch(self.matA, self.matB)
+            for i in range(0, self.nTorchEpsInitTestCount) :
+                self.matD, eps_torch = self.inner_test_torch(self.matA, self.matB)
                 eps_torch_list.append(eps_torch)
                 self.torch_eps = np.median(eps_torch_list)
         with open(self._torchEpsStoreFile,'w') as f :
             f.write(str(self.torch_eps))
-        print('======== _init_torch_eps Done! ========= ')
+        print(f'======== torch baseline on dev{self._devId} init OK! result written to {self._torchEpsStoreFile} ========= ')
     
     def _read_torch_eps_from_file(self) :
         try :
@@ -131,8 +145,8 @@ class PerfTester :
         return c,elapsed_time
     
     def _test_perf(self, kpm:KernelArgMatmul, inConfig : UserInputs, packedKernel : CompiledKernel, 
-                   benchmarkCount = 5, warmupCount = 1, nTorchEpsInitTest = 50) -> KernelTestResult:
-        self._init_cuda()
+                   benchmarkCount = 5, warmupCount = 1 ) -> KernelTestResult:
+        # self.init_cuda()
         if self.matA is None or self.matB is None :
             self._init_AB(kpm,inConfig)
         result = KernelTestResult(kpm)
@@ -160,7 +174,7 @@ class PerfTester :
             
         # 计算torch的eps
         if self.torch_eps <= 0 or self.matD is None:
-            self._init_torch_eps(nTorchEpsInitTest)
+            self._init_torch_eps()
         
         # benchmark
         for i in range(0,benchmarkCount) : 
@@ -202,7 +216,7 @@ class PerfTester :
     def check_torch_dynamic_perf(self,torchPerfLogName,index) :
         t = []
         for i in range(0,10) :
-            res,eps = self._inner_test_torch()
+            res,eps = self.inner_test_torch()
             t.append(eps)
         new_torchEps = np.median(t)
         self.torchDynamicEps.append(new_torchEps)
@@ -244,12 +258,12 @@ class PerfTester :
                 pathLock.release()
 
             perf_data = []
-            
+            self.init_cuda()
             for (kpm,inConfig,packedKernel) in valid_kernels :
                 dyTorchCounter+=1
                 if self.matA is None or self.matB is None :
                     self._init_AB(kpm,inConfig)
-                perf_data.append(self._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount, nTorchEpsInitTest))        
+                perf_data.append(self._test_perf(kpm, inConfig, packedKernel, benchmarkCount, warmupCount))        
                 if len(torchDynamicLogPath) > 0 and int(dyTorchCounter) % int(self.check_dynamic_torch_perf) == 0:
                     self.check_torch_dynamic_perf(torchDynamicLogPath, dyTorchCounter)
             valid_kernels.clear()
@@ -333,7 +347,7 @@ class ParallelTaskManager :
         self.nTorchEpsInitTest = nTorchEpsInitTest
         self.atol = atol
         self.rtol = rtol
-         
+    
     @staticmethod
     def _innerCreateTesterProc(dev,lock,
         endSignal,
@@ -344,7 +358,16 @@ class ParallelTaskManager :
         torchDynamicLogPath,
         nTorchEpsInitTest,atol,rtol) :
 
-        tester = PerfTester(dev,atol=atol,rtol=rtol)
+        tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest)
+        # pkl = g_getBaselinePklPath(dev)
+        # if os.path.exists(pkl) :  
+        #     t = deserialize_from_file(pkl)
+        #     tester.matA = t.matA
+        #     tester.matB = t.matB
+        #     tester.matD = t.matD
+        #     tester.torch_eps = t.torch_eps
+        # RuntimeError: Attempting to deserialize object on CUDA device 6 but torch.cuda.device_count() is 1. 
+        # Please use torch.load with map_location to map your storages to an existing device.
         parsedBests = []
         try:
             if os.path.exists(outfilename):
@@ -374,7 +397,8 @@ class ParallelTaskManager :
         torchDynamicLogPath,
         nTorchEpsInitTest,atol,rtol) :
         perfLog = f"{perf_out_path}_card{devId}.json"
-        worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+        worker = ParallelTaskManager.Process(
+            target= ParallelTaskManager._innerCreateTesterProc, 
             args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
         worker.start()
         while True:
@@ -385,16 +409,33 @@ class ParallelTaskManager :
             else:
                 print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
                 del worker; worker = None
-                time.sleep(1)
-                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, args=(devId, lock, endSignal,perfLog,nBenchMark,
-                                              nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
+                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
                 worker.start()
     
+    @staticmethod
+    def _createBaselineInit(devid,m,n,k,datatype) :
+        baselineTester = PerfTester(devid,0.001,0.001,400)
+        baselineTester.init_cuda()
+        baselineTester._init_AB_with_detailed_info(m,n,k,datatype)
+        baselineTester._init_torch_eps()
+        
+    @staticmethod
+    def init_baseline_matmul(m,n,k, datatype : torch.dtype, devids : List[int], fProcess) :
+        waitlist = []
+        for devid in devids :
+            p = fProcess(target= ParallelTaskManager._createBaselineInit,args=(devid,m,n,k,datatype))
+            waitlist.append(p)
+            p.start()
+        for p in waitlist :
+            p.join()
+        print(f"===== All baseline init OK ======")
+        
     def _initPerfMonitors(self) :
         for devid in self.devIds :
             lock = ParallelTaskManager.ctx.Lock()
             self.locks.append(lock)
-            monitor = ParallelTaskManager.Process(target=ParallelTaskManager._perfMonitorFunc,
+            monitor = ParallelTaskManager.Process(target= ParallelTaskManager._perfMonitorFunc,
                 args=(devid,
                     lock,
                     self.endSignal,
@@ -404,11 +445,11 @@ class ParallelTaskManager :
                     self.topNum,
                     self.torchDynamicLogPath,
                     self.nTorchEpsInitTest,
-                    self.atol,self.rtol)
-                )  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
+                    self.atol,self.rtol
+                ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)
-    
+
     def _createCompileTask(self,func,*params) :
         p = ParallelTaskManager.Process(target = func, args = (*params,))
         p.start()
@@ -454,11 +495,17 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0) :
+    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0, baselineInitInfo = []) :
         procCount = 0
         dealed = startFrom
         print(f"=== start from cfg[{startFrom}] =====")
         if needPerfTest:
+            # DeviceInfo.set_visible_devices(self.devIds)
+            if len(baselineInitInfo) == 4 :
+                print('============ start running with GEMM baseline initializer ==============')
+                m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3]
+                ParallelTaskManager.init_baseline_matmul(m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
+            print('============ start init perf monitors ==============')
             self._initPerfMonitors()
         if needCompile :
             tse = None
