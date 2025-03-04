@@ -7,23 +7,25 @@ if __name__ == '__main__' :
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
     # Tuning 参数空间配置文件
-    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2048.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
-    perfPAth = f'{PathManager.project_dir()}/_PerfCHeck'
+    perfPAth = f'{PathManager.project_dir()}/__perf-20250304-dim2048'
     # 调优空间存储文件
     # cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_1024LSU.json'
-    cacheTuningSPaceFile = f'{PathManager.project_dir()}/temptest.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_2048.json'
     # 是否只进行调优空间生成并存入 cacheTuningSPaceFile，不执行kernel编译以及benchmark
     onlyGenerateCfg = False 
     # 最大进程数
-    nProcess = 5
+    nProcess = 100
     # 可见设备列表
-    gpu_devices = [6]  
+    gpu_devices = [7]  
     # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
     tuningSpaceGenMode = 1  
     # 当前后端类型 & 架构信息
-    backendType = EnumBackendType.CUDA  
-    arch = "80"
+    backendType = EnumBackendType.HIP  
+    arch = "906"
+    M = N = K = 2048
+    elementType = torch.float32
     ######################################################################################
     # 命令行参数解析
     if len(sys.argv) > 1 :
@@ -65,6 +67,6 @@ if __name__ == '__main__' :
             needCompile=True, # 是否执行编译过程
             needPerfTest=True, # 是否执行benchmark过程
             startFrom=0,     # 从空间里编号为x的config开始执行
-            baselineInitInfo= [1024,1024,1024,torch.float32]
+            baselineInitInfo= [M, N ,K , elementType]    # 用于pytorch基准的测试。因为PerfTester设计上的通用性（不关注kernel的具体参数），理论上该值只能运行时查找，且不一定保证唯一。考虑到实现的复杂性，这里先简单处理，后期改进（结合其他算子、各种参数再重新设计）
         )
 
