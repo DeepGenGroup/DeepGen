@@ -87,6 +87,7 @@
 #include <fstream>
 #include <iostream>
 #include "Target/LLVMIRTranslation.h"
+#include <cstdio>
 // #ifdef USE_CUDA
 // #include <cuda_runtime.h>
 // #endif
@@ -269,6 +270,18 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     {
         llvm::errs() << "ld.lld execute fail: " << '\n'
                         << error_message << "Code: " << lld_result << '\n';
+    }
+    isabin_fs->close();
+    bitecode_fs->close();
+    if (remove(bitcode_path.c_str()) == 0) {
+        std::cout << "file deleted: " << bitcode_path << std::endl;
+    } else {
+        perror("file deleted error"); // 打印错误信息
+    }
+    if (remove(isabin_path.c_str()) == 0) {
+        std::cout << "file deleted: " << isabin_path << std::endl;
+    } else {
+        perror("file deleted error"); // 打印错误信息
     }
 
     return hsaco_path;

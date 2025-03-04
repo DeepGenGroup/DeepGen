@@ -23,6 +23,7 @@
 
 #include <filesystem>
 #include <memory>
+#include <cstdlib>
 
 
 using namespace mlir;
@@ -168,7 +169,15 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
       throw std::runtime_error("`ptxas` failed with error code " + std::to_string(err) + ": \n" + log);
     }
     return "";
-  } 
+  }
+  if (remove(ptxPath.c_str()) == 0)
+  {
+    std::cout << "file deleted : " << ptxPath << std::endl;
+  }
+  else
+  {
+    perror("file del error"); // 打印错误信息
+  }
   return fbin;
 
 }
