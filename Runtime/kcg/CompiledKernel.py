@@ -23,7 +23,11 @@ class CompiledKernel:
             self.m_loader = CudaLoaderST()
             self.m_launcher = CUDALauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
             
-        
+    def deleteBinary(self):
+        if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
+            os.remove(self.m_launcher.m_kernelLib.m_filePath)
+            # print(f"deleted {self.m_launcher.m_kernelLib.m_filePath}")
+
     def setDevice(self,devId : int) :
         self.m_launcher.m_kernelLib.m_device = devId
     

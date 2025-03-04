@@ -79,7 +79,7 @@ class PerfTester :
     def init_cuda(self) :
         if not self._isInited :
             DeviceInfo.set_visible_devices([self._devId])
-            DeviceInfo.set_current_device(self._devId)
+            DeviceInfo.set_current_device(self._devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
             if not torch.cuda.is_available() :
                 torch.cuda.init()
                 torch.cuda.empty_cache()
@@ -196,6 +196,7 @@ class PerfTester :
             result.maxError = max_error
             result.diffRate = diff/(M*N)
             print(f'test fail! maxerror={max_error}, diffrate={result.diffRate}')
+        packedKernel.deleteBinary()
         return result
     
     def _getBestPerf(self, perfData : List[KernelTestResult], topNum = 1) -> List[KernelTestResult]:
