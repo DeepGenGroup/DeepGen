@@ -196,7 +196,7 @@ class CreateMatmulConfig:
     temp_tals = self.getOther(temp_tals)
     kams = []
     for tal in temp_tals:
-      kam = KernelArgMatmul(self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0],             # M, N, K
+      kam = KernelArgMatmul(self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0], self.cfg_dict[kw.KEY_BATCH][0] ,            # M, N, K, batch
                             self.cfg_dict[kw.KEY_DTYPE_A][0], self.cfg_dict[kw.KEY_DTYPE_B][0], self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
       config = (
         tal[0][0], tal[0][1], tal[0][2],  # block_size

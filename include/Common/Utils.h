@@ -133,6 +133,7 @@ struct KernelInfo {
   std::string m_kernelName;
   std::vector<int> m_gridDims = {1,1,1};
   std::vector<int> m_blockDims = {1,1,1};
+  int m_shmBytes = 0;
 };
 
 static std::ostream& operator<<(std::ostream& s, KcgDtype ty){
@@ -197,6 +198,7 @@ struct NVVMMetadata {
 #define  KEY_M                    "M_SIZE"
 #define  KEY_N                    "N_SIZE"
 #define  KEY_K                    "K_SIZE"
+#define  KEY_BATCH                "BATCH_SIZE"
 #define  KEY_IS_A_TRANSPOSE       "IS_ATRANS"
 #define  KEY_GLOB_LOAD_WIDTH_A     "GLOB_LOAD_WIDTH_A"
 #define  KEY_GLOB_LOAD_WIDTH_B     "GLOB_LOAD_WIDTH_B"

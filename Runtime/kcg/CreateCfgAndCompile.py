@@ -197,8 +197,9 @@ class CreateMatmulConfig:
 
     kams = []
     for tal in temp_tals:
-      kam = KernelArgMatmul(self.cfg_dict[ConfigKeywords.KEY_M][0], self.cfg_dict[ConfigKeywords.KEY_N][0], self.cfg_dict[ConfigKeywords.KEY_K][0],             # M, N, K
-                            self.cfg_dict[ConfigKeywords.KEY_DTYPE_A][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_B][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_C][0]) # typeA, typeB, typeC
+      kam = KernelArgMatmul(
+        self.cfg_dict[ConfigKeywords.KEY_M][0], self.cfg_dict[ConfigKeywords.KEY_N][0], self.cfg_dict[ConfigKeywords.KEY_K][0],self.cfg_dict[ConfigKeywords.KEY_BATCH][0],  # M, N, K,batch
+        self.cfg_dict[ConfigKeywords.KEY_DTYPE_A][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_B][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_C][0]) # typeA, typeB, typeC
       config = (
         tal[0][0], tal[0][1], tal[0][2],  # block_size
         tal[1][0], tal[1][1],             # thread_size
@@ -218,39 +219,39 @@ class CreateMatmulConfig:
     return kams
     
 
-def getCompileFunc():
-  # 获取编译程序
-  spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
-  mod = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(mod)
-  return mod.compile_kernel_matmul
+# def getCompileFunc():
+#   # 获取编译程序
+#   spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
+#   mod = importlib.util.module_from_spec(spec)
+#   spec.loader.exec_module(mod)
+#   return mod.compile_kernel_matmul
 
-def compile(compileFunc, config, device=7):
-  # 编译 这里获取一次 func 所以速度应该会提升
-  hsacoPath, kernelName, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ = compileFunc(
-    config.BLOCK_SIZE_M, config.BLOCK_SIZE_N, config.BLOCK_SIZE_K,
-    config.THREAD_SIZE_M, config.THREAD_SIZE_N,
-    config.WARP_SIZE,
-    config.BLOCK_LAYOUT_M, config.BLOCK_LAYOUT_N,
-    config.WARP_LAYOUT_M, config.WARP_LAYOUT_N,
-    config.GLOB_LOAD_WIDTH_A, config.GLOB_LOAD_WIDTH_B,
-    config.WARP_SCATTER_WIDTH_A, config.WARP_SCATTER_WIDTH_B,
-    config.THREAD_SCATTER_WIDTH_A, config.THREAD_SCATTER_WIDTH_B,
-    config.LOCAL_SPLIT_U,
-    config.BLOCK_MAPPING,
-    config.GLOB_STORE_WIDTH,
-    config.UNROLL_NUM,
-    config.REG_PREFETCH, config.SHARED_PREFETCH, config.LOAD_CONTINUOUS,
-    config.REDUCE_C_CONTINUOUS,
-    config.dtype('A'), config.dtype('B'), config.dtype('C'), config.M,config.N,config.K,
-    config.isATranspose
-  )[0]
-  inConfig = UserInputs(hsacoPath, kernelName, config)
-  inConfig.m_gridDims = [gridDimX, gridDimY, gridDimZ]
-  inConfig.m_blockDims = [blockDimX, blockDimY, blockDimZ]
-  inConfig.operatorKind = EnumOperator.Matmul
-  packedKernel = CompiledKernelFactory.getKernel(inConfig, device)
-  return packedKernel
+# def compile(compileFunc, config, device=7):
+#   # 编译 这里获取一次 func 所以速度应该会提升
+#   hsacoPath, kernelName, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ = compileFunc(
+#     config.BLOCK_SIZE_M, config.BLOCK_SIZE_N, config.BLOCK_SIZE_K,
+#     config.THREAD_SIZE_M, config.THREAD_SIZE_N,
+#     config.WARP_SIZE,
+#     config.BLOCK_LAYOUT_M, config.BLOCK_LAYOUT_N,
+#     config.WARP_LAYOUT_M, config.WARP_LAYOUT_N,
+#     config.GLOB_LOAD_WIDTH_A, config.GLOB_LOAD_WIDTH_B,
+#     config.WARP_SCATTER_WIDTH_A, config.WARP_SCATTER_WIDTH_B,
+#     config.THREAD_SCATTER_WIDTH_A, config.THREAD_SCATTER_WIDTH_B,
+#     config.LOCAL_SPLIT_U,
+#     config.BLOCK_MAPPING,
+#     config.GLOB_STORE_WIDTH,
+#     config.UNROLL_NUM,
+#     config.REG_PREFETCH, config.SHARED_PREFETCH, config.LOAD_CONTINUOUS,
+#     config.REDUCE_C_CONTINUOUS,
+#     config.dtype('A'), config.dtype('B'), config.dtype('C'), config.M,config.N,config.K,config.batch,
+#     config.isATranspose
+#   )[0]
+#   inConfig = UserInputs(hsacoPath, kernelName, config)
+#   inConfig.m_gridDims = [gridDimX, gridDimY, gridDimZ]
+#   inConfig.m_blockDims = [blockDimX, blockDimY, blockDimZ]
+#   inConfig.operatorKind = EnumOperator.Matmul
+#   packedKernel = CompiledKernelFactory.getKernel(inConfig, device)
+#   return packedKernel
 
 # # example code 
 # if "__main__" == __name__:

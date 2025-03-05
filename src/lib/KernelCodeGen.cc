@@ -136,7 +136,7 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
 }
 
 
-bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims) {
+bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims, OUT int& shmBytes) {
   // mod.dump();
   LOG_DEBUG(" === start mlir =====\n",mod) ;
 
@@ -147,8 +147,20 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
   LOG_DEBUG(" === after firstLowering =====\n",mod) ;
 
   bool findKernel = false;
+  
   auto op = mod.getOperation();
-
+  int shmElements = 0;
+  int elementBytes = 0;
+  op->walk([&](mlir::memref::GlobalOp global){
+    auto type = global.getTypeAttr().getValue();
+    if(auto memtype = mlir::dyn_cast<mlir::MemRefType>(type)){
+      shmElements = memtype.getShape()[0];
+      auto etype = memtype.getElementType();
+      elementBytes = etype.getIntOrFloatBitWidth() / 8;
+    }
+  });
+  std::cout << "[D] globalInfo: "<< shmElements << ":" << elementBytes << std::endl;
+  shmBytes = (shmElements * elementBytes);
   op->walk([&](mlir::func::FuncOp f){
     if(findKernel){
       return;

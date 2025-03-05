@@ -35,9 +35,17 @@ def _matmul_kernel(
 
 # Call hook. 在这里带入实参并调用
 
-def _matmul(a, b, c):
+def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
     # Check constraints.
-    assert a.shape[1] == b.shape[0], "Incompatible dimensions"
+    dimsizeA = len(a.shape) 
+    dimsizeB = len(b.shape)
+    dimsizeC = len(c.shape)
+    assert dimsizeA == dimsizeB == dimsizeC, "ABC must with same dim size"
+    if dimsizeA==3:
+        assert a.shape[1] == b.shape[0], "AB have Incompatible shape"
+    if dimsizeA==4:
+        assert a.shape[0] == b.shape[0] == c.shape[0], "ABC must have same batch"
+    
     assert a.is_contiguous(), "Matrix A must be contiguous"
     assert b.is_contiguous(), "Matrix B must be contiguous"
 
@@ -73,7 +81,7 @@ def getMatmulSignature(dtypeA: torch.dtype, dtypeB : torch.dtype, dtypeC : torch
 
 
 class KernelArgMatmul :
-    def __init__(self,m,n,k,typeA : EnumKernelDType,typeB : EnumKernelDType,typeC : EnumKernelDType):
+    def __init__(self,m,n,k,batch,typeA : EnumKernelDType,typeB : EnumKernelDType,typeC : EnumKernelDType):
         self.BLOCK_SIZE_M : int = 64
         self.BLOCK_SIZE_N : int = 64
         self.BLOCK_SIZE_K : int = 16
@@ -90,6 +98,7 @@ class KernelArgMatmul :
         self.M : int = m
         self.N : int = n
         self.K : int = k
+        self.batch : int = batch
         self.isATranspose : int = 1
         self.GLOB_LOAD_WIDTH_A : int = 0
         self.GLOB_LOAD_WIDTH_B : int = 0
@@ -153,6 +162,7 @@ class KernelArgMatmul :
             str(ConfigKeywords.KEY_M) : (self.M) ,
             str(ConfigKeywords.KEY_N) : (self.N) ,
             str(ConfigKeywords.KEY_K) : (self.K) ,
+            str(ConfigKeywords.KEY_BATCH) : (self.batch) ,
             str(ConfigKeywords.KEY_IS_A_TRANSPOSE) : (self.isATranspose) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A) : (self.GLOB_LOAD_WIDTH_A) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B) : (self.GLOB_LOAD_WIDTH_B) ,
@@ -188,6 +198,7 @@ class KernelArgMatmul :
         self.M  = jsonObj[ConfigKeywords.KEY_M]
         self.N  = jsonObj[ConfigKeywords.KEY_N]
         self.K  = jsonObj[ConfigKeywords.KEY_K]
+        self.batch  = jsonObj[ConfigKeywords.KEY_BATCH]
         self.isATranspose  = jsonObj[ConfigKeywords.KEY_IS_A_TRANSPOSE] > 0 
         self.GLOB_LOAD_WIDTH_A  = jsonObj[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A]
         self.GLOB_LOAD_WIDTH_B  = jsonObj[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B]
@@ -210,6 +221,7 @@ class KernelArgMatmul :
         assert self.M % self.BLOCK_SIZE_M == 0 
         assert self.N % self.BLOCK_SIZE_N == 0 
         assert self.K % self.BLOCK_SIZE_K == 0 
+        assert self.batch >= 1 
         # warp-block validation check
         assert self.BLOCK_SIZE_M % self.THREAD_SIZE_M == 0
         assert self.BLOCK_SIZE_N % self.THREAD_SIZE_N == 0
@@ -255,6 +267,7 @@ class KernelArgMatmul :
         retstr += f" \"{str(ConfigKeywords.KEY_M)}\"  :  {str(self.M)} ,\n"
         retstr += f" \"{str(ConfigKeywords.KEY_N)}\"  :  {str(self.N)} ,\n"
         retstr += f" \"{str(ConfigKeywords.KEY_K)}\"  :  {str(self.K)} ,\n"
+        retstr += f" \"{str(ConfigKeywords.KEY_BATCH)}\"  :  {str(self.batch)} ,\n"
         retstr += f" \"{str(ConfigKeywords.KEY_IS_A_TRANSPOSE)}\"  :  {str(self.isATranspose)} ,\n"
         retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A)}\"  :  {str(self.GLOB_LOAD_WIDTH_A)} ,\n"
         retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B)}\"  :  {str(self.GLOB_LOAD_WIDTH_B)} ,\n"

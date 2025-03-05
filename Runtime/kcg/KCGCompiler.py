@@ -47,6 +47,6 @@ class KCGCompiler :
             param.dtype('A'),
             param.dtype('B'),
             param.dtype('C'),
-            param.M,param.N,param.K,
+            param.M,param.N,param.K,param.batch,
             param.isATranspose
         )

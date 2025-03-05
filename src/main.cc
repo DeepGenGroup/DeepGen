@@ -32,7 +32,7 @@ enum class MdlOperatorType : int{
 class MatmulParams {
 public:
   KcgDtype m_dtypeA, m_dtypeB, m_dtypeC; // 3
-  int m_size,n_size,k_size;  // 3+3=6
+  int m_size, n_size, k_size, batch_size;  // 3+4=7
   int m_isATranspose = 0;  
   int m_BLOCK_SIZE_M;
   int m_BLOCK_SIZE_N;
@@ -43,7 +43,7 @@ public:
   int m_BLOCK_LAYOUT_M;
   int m_BLOCK_LAYOUT_N;
   int m_WARP_LAYOUT_M;
-  int m_WARP_LAYOUT_N;  // 11+6=17
+  int m_WARP_LAYOUT_N;  // 11+7=18
   // recently-added-params
   int m_GLOB_LOAD_WIDTH_A;
   int m_GLOB_LOAD_WIDTH_B;
@@ -53,17 +53,17 @@ public:
   int m_THREAD_SCATTER_WIDTH_B;
   int m_LOCAL_SPLIT_U;
   int m_BLOCK_MAPPING;
-  int m_GLOB_STORE_WIDTH;  // 17+9=26
+  int m_GLOB_STORE_WIDTH;  // 18+9=27
   int m_UNROLL_NUM;
   int m_REG_PREFETCH;
   int m_SHARED_PREFETCH;
   int m_LOAD_CONTINUOUS;
-  int m_REDUCE_C_CONTINUOUS;  // 31
+  int m_REDUCE_C_CONTINUOUS;  // 27+5=32
 
 #ifdef COMPILE_AS_PYMODULE
   // 此处应保证python传参的顺序和parse顺序相同
   bool parse(PyObject* args){
-    if(PyArg_ParseTuple(args, std::string(31,'i').c_str(),
+    if(PyArg_ParseTuple(args, std::string(32,'i').c_str(),
       &m_BLOCK_SIZE_M,
       &m_BLOCK_SIZE_N,
       &m_BLOCK_SIZE_K,
@@ -92,7 +92,7 @@ public:
       &m_REDUCE_C_CONTINUOUS, 
 
       &m_dtypeA, &m_dtypeB, &m_dtypeC,
-      &m_size,&n_size,&k_size,
+      &m_size,&n_size,&k_size, &batch_size,
       &m_isATranspose
 
     )){
@@ -102,6 +102,11 @@ public:
     return false;
   }
 #endif
+
+  template<typename T>
+  void paramCombine(std::stringstream& ss, const char* title, T p1, T p2, T p3,T p4)  {
+    ss << title << p1 << "x" << p2 << "x"<< p3 << "x" << p4 << "_";
+  }
 
   template<typename T>
   void paramCombine(std::stringstream& ss, const char* title, T p1, T p2, T p3)  {
@@ -120,7 +125,7 @@ public:
   std::string getKernelName()  {
     std::stringstream ss;
     ss << "GEMM_";
-    paramCombine(ss, "MNK", m_size, n_size, k_size);
+    paramCombine(ss, "bMNK", batch_size, m_size, n_size, k_size );
     paramCombine(ss, "DTabc", tools::KcgDtypeToStr(m_dtypeA),
             tools::KcgDtypeToStr(m_dtypeB),
             tools::KcgDtypeToStr(m_dtypeC));
@@ -164,6 +169,7 @@ public:
       {KEY_M , m_size},
       {KEY_N , n_size},
       {KEY_K , k_size},
+      {KEY_BATCH, batch_size},
       {KEY_IS_A_TRANSPOSE , m_isATranspose},
       {KEY_GLOB_LOAD_WIDTH_A , m_GLOB_LOAD_WIDTH_A},
       {KEY_GLOB_LOAD_WIDTH_B , m_GLOB_LOAD_WIDTH_B},
@@ -222,6 +228,7 @@ std::ostream& operator<<(std::ostream& os, const Config& cfg){
   os << "- " << KEY_M << ":" << cfg.at(KEY_M) << std::endl;
   os << "- " << KEY_N << ":" << cfg.at(KEY_N) << std::endl;
   os << "- " << KEY_K << ":" << cfg.at(KEY_K) << std::endl;
+  os << "- " << KEY_BATCH << ":" << cfg.at(KEY_BATCH) << std::endl;
   os << "- " << KEY_DTYPE_A << ":"<< cfg.at(KEY_DTYPE_A) << std::endl;
   os << "- " << KEY_DTYPE_B << ":"<< cfg.at(KEY_DTYPE_B) << std::endl;
   os << "- " << KEY_DTYPE_C << ":"<< cfg.at(KEY_DTYPE_C) << std::endl;
@@ -275,32 +282,44 @@ std::vector<KernelInfo> generateKernels(
       auto M = config.at(KEY_M);
       auto N = config.at(KEY_N);
       auto K = config.at(KEY_K);
+      auto it = config.find(KEY_BATCH);
+      auto batch = 1;
+      if(it != config.end()){
+        batch = config.at(KEY_BATCH);
+      }
       bool isATranspose = config.at(KEY_IS_A_TRANSPOSE)> 0;
+      auto gemmDims = std::vector<int64_t>{ M, N, K};
+      if(batch > 1){
+        std::cout << "[D] generate batch GEMM\n";
+        gemmDims =  std::vector<int64_t>{ batch, M, N, K};
+      }
       auto kernel = generator.create<Operators::Matmul>(
-        std::vector<int64_t>{ M, N, K},
+        gemmDims,
         std::vector<std::string>{dtypeA,dtypeB,dtypeC},
         name,isATranspose
       );
 
       auto res1 = generator.optimize(kernel, config);
       // std::cout << "==== optimize status: " << (res1?"SUCCESS":"FAILED") << "\n";
-      auto res2 = generator.lowering(kernel, info.m_gridDims, info.m_blockDims);
+      int shmbytes = 0;
+      auto res2 = generator.lowering(kernel, info.m_gridDims, info.m_blockDims, info.m_shmBytes);
       // std::cout << "==== lowering status: " << (res2?"SUCCESS":"FAILED") << "\n";
-      std::string hsacoPath = generator.translate(kernel);
+      std::string binaryPath = generator.translate(kernel);  // hsaco/cubin
       // std::cout << "==== translate res :" << "\n";
-      std::cout << "binarypath = " << hsacoPath << "\n";
-      info.m_binaryPath = hsacoPath;
+      std::cout << "binarypath = " << binaryPath << "\n";
+      info.m_binaryPath = binaryPath;
       info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
 
-      // std::cout << "======== info.m_blockDims :\n";
-      // for(auto e : info.m_blockDims){
-      //   std::cout << e << "," ;
-      // }
-      // std::cout << "======== info.m_gridDims :\n";
-      // for(auto e : info.m_gridDims){
-      //   std::cout << e << "," ;
-      // }
-
+      std::cout << "======== info.m_blockDims :\n";
+      for(auto e : info.m_blockDims){
+        std::cout << e << "," ;
+      }
+      std::cout << std::endl;
+      std::cout << "======== info.m_gridDims :\n";
+      for(auto e : info.m_gridDims){
+        std::cout << e << "," ;
+      }
+      std::cout << std::endl;
       // result[config] = info;
       std::cout << "==== kernel name : " << info.m_kernelName << "\n";
       return info;
@@ -349,11 +368,12 @@ static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
     for(int i=0;i<kernel.m_blockDims.size();++i){
       blockDims[i] = kernel.m_blockDims[i];
     }
-    PyObject* item = Py_BuildValue("(ssiiiiii)",
+    PyObject* item = Py_BuildValue("(ssiiiiiii)",
       kernel.m_binaryPath.c_str(),
       kernel.m_kernelName.c_str(),
       gridDims[0],gridDims[1],gridDims[2],
-      blockDims[0],blockDims[1],blockDims[2]
+      blockDims[0],blockDims[1],blockDims[2],
+      kernel.m_shmBytes
     );
     if (item == NULL) {
       Py_DECREF(retArr);
@@ -441,12 +461,15 @@ int main(){
   config.m_size = 1024;
   config.n_size = 1024;
   config.k_size = 1024;
+  config.batch_size = 2;
   config.m_isATranspose = true;
   config.m_dtypeC = KcgDtype::float32;
-
+  
   auto ret = _compile(config);
 #endif
 
+  __GlobalTarget = KernelCodeGen::Target::ROCm;
+  __GlobalPlatDesc = "906";
   // cuda
   std::vector<Config> configs = {
     {
@@ -459,7 +482,7 @@ int main(){
       {KEY_DTYPE_A, (int)KcgDtype::float32},
       {KEY_DTYPE_B, (int)KcgDtype::float32},
       {KEY_DTYPE_C, (int)KcgDtype::float32},
-      {KEY_M, 1024},{KEY_N, 1024},{KEY_K, 1024}, 
+      {KEY_M, 1024},{KEY_N, 1024},{KEY_K, 1024}, {KEY_BATCH,2},
       {KEY_IS_A_TRANSPOSE, 1}
     },
   };

@@ -405,6 +405,7 @@ class ConfigKeywords :
     KEY_M =                    "M_SIZE"
     KEY_N =                    "N_SIZE"
     KEY_K =                    "K_SIZE"
+    KEY_BATCH =                "BATCH_SIZE"
     KEY_IS_A_TRANSPOSE =       "IS_ATRANS"
     KEY_GLOB_LOAD_WIDTH_A =     "GLOB_LOAD_WIDTH_A"
     KEY_GLOB_LOAD_WIDTH_B =     "GLOB_LOAD_WIDTH_B"

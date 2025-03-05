@@ -55,7 +55,7 @@ class KernelTestResult :
         self.acc = jsonObj['acc']
         self.torch_elapseTimeMs = jsonObj['torchMs']
         self.kcg_elapseTimeMs = jsonObj['kcgMs']
-        self.kpm = KernelArgMatmul(0,0,0,1,1,1)
+        self.kpm = KernelArgMatmul(0,0,0,0,1,1,1)
         self.kpm.assignWithJson(jsonObj['config'])
 
 class PerfTester :
@@ -95,12 +95,20 @@ class PerfTester :
         return diff_elements, max_error
     
     def _init_AB(self, kpm:KernelArgMatmul, inConfig:UserInputs) :
-        self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{self._devId}')
-        self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{self._devId}')
+        if kpm.batch > 1:
+            self.matA = torch.randn(kpm.batch,kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{self._devId}')
+            self.matB = torch.randn(kpm.batch,kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{self._devId}')
+        else:
+            self.matA = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device=f'cuda:{self._devId}')
+            self.matB = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device=f'cuda:{self._devId}')
     
-    def _init_AB_with_detailed_info(self, m,n,k, datatype : torch.dtype) :
-        self.matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{self._devId}')
-        self.matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{self._devId}')
+    def _init_AB_with_detailed_info(self, batch, m,n,k, datatype : torch.dtype) :
+        if batch > 1:
+            self.matA = torch.randn(batch,m,k, dtype= datatype, device=f'cuda:{self._devId}')
+            self.matB = torch.randn(batch,k,n, dtype= datatype, device=f'cuda:{self._devId}')
+        else:
+            self.matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{self._devId}')
+            self.matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{self._devId}')
     
     def inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
         ev_start = torch.cuda.Event(enable_timing=True)
@@ -151,13 +159,20 @@ class PerfTester :
             self._init_AB(kpm,inConfig)
         result = KernelTestResult(kpm)
         packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
-        self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{self._devId}')
-        atrans = torch.transpose(self.matA,1,0).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
+        if kpm.batch > 1:
+            self.matC = torch.empty(kpm.batch,kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{self._devId}')
+        else:
+            self.matC = torch.empty(kpm.M,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('C'),device=f'cuda:{self._devId}')
+        d0,d1 = 0,1
+        if len(self.matA.shape) == 3 :
+            d0,d1 = 1,2
+        atrans = torch.transpose(self.matA,d0,d1).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
         assert(self.matA.is_contiguous())
         assert(self.matB.is_contiguous())
         assert(atrans.is_contiguous())
-        M, K = self.matA.shape
-        K, N = self.matB.shape
+        if kpm.batch > 1:
+            b, M, K = self.matA.shape
+            b, K, N = self.matB.shape
         res = []
         start_event = torch.cuda.Event(enable_timing=True)
         end_event = torch.cuda.Event(enable_timing=True)
@@ -171,7 +186,7 @@ class PerfTester :
         for i in range(0,warmupCount) : 
             torch.matmul(aUse, self.matB)
             packedKernel.run(aUse, self.matB, self.matC)
-            
+
         # 计算torch的eps
         if self.torch_eps <= 0 or self.matD is None:
             self._init_torch_eps()
@@ -290,9 +305,9 @@ class SerialCompileTask :
             _backend = 2
         kernelCompiler.set_platform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
-        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)[0] 
-        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = kernelCompiler.compileKernel(kpm)[0] 
+        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         # Print("========= hsacoPath = ",hsacoPath)
         # Print("========= kernelName = ",kernelName)
         # print(f"==== backend is {backendtype}")
@@ -300,6 +315,7 @@ class SerialCompileTask :
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Matmul
+        inConfig.shmBytes = shmBytes
         packedKernel = CompiledKernelFactory.getKernel(inConfig, deviceId)
         return (kpm,inConfig,packedKernel)  # 
   
@@ -375,7 +391,7 @@ class ParallelTaskManager :
                 with open(outfilename) as f :
                     obj = json.load(f)
                     for cfg in obj['results'] :
-                        kpm = KernelArgMatmul(0,0,0,1,1,1)
+                        kpm = KernelArgMatmul(0,0,0,0,1,1,1)
                         ktr = KernelTestResult(kpm)
                         ktr.parseFromJson(cfg)
                         parsedBests.append(ktr)
@@ -415,17 +431,17 @@ class ParallelTaskManager :
                 worker.start()
     
     @staticmethod
-    def _createBaselineInit(devid,m,n,k,datatype) :
+    def _createBaselineInit(devid,batch,m,n,k,datatype) :
         baselineTester = PerfTester(devid,0.001,0.001,400)
         baselineTester.init_cuda()
-        baselineTester._init_AB_with_detailed_info(m,n,k,datatype)
+        baselineTester._init_AB_with_detailed_info(batch,m,n,k,datatype)
         baselineTester._init_torch_eps()
         
     @staticmethod
-    def init_baseline_matmul(m,n,k, datatype : torch.dtype, devids : List[int], fProcess) :
+    def init_baseline_matmul(batch,m,n,k, datatype : torch.dtype, devids : List[int], fProcess) :
         waitlist = []
         for devid in devids :
-            p = fProcess(target= ParallelTaskManager._createBaselineInit,args=(devid,m,n,k,datatype))
+            p = fProcess(target= ParallelTaskManager._createBaselineInit,args=(devid,batch,m,n,k,datatype))
             waitlist.append(p)
             p.start()
         for p in waitlist :
@@ -465,7 +481,7 @@ class ParallelTaskManager :
     def _get_kernelargMatmul(self, cfgstr : int, tse : TuningSpaceEncoder_Matmul) -> KernelArgMatmul : 
         kw = ConfigKeywords    
         config = tse.decode(cfgstr)
-        arg = KernelArgMatmul(config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K], 
+        arg = KernelArgMatmul(config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K],config[kw.KEY_BATCH] ,
                             EnumKernelDType(config[kw.KEY_DTYPE_A]), 
                             EnumKernelDType(config[kw.KEY_DTYPE_B]),
                             EnumKernelDType(config[kw.KEY_DTYPE_C]))
@@ -504,8 +520,8 @@ class ParallelTaskManager :
             # DeviceInfo.set_visible_devices(self.devIds)
             if len(baselineInitInfo) == 4 :
                 print('============ start running with GEMM baseline initializer ==============')
-                m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3]
-                ParallelTaskManager.init_baseline_matmul(m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
+                batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
+                ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
             print('============ start init perf monitors ==============')
             self._initPerfMonitors()
         if needCompile :
