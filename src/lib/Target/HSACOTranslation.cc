@@ -329,15 +329,15 @@ std::string generateAmdgcnAndHsacoFromLLIRFile(
     std::string amdgcn = std::get<0>(ret);
     std::string hsacoPath = std::get<1>(ret);
 
-    std::string amdgcnPath{DEBUG_AMDGCN_OUTPUT_PATH};
-    std::ofstream outasm(amdgcnPath);
-    if (outasm.is_open()) {
-        outasm << amdgcn;
-        outasm.close();
-        // std::cout << "write amdgcn success!" << std::endl;
-    } else {
-        // std::cout << "write amdgcn error!" << std::endl;
-    }
+    // std::string amdgcnPath{DEBUG_AMDGCN_OUTPUT_PATH};
+    // std::ofstream outasm(amdgcnPath);
+    // if (outasm.is_open()) {
+    //     outasm << amdgcn;
+    //     outasm.close();
+    //     // std::cout << "write amdgcn success!" << std::endl;
+    // } else {
+    //     // std::cout << "write amdgcn error!" << std::endl;
+    // }
     // std::cout << "amdgcnpath=" << amdgcnPath << std::endl;
     // std::cout << "hsacopath=" << hsacoPath << std::endl;
     return hsacoPath;
