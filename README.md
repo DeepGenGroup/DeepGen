@@ -124,6 +124,30 @@ ps -eo pid,etime,cmd | grep testGetKernels
 1. DeepGen首先读取用户的调优参数文件，生成并剪枝调优空间，存储到json文件。如果检测到调优空间json已存在，则跳过这步
 2. 随后DeepGen根据参数空间json开始编译和benchmark。编译的进程池大小由用户决定。benchmark过程由守护进程（ perfmonitor ）和 工作进程（perftester）构成。perftester 执行测试，并将结果存入 `perfPAth` 为前缀指定的json中。
 perfmonitor 检测到 perftester 意外退出时，会重启perftester进程. perftester会根据用户输入的 `perfPAth` 路径重新读取历史最佳纪录，继续统计并benchmark，直到正常结束
+3. 注意：对于大部分GPU设备，其存在自动调节时钟频率的功能，在负载情况不同时时钟频率也不同。这可能使最终性能的测定不准确，因此需要锁定频率后再测试：   
+   对于nvidia：
+
+   ```shell
+   # 以设置7号卡的频率举例 (-i 7即可)
+   sudo nvidia-smi -pm 1 -i 7  # 设置persistence mode, 防止驱动卸载后设置失效
+   nvidia-smi -q -d CLOCK # 查看当前时钟状态
+   nvidia-smi -q -d SUPPORTED_CLOCKS # 查看可用频率
+   sudo nvidia-smi -lgc 1410,1410 -i 7  # 锁定上下限
+   nvidia-smi -q -d CLOCK # 再次查看当前时钟状态
+   ```
+
+   对于amdgpu：
+   ```shell
+   cat /sys/class/drm/card0/device/pp_dpm_sclk  # 查看核心频率级别
+   cat /sys/class/drm/card0/device/pp_dpm_mclk  # 查看显存频率级别
+   echo "manual" | sudo tee /sys/class/drm/card0/device/power_dpm_force_performance_level # /sys/class/drm下gpu卡不一定叫card0，可能叫renderXXX之类的。根据需要自己改。下述同理
+   # set clock level
+   echo "4" | sudo tee /sys/class/drm/card0/device/pp_dpm_sclk
+   echo "2" | sudo tee /sys/class/drm/card0/device/pp_dpm_mclk
+   # 如果想撤销修改
+   echo "auto" | sudo tee /sys/class/drm/card0/device/power_dpm_force_performance_level
+
+   ```
 
 
 ### 3.2 脚本参数说明
@@ -171,7 +195,7 @@ Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAt
 - 中止Benchmark后想继续运行，如何操作？   
 *解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*
 
-- Runtime执行后，未生成kernel（_pkl目录下没有文件生成）
+- Runtime执行后，未生成kernel（_pkl目录下没有文件生成）   
 解决：请检查CMakelist.txt中的以下变量是否正确： 
 `USER_LLD_PATH`（ROCM）
 `USER_PTXAS_PATH`（CUDA）
