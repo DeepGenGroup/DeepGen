@@ -274,12 +274,16 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     isabin_fs->close();
     bitecode_fs->close();
     if (remove(bitcode_path.c_str()) == 0) {
+#ifdef KCG_DEBUG
         std::cout << "file deleted: " << bitcode_path << std::endl;
+#endif
     } else {
         perror("file deleted error"); // 打印错误信息
     }
     if (remove(isabin_path.c_str()) == 0) {
+#ifdef KCG_DEBUG
         std::cout << "file deleted: " << isabin_path << std::endl;
+#endif
     } else {
         perror("file deleted error"); // 打印错误信息
     }

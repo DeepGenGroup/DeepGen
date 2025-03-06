@@ -159,7 +159,9 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
       elementBytes = etype.getIntOrFloatBitWidth() / 8;
     }
   });
+#ifdef KCG_DEBUG
   std::cout << "[D] globalInfo: "<< shmElements << ":" << elementBytes << std::endl;
+#endif
   shmBytes = (shmElements * elementBytes);
   op->walk([&](mlir::func::FuncOp f){
     if(findKernel){

@@ -363,8 +363,8 @@ class CUDALauncher :
                 self,*args )
 
         if wrapper is None :
-            print("[D] error cwrapper")
+            # print("[D] error cwrapper")
             pass
         else:
-            print("[D] success cwrapper")
+            # print("[D] success cwrapper")
             pass

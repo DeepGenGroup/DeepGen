@@ -290,7 +290,9 @@ std::vector<KernelInfo> generateKernels(
       bool isATranspose = config.at(KEY_IS_A_TRANSPOSE)> 0;
       auto gemmDims = std::vector<int64_t>{ M, N, K};
       if(batch > 1){
+#ifdef KCG_DEBUG
         std::cout << "[D] generate batch GEMM\n";
+#endif
         gemmDims =  std::vector<int64_t>{ batch, M, N, K};
       }
       auto kernel = generator.create<Operators::Matmul>(
@@ -306,7 +308,9 @@ std::vector<KernelInfo> generateKernels(
       // std::cout << "==== lowering status: " << (res2?"SUCCESS":"FAILED") << "\n";
       std::string binaryPath = generator.translate(kernel);  // hsaco/cubin
       // std::cout << "==== translate res :" << "\n";
+#ifdef KCG_DEBUG
       std::cout << "binarypath = " << binaryPath << "\n";
+#endif
       info.m_binaryPath = binaryPath;
       info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
 #ifdef KCG_DEBUG

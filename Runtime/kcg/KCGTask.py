@@ -110,12 +110,14 @@ class PerfTester :
             self.matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{self._devId}')
             self.matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{self._devId}')
     
-    def inner_test_torch(self,matrixA, matrixB) -> Tuple[torch.Tensor,float]:
+    def inner_test_torch(self,matrixA:torch.Tensor, matrixB:torch.Tensor) -> Tuple[torch.Tensor,float]:
+        torchMM = torch.matmul
+        if len(matrixA.shape) > 2 :
+            torchMM = torch.bmm
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
-        # self.matD = torch.matmul(matrixA, matrixB)
-        self.matD = torch.bmm(matrixA, matrixB)
+        self.matD = torchMM(matrixA, matrixB)
         ev_end.record()
         torch.cuda.synchronize()
         eps = ev_start.elapsed_time(ev_end)
@@ -175,8 +177,6 @@ class PerfTester :
             b, M, K = self.matA.shape
             b, K, N = self.matB.shape
         res = []
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
         aUse = None
         
         if kpm.isATranspose :
@@ -184,9 +184,11 @@ class PerfTester :
         else:
             aUse = self.matA
         # warmup
+        torchMM = torch.matmul
+        if kpm.batch > 1:
+            torchMM = torch.bmm
         for i in range(0,warmupCount) : 
-            torch.bmm(aUse, self.matB)
-            # torch.matmul(aUse, self.matB)
+            torchMM(aUse, self.matB)
             packedKernel.run(aUse, self.matB, self.matC)
 
         # 计算torch的eps
@@ -194,6 +196,8 @@ class PerfTester :
             self._init_torch_eps()
         
         # benchmark
+        start_event = torch.cuda.Event(enable_timing=True)
+        end_event = torch.cuda.Event(enable_timing=True)
         for i in range(0,benchmarkCount) : 
             self.matC,eps = self._inner_test_kcg(aUse, self.matB, self.matC, packedKernel, start_event, end_event)
             res.append(eps)
@@ -308,8 +312,8 @@ class SerialCompileTask :
         kernelCompiler.set_platform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = kernelCompiler.compileKernel(kpm)[0] 
-        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         # Print("========= hsacoPath = ",hsacoPath)
         # Print("========= kernelName = ",kernelName)
         # print(f"==== backend is {backendtype}")
