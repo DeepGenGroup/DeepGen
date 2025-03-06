@@ -114,7 +114,8 @@ class PerfTester :
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
-        self.matD = torch.matmul(matrixA, matrixB)
+        # self.matD = torch.matmul(matrixA, matrixB)
+        self.matD = torch.bmm(matrixA, matrixB)
         ev_end.record()
         torch.cuda.synchronize()
         eps = ev_start.elapsed_time(ev_end)
@@ -184,7 +185,8 @@ class PerfTester :
             aUse = self.matA
         # warmup
         for i in range(0,warmupCount) : 
-            torch.matmul(aUse, self.matB)
+            torch.bmm(aUse, self.matB)
+            # torch.matmul(aUse, self.matB)
             packedKernel.run(aUse, self.matB, self.matC)
 
         # 计算torch的eps

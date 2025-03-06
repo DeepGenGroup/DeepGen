@@ -309,7 +309,7 @@ std::vector<KernelInfo> generateKernels(
       std::cout << "binarypath = " << binaryPath << "\n";
       info.m_binaryPath = binaryPath;
       info.m_kernelName = generator.kernelFuncName<Operators::Matmul>();
-
+#ifdef KCG_DEBUG
       std::cout << "======== info.m_blockDims :\n";
       for(auto e : info.m_blockDims){
         std::cout << e << "," ;
@@ -320,6 +320,7 @@ std::vector<KernelInfo> generateKernels(
         std::cout << e << "," ;
       }
       std::cout << std::endl;
+#endif
       // result[config] = info;
       std::cout << "==== kernel name : " << info.m_kernelName << "\n";
       return info;

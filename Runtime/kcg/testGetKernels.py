@@ -1,8 +1,10 @@
-if __name__ == '__main__' :
-    from KCGTask import *
-    import multiprocessing 
-    from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
-    import sys
+
+from KCGTask import *
+import multiprocessing 
+from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
+import sys
+
+def main():    
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
@@ -24,7 +26,7 @@ if __name__ == '__main__' :
     # 当前后端类型 & 架构信息
     backendType = EnumBackendType.HIP  
     arch = "906"
-    M = N = K = 512
+    M = N = K = 256
     batch = 2
     elementType = torch.float32
     ######################################################################################
@@ -47,7 +49,8 @@ if __name__ == '__main__' :
     print('===== Waiting for tuning space build ... ',flush=True)
     totalLen = BuildTuningSpace(tuning_param_file, cacheTuningSPaceFile, tuningSpaceGenMode)
     print(f'===== Tuning space build OK! size = {totalLen} ==== ',flush=True)
-    
+    if totalLen <= 0 :
+        return
     # 编译及benchmark启动
     if not onlyGenerateCfg :
         tm =  ParallelTaskManager(
@@ -71,3 +74,5 @@ if __name__ == '__main__' :
             baselineInitInfo= [batch, M, N ,K , elementType]    # 用于pytorch基准的测试。因为PerfTester设计上的通用性（不关注kernel的具体参数），理论上该值只能运行时查找，且不一定保证唯一。考虑到实现的复杂性，这里先简单处理，后期改进（结合其他算子、各种参数再重新设计）
         )
 
+if __name__ == '__main__' :
+    main()

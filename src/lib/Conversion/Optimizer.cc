@@ -486,14 +486,15 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     if (config["LOCAL_SPLIT_U"] > 1) {
       Rewriter::bufferCombine({{smA, smB}, {smC}}, "smABC");
       Rewriter::bufferCombine({{regC}, {regC_}}, "regC");
-      // LOG_DEBUG("===== bufferCombine =======\n",module);
+      LOG_DEBUG("===== bufferCombine =======\n",module);
     }
+    LOG_DEBUG("===== before blockmapping =======\n",module);
 
     // int gridDims = 0;
     // Rewriter::parallelToOneDim(gridLevel, &gridDims);
     // tools::opSetAttr(module,AttrGridDim,gridDims);
     Rewriter::BlockMapping(gridLevel, config["BLOCK_MAPPING"]);
-    // LOG_DEBUG("===== BlockMapping gridLevel =======\n",module);
+    LOG_DEBUG("===== BlockMapping gridLevel =======\n",module);
 
     Rewriter::unrollAttribute(module, config["UNROLL_NUM"]);
     // LOG_DEBUG("===== unrollAttribute =======\n",module);

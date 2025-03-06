@@ -753,24 +753,40 @@ void BlockMapping(mlir::affine::AffineParallelOp gridLevel, int64_t groupWidth, 
     otherWidth = uppers[uppers.size()-1];
   }
 
-  if (otherWidth % groupWidth != 0) return;  // 不可以整除
+  if (otherWidth % groupWidth != 0){
+    return;  // 不可以整除
+  } 
 
   auto ivs = gridLevel.getIVs();
   mlir::OpBuilder builder = getBuilder(gridLevel, Position::begin);
   mlir::AffineExpr dim = builder.getAffineDimExpr(0);
+  mlir::AffineExpr bid;
+  if(applyResults.size() == 3){
+    // for batch gemm, bid needs to be of one layer of blocks
+    bid = dim % (groupHeight * otherWidth);
+  }
+  else if(applyResults.size() ==2){
+    bid = dim;
+  }
+  else{
+    assert(false && "invalid dimension counts");
+  }
   int64_t groupNum = groupWidth * groupHeight;
-  auto start = dim.floorDiv(groupNum) * groupWidth;
-  auto exas0Map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(start + dim % groupWidth), builder.getContext());
+  auto start = bid.floorDiv(groupNum) * groupWidth;
+  auto exas0Map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(start + bid % groupWidth), builder.getContext());
   auto exas0 = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), exas0Map, mlir::ValueRange({ivs[0]}));
-  auto exas1Map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>((dim % groupNum).floorDiv(groupWidth)), builder.getContext());
+  auto exas1Map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>((bid % groupNum).floorDiv(groupWidth)), builder.getContext());
   auto exas1 = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), exas1Map, mlir::ValueRange({ivs[0]}));
-
+  int i0 = 0,i1 = 1;
+  if(applyResults.size() == 3){
+    i0 = 1;i1 = 2;  // bz bx by
+  }
   if (isCol) {
-    applyResults[0].replaceAllUsesWith(exas0.getResult());
-    applyResults[1].replaceAllUsesWith(exas1.getResult());
+    applyResults[i0].replaceAllUsesWith(exas0.getResult());
+    applyResults[i1].replaceAllUsesWith(exas1.getResult());
   } else {
-    applyResults[0].replaceAllUsesWith(exas1.getResult());
-    applyResults[1].replaceAllUsesWith(exas0.getResult());
+    applyResults[i0].replaceAllUsesWith(exas1.getResult());
+    applyResults[i1].replaceAllUsesWith(exas0.getResult());
   }
 }
 
