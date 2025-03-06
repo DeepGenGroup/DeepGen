@@ -172,7 +172,9 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
   }
   if (remove(ptxPath.c_str()) == 0)
   {
+#ifdef KCG_DEBUG
     std::cout << "file deleted : " << ptxPath << std::endl;
+#endif
   }
   else
   {
