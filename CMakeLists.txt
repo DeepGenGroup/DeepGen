@@ -13,8 +13,29 @@ set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas")
 set(CUDA_CAP        70)
 set(PTXAS_VERSION   83)
 set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
-set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/py310")
-set(PYTHON_VERSION "3.10")
+# set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/triton_rocm")
+# set(PYTHON_VERSION "3.8")
+
+find_package(Python COMPONENTS Interpreter Development)
+
+if(Python_FOUND)
+    message(STATUS "=== Found Python: ${Python_EXECUTABLE}")
+    message(STATUS "=== Python Include: ${Python_INCLUDE_DIRS}")
+    message(STATUS "=== Python Libraries: ${Python_LIBRARIES}")
+endif()
+
+# # 查找 Python
+# find_package(PythonInterp REQUIRED)
+# find_package(PythonLibs REQUIRED)
+
+# # 获取 Python 版本信息
+# execute_process(
+#     COMMAND ${PYTHON_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('include'))"
+#     OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
+#     OUTPUT_STRIP_TRAILING_WHITESPACE
+# )
+# message(STATUS "===== Found PythonIncludeDIr ${PYTHON_INCLUDE_DIR}")
+# message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
 # close some warnings
