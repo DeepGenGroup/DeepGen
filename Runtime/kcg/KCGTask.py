@@ -81,7 +81,9 @@ class PerfTester :
         self.controller = None
     
     def init_cuda(self) :
+        DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
         if not self._isInited :
+            print("init_cuda devid=",self._devId)
             DeviceInfo.set_visible_devices([self._devId])
             DeviceInfo.set_current_device(self._devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
             if not torch.cuda.is_available() :
@@ -263,11 +265,12 @@ class PerfTester :
             self.controller.connect(remoteSender.host, 8888)
         if isAsRemoteTester:
             # Perftester run as remote tester : collect remote send files and do benchmark
+            print("==== Run as remoter perftester. Controller listen on 8888 ")
             self.controller = MyTCPServer(8888)
             self.controller.listen()
         while True:
             msg = None
-            if isAsRemoteTester :
+            if isAsRemoteTester and self.controller is not None :
                 # wait "upload finish or EXIT" signal from remote
                 msg = self.controller.recv()
                 if msg == "EXIT" :
@@ -297,7 +300,8 @@ class PerfTester :
                                 remoteSender.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
                         # send pkl files and send OK message to remote tester
                         remoteSender.upload_files(lps,rps)
-                        self.controller.send("[OK]")
+                        if self.controller is not None:
+                            self.controller.send("[OK]")
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
@@ -335,7 +339,7 @@ class PerfTester :
                     json.dump(obj,f,indent=4)
         # end signal triggered
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======\n Results store in : {str(outputPAth)} ")
-        if remoteSender is not None :
+        if remoteSender is not None and self.controller is not None:
             self.controller.send("EXIT")
 
 class SerialCompileTask :
