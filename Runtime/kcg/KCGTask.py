@@ -371,6 +371,10 @@ class ParallelTaskManager :
         self.atol = atol
         self.rtol = rtol
     
+    def __del__(self) :
+        for lk in self.locks :
+            lk.release()
+    
     @staticmethod
     def _innerCreateTesterProc(dev,lock,
         endSignal,
@@ -519,47 +523,55 @@ class ParallelTaskManager :
         return arg
     
     def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0, baselineInitInfo = []) :
-        procCount = 0
-        dealed = startFrom
-        print(f"=== start from cfg[{startFrom}] =====")
-        if needPerfTest:
-            # DeviceInfo.set_visible_devices(self.devIds)
-            if len(baselineInitInfo) == 4 :
-                print('============ start running with GEMM baseline initializer ==============')
-                batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
-                ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
-            print('============ start init perf monitors ==============')
-            self._initPerfMonitors()
-        if needCompile :
-            tse = None
-            cfgstrs = []
-            with open(self.tuningSpaceJson) as f :
-                obj = json.load(f)
-                tse = TuningSpaceEncoder_Matmul(obj['template'])
-                cfgstrs = obj['cfgs']
-            
+        try:
+            procCount = 0
+            dealed = startFrom
+            print(f"=== start from cfg[{startFrom}] =====")
             # make sub pkl dirs for each visible card
-            pickleDirs = []
             for devid in self.devIds :
                 path = f"{PathManager.pikle_dir()}/{devid}"
                 os.makedirs(path,exist_ok=True)
-                pickleDirs.append(path)
-            sct = SerialCompileTask()
-            for i in range(startFrom,len(cfgstrs)) :
-                selectDevID = dealed % len(self.devIds)
-                # print(f"=========== Dealing : cfgstrs[{i}] ================")
-                config = self._get_kernelargMatmul(cfgstrs[i],tse)
-                self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID], backendtype, archInfo)
-                procCount += 1; dealed += 1
-                if procCount >= maxProcess or i == self.CFG_COUNT-1:
-                    print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
-                    self._waitAllCompilers()
-                    procCount = 0
-            print(f"========= All Compile tasks Finished [{self.CFG_COUNT}] ! ============")
-        self.endSignal.value = 1
-        
-        # 处理完毕，发出结束信号，等待全部进程结束
-        if needPerfTest :
-            for p in self.perfProcMonitors :
-                p.join()
-                print("======== Perf monitors stopped ========")
+            if needPerfTest:
+                # DeviceInfo.set_visible_devices(self.devIds)
+                if len(baselineInitInfo) == 4 :
+                    print('============ start running with GEMM baseline initializer ==============')
+                    batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
+                    ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
+                print('============ start init perf monitors ==============')
+                self._initPerfMonitors()
+            if needCompile :
+                tse = None
+                cfgstrs = []
+                with open(self.tuningSpaceJson) as f :
+                    obj = json.load(f)
+                    tse = TuningSpaceEncoder_Matmul(obj['template'])
+                    cfgstrs = obj['cfgs']
+                
+                sct = SerialCompileTask()
+                for i in range(startFrom,len(cfgstrs)) :
+                    selectDevID = dealed % len(self.devIds)
+                    # print(f"=========== Dealing : cfgstrs[{i}] ================")
+                    config = self._get_kernelargMatmul(cfgstrs[i],tse)
+                    self._createCompileTask(sct.compile_kernels,self.locks[selectDevID],config,i,i+1,'deepgen', self.devIds[selectDevID], backendtype, archInfo)
+                    procCount += 1; dealed += 1
+                    if procCount >= maxProcess or i == self.CFG_COUNT-1:
+                        print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============")
+                        self._waitAllCompilers()
+                        procCount = 0
+                print(f"========= All Compile tasks Finished [{self.CFG_COUNT}] ! Wait benchmark stop ============")
+                self.endSignal.value = 1
+                
+        except Exception as e :
+            print("[Deepgen Exception]",e)
+            
+        except KeyboardInterrupt as ki :
+            print("[Deepgen Interrupt] User Keyboard Interrupt : Stop All ...")
+            self._waitAllCompilers()
+            self.endSignal.value = 1
+        finally:
+            # 处理完毕，发出结束信号，等待全部进程结束
+            if needPerfTest :
+                for p in self.perfProcMonitors :
+                    p.join()
+                    print("======== Perf monitors stopped ========")
+            

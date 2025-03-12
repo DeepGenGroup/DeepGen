@@ -185,6 +185,16 @@ class EnumBackendType(Enum):
     INVALID = 3
     def __str__(self):
         return f'{self.name}'
+
+class EnumRunMode(Enum):
+    # 在本机执行生成调优空间、编译kernel以及benchmark
+    GetTuneSpace_Compile_Benchmark_Local = 1  
+    # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
+    AsRemotePerftester = 2
+    # 只生产调优空间，不进行编译以及benchmark
+    GetTuneSpace_Local_Only = 3
+    def __str__(self):
+        return f'{self.name}'
     
 class EnumKernelDType(IntEnum):
     float8 = 1
