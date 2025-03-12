@@ -38,7 +38,7 @@ class MyTCPServer :
         self.server = None
         self.port = listenPort    
         self.conn = None    
-    def listen(self, callbackFunc) :
+    def listen(self) :
         import socket
         if self.server is not None :
             return
