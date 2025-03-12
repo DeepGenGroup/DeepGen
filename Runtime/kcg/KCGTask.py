@@ -261,8 +261,18 @@ class PerfTester :
         if remoteSender is not None :
             # using remote perftester : need to send local compiled files to remote
             remoteSender.connect()
-            self.controller = MyTCPClient()
-            self.controller.connect(remoteSender.host, 8888)
+            # self.controller = MyTCPClient()
+            print(f"=== try connect {remoteSender.host}")
+            failCount = 0
+            if self.controller is not None:
+                while not self.controller.connect(remoteSender.host, 8888) :
+                    failCount += 1
+                    if failCount >= 5 :
+                        assert False,f"[Fatal] controller connect {remoteSender.host} failed! "
+                        raise Exception("error connect server")
+                    time.sleep(8)
+            print(f"=== connect {remoteSender.host} finish!")
+                
         if isAsRemoteTester:
             # Perftester run as remote tester : collect remote send files and do benchmark
             print("==== Run as remoter perftester. Controller listen on 8888 ")
@@ -421,8 +431,9 @@ class ParallelTaskManager :
             self.locks.append(lock)
     
     def __del__(self) :
-        for lk in self.locks :
-            lk.release()
+        pass
+        # for lk in self.locks :
+        #     lk.release()
     
     @staticmethod
     def _innerCreateTesterProc(dev,lock,

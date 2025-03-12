@@ -42,13 +42,13 @@ class MyTCPServer :
         import socket
         if self.server is not None :
             return
-        socket_server = socket.socket()
-        socket_server.bind(("localhost", self.port))
+        self.server = socket.socket()
+        self.server.bind(("localhost", self.port))
         # 监听端口
-        socket_server.listen(1)
+        self.server.listen(1)
         # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
         print(f"服务端已开始监听，正在等待客户端连接...")
-        self.conn, address = socket_server.accept()
+        self.conn, address = self.server.accept()
         print(f"接收到了客户端的连接，客户端的信息：{address}")
         
     def recv(self) -> str:
@@ -65,13 +65,18 @@ class MyTCPClient :
         self.socket_client = None
         
     def connect(self, destip, destport) :
-        import socket
-        if self.socket_client is None:
-        # 创建socket对象
-            socket_client = socket.socket()
-            # 连接到服务器
-            socket_client.connect((destip, destport))
-    
+        try:
+            if self.socket_client is None:
+                import socket
+            # 创建socket对象
+                self.socket_client = socket.socket()
+                # 连接到服务器
+            self.socket_client.connect((destip, destport))
+        except Exception as e :
+            print("TCPClient Error : ",e)
+            return False
+        return True
+        
     def send_and_wait(self,send_msg) -> str :
         self.socket_client.send(send_msg.encode("UTF-8"))
         # 接受消息
