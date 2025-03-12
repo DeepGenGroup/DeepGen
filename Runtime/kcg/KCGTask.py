@@ -261,11 +261,11 @@ class PerfTester :
         if remoteSender is not None :
             # using remote perftester : need to send local compiled files to remote
             remoteSender.connect()
-            # self.controller = MyTCPClient()
-            print(f"=== try connect {remoteSender.host}")
+            self.controller = MyTCPClient()
+            print(f"=== try connect {remoteSender.host}",flush=True)
             failCount = 0
             if self.controller is not None:
-                while not self.controller.connect(remoteSender.host, 8888) :
+                while not self.controller.connect(remoteSender.host) :
                     failCount += 1
                     if failCount >= 5 :
                         assert False,f"[Fatal] controller connect {remoteSender.host} failed! "
@@ -275,14 +275,15 @@ class PerfTester :
                 
         if isAsRemoteTester:
             # Perftester run as remote tester : collect remote send files and do benchmark
-            print("==== Run as remoter perftester. Controller listen on 8888 ")
-            self.controller = MyTCPServer(8888)
+            self.controller = MyTCPServer()
+            print("==== Run as remoter perftester. Controller listening ",flush=True)
             self.controller.listen()
         while True:
             msg = None
             if isAsRemoteTester and self.controller is not None :
                 # wait "upload finish or EXIT" signal from remote
                 msg = self.controller.recv()
+                print(f'recv = {msg}')
                 if msg == "EXIT" :
                     break
             pathLock.acquire()

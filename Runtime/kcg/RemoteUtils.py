@@ -33,8 +33,20 @@ class RemoteFileSender :
             scp.put(local_path, remote_path)
 
 
+DEFAULT_PORT = 18888
+
+def get_local_ip() :
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8',80))
+        ip = s.getsockname()[0]
+    finally:
+        s.close()
+    return ip
+
 class MyTCPServer :
-    def __init__(self,listenPort):
+    def __init__(self,listenPort = DEFAULT_PORT):
         self.server = None
         self.port = listenPort    
         self.conn = None    
@@ -43,7 +55,9 @@ class MyTCPServer :
         if self.server is not None :
             return
         self.server = socket.socket()
-        self.server.bind(("localhost", self.port))
+        local_ip = get_local_ip()
+        print("local_ip=",local_ip,flush=True)
+        self.server.bind((local_ip, self.port))
         # 监听端口
         self.server.listen(1)
         # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
@@ -64,7 +78,7 @@ class MyTCPClient :
     def __init__(self):
         self.socket_client = None
         
-    def connect(self, destip, destport) :
+    def connect(self, destip, destport = DEFAULT_PORT) :
         try:
             if self.socket_client is None:
                 import socket
