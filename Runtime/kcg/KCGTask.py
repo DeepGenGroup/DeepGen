@@ -428,7 +428,7 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol,remotesender) :
+        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester) :
 
         tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest)
         # pkl = g_getBaselinePklPath(dev)
@@ -455,7 +455,7 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender)
+        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
         del tester; tester = None
         
     @staticmethod
@@ -467,11 +467,11 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol, remotesender) :
+        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester) :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,))
+            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
         worker.start()
         while True:
             worker.join()
@@ -482,7 +482,7 @@ class ParallelTaskManager :
                 print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
                 del worker; worker = None
                 worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender))
+                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
                 worker.start()
     
     @staticmethod
@@ -503,7 +503,7 @@ class ParallelTaskManager :
             p.join()
         print(f"===== All baseline init OK ======")
         
-    def _initPerfMonitors(self) :
+    def _initPerfMonitors(self,isAsRemoteTester) :
         for i in range(len(self.devIds)) :
             devid = self.devIds[i]
             lock = self.locks[i]
@@ -518,7 +518,8 @@ class ParallelTaskManager :
                     self.torchDynamicLogPath,
                     self.nTorchEpsInitTest,
                     self.atol,self.rtol,
-                    self.sender
+                    self.sender,
+                    isAsRemoteTester
                 ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)
@@ -568,7 +569,7 @@ class ParallelTaskManager :
         arg.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
         return arg
     
-    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0, baselineInitInfo = []) :
+    def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0, baselineInitInfo = [], isAsRemoteTester = False) :
         try:
             procCount = 0
             dealed = startFrom
@@ -584,7 +585,7 @@ class ParallelTaskManager :
                     batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
                     ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
                 print('============ start init perf monitors ==============')
-                self._initPerfMonitors()
+                self._initPerfMonitors(isAsRemoteTester)
             if needCompile :
                 tse = None
                 cfgstrs = []

@@ -28,7 +28,8 @@ def main():
     batch = 1
     elementType = torch.float32
     sshsender = RemoteFileSender("10.18.96.58","2133","xushilong","xushilong")
-    runMode = EnumRunMode.AsRemotePerftester
+    runMode = EnumRunMode.CallRemotePerftester
+    
     ######################################################################################
     # 调优空间生成
     totalLen = 0
@@ -40,11 +41,19 @@ def main():
             return
     
     # 编译及benchmark启动
+    isAsRemoteTester = False
     if runMode != EnumRunMode.GetTuneSpace_Local_Only :
         need_compile = True
         need_bencmark = True
         if runMode == EnumRunMode.AsRemotePerftester :
             need_compile = False
+            isAsRemoteTester = True
+            sshsender = None
+        if runMode == EnumRunMode.CallRemotePerftester :
+            need_compile = True
+            isAsRemoteTester = False
+            assert sshsender is not None
+            
         tm =  ParallelTaskManager(
             gpu_devices,
             totalLen, cacheTuningSPaceFile, perfPathPrefix, 
@@ -64,7 +73,8 @@ def main():
             needCompile=need_compile, # 是否执行编译过程
             needPerfTest=need_bencmark, # 是否执行benchmark过程
             startFrom=0,     # 从空间里编号为x的config开始执行
-            baselineInitInfo= [batch, M, N ,K , elementType]    # 用于pytorch基准的测试。因为PerfTester设计上的通用性（不关注kernel的具体参数），理论上该值只能运行时查找，且不一定保证唯一。考虑到实现的复杂性，这里先简单处理，后期改进（结合其他算子、各种参数再重新设计）
+            baselineInitInfo= [batch, M, N ,K , elementType],    # 用于pytorch基准的测试。因为PerfTester设计上的通用性（不关注kernel的具体参数），理论上该值只能运行时查找，且不一定保证唯一。考虑到实现的复杂性，这里先简单处理，后期改进（结合其他算子、各种参数再重新设计）
+            isAsRemoteTester=isAsRemoteTester
         )
 
 if __name__ == '__main__' :

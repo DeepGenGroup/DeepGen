@@ -63,6 +63,7 @@ def libcuda_dirs():
     # libcuda.so.1 (libc6,x86-64) => /lib/x86_64-linux-gnu/libcuda.so.1
     locs = [line.split()[-1] for line in libs.splitlines() if "libcuda.so" in line]
     dirs = [os.path.dirname(loc) for loc in locs]
+    dirs.append("/home/xushilong/anaconda3/lib/stubs")
     msg = 'libcuda.so cannot found!\n'
     if locs:
         msg += 'Possible files are located at %s.' % str(locs)
@@ -191,8 +192,10 @@ class EnumRunMode(Enum):
     GetTuneSpace_Compile_Benchmark_Local = 1  
     # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
     AsRemotePerftester = 2
-    # 只生产调优空间，不进行编译以及benchmark
+    # 只在本地生产调优空间，不进行编译以及benchmark
     GetTuneSpace_Local_Only = 3
+    # 只在本地进行编译，将 benchmark任务所需文件推送到远程
+    CallRemotePerftester = 4
     def __str__(self):
         return f'{self.name}'
     
