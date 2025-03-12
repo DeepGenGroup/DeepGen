@@ -148,7 +148,8 @@ perfmonitor 检测到 perftester 意外退出时，会重启perftester进程. pe
    echo "auto" | sudo tee /sys/class/drm/card0/device/power_dpm_force_performance_level
 
    ```
-
+4. 特殊支持：考虑到服务器之间的负载情况不同，GPU较为空闲的服务器上的CPU占用率可能很高。当本地运行DeepGen的编译+benchmark时，CPU高占用往往会限制编译速度，增加测试耗时   
+   为解决该问题，DeepGen支持 RemoteBenchmark 功能。可选定两台服务器AB，A的CPU占用低，用于编译，而benchmark任务交B的GPU执行。此时，A上必须部署有能够编译B所需的kernel的工具链（nvcc、cuda、rocm环境等）。RemoteBenchmark 的具体使用方法，详见 3.4   
 
 ### 3.2 脚本参数说明
 
@@ -177,6 +178,56 @@ testGetKernels.py ：参数含义见代码注释
 
 ### 3.3 工具脚本说明
 Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAth}_cardX.json` (记录最佳topK的config)转化为调优空间，以便后期再单独测试（避免大批量运行时torch性能变差的问题）
+
+### 3.4 关于RemoteBenchmark
+testGetKernels.py 中 ：
+```py
+
+def main():    
+    # 路径管理器初始化 & 清理缓存数据（可选）
+    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
+
+    # Tuning 参数空间配置文件
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
+    # perf文件路径前缀(用于记录当前最佳性能的case)
+    perfPathPrefix = f'{PathManager.project_dir()}/__test_bmm'
+    # 调优空间存储文件
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_gemm_2048.json'
+    # 最大编译进程数
+    maxCompilingProcess = 100
+    # 可见设备列表
+    gpu_devices = [7]  
+    # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
+    tuningSpaceGenMode = 1  
+    # 当前后端类型 & 架构信息
+    backendType = EnumBackendType.CUDA  
+    arch = "80"
+    M = N = K = 1024
+    batch = 1
+    elementType = torch.float32
+    sshsender = RemoteFileSender("$ip_addr_of_B","$ssh-port","$username","$ssh-password")
+    runMode = EnumRunMode.AsRemotePerftester
+    keepTopNum = 100
+```
+
+注意到 `runMode` 变量。该枚举变量代表DeepGen的不同运行模式。分为四种：
+```py
+    # 在本机执行生成调优空间、编译kernel以及benchmark
+    GetTuneSpace_Compile_Benchmark_Local = 1  
+    # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
+    AsRemotePerftester = 2
+    # 只在本地生产调优空间，不进行编译以及benchmark
+    GetTuneSpace_Local_Only = 3
+    # 只在本地进行编译，将 benchmark任务所需文件推送到远程, 在远程记录benchmark结果
+    CallRemotePerftester = 4
+```
+当仅在本机执行时，可选择`GetTuneSpace_Compile_Benchmark_Local`、`GetTuneSpace_Local_Only` ，其功能如代码注释所述   
+当配置RemoteBenchmark时，以部署在A、B两台服务器为例：   
+A作为编译机：其枚举选择为`CallRemotePerftester`, 代表其将benchmark任务托管给B, 同时其必须配置 `sshsender` 使用B的ssh登录信息   
+B作为执行机：其选择 `AsRemotePerftester` , 代表其仅仅执行A派送的benchmark任务。perflog文件按照 B上 `perfPathPrefix` 所配置的位置， `sshsender` 不起作用    
+*Notes* 由于当RemoteBenchmark时存在跨主机进程同步的需要，执行机将占用 `18888` 端口用作tcp通信。该端口号可在 `Runtime/kcg/RemoteUtils.py` 中通过 `DEFAULT_PORT` 修改   
+
+
 
 ## 4.项目协同文档
 
