@@ -58,7 +58,7 @@ class KernelLibFile :
         signature,   # kernel signature
         gridDims : list,
         blockDims : list,
-        device=DeviceInfo.get_current_device()): # device号
+        device= 0): # device号
         
         self.m_filePath = filePath
         self.m_backendType : EnumBackendType = backendType

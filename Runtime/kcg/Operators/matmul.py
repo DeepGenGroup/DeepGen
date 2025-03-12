@@ -68,12 +68,12 @@ def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
 # public interface:
 def getMatmulSignature(dtypeA: torch.dtype, dtypeB : torch.dtype, dtypeC : torch.dtype) -> dict:
     # signature只和输入的dtype有关，尺寸无关
-    a = torch.randn((1024, 1024), device='cuda', dtype=dtypeA)
-    b = torch.randn((1024, 1024), device='cuda', dtype=dtypeB)
+    a = torch.randn((1024, 1024), device='cpu', dtype=dtypeA)
+    b = torch.randn((1024, 1024), device='cpu', dtype=dtypeB)
     # Allocates output.
     M, K = a.shape
     K, N = b.shape
-    c = torch.empty((M, N), device='cuda', dtype=dtypeC)
+    c = torch.empty((M, N), device='cpu', dtype=dtypeC)
     # get function signature
     outSignature = _matmul(a, b, c)
     # print(f"[D] mm signature = {outSignature}, type =  {type(outSignature.values())}",)

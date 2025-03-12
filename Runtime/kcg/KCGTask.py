@@ -22,6 +22,9 @@ import glob
 import ctypes
 import json
 from ConfigGenerator import ParseTuningSpace
+from RemoteUtils import *
+import socket
+
 # import pymlir
 
 def g_getBaselineStoreFileName(devId) -> str:
@@ -75,6 +78,7 @@ class PerfTester :
         self._rtol = rtol
         self._isInited = False
         self.nTorchEpsInitTestCount = nTorchEpsInitTest
+        self.controller = None
     
     def init_cuda(self) :
         if not self._isInited :
@@ -246,12 +250,28 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50) : 
+    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteSender : RemoteFileSender = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
+        
+        if remoteSender is not None :
+            # using remote perftester : need to send local compiled files to remote
+            remoteSender.connect()
+            self.controller = MyTCPClient()
+            self.controller.connect(remoteSender.host, 8888)
+        if isAsRemoteTester:
+            # Perftester run as remote tester : collect remote send files and do benchmark
+            self.controller = MyTCPServer(8888)
+            self.controller.listen()
         while True:
+            msg = None
+            if isAsRemoteTester :
+                # wait "upload finish or EXIT" signal from remote
+                msg = self.controller.recv()
+                if msg == "EXIT" :
+                    break
             pathLock.acquire()
             pklFiles = glob.glob(PathManager.pikle_dir() + f'/{self._devId}/*.pkl')
             if len(pklFiles) <= 0 :
@@ -264,10 +284,25 @@ class PerfTester :
                     time.sleep(2)
             else : 
                 try:
-                    for pkl in pklFiles:
-                        arr = deserialize_from_file(pkl)
-                        valid_kernels += arr
-                    total_kernel_count += len(valid_kernels)
+                    if remoteSender is not None :
+                        lps = []
+                        rps = []
+                        for pkl in pklFiles:
+                            lps.append(pkl)
+                            rps.append(pkl[0:pkl.rfind("/")])
+                            infos = deserialize_from_file(pkl)
+                            # send kernel file to remote
+                            for (kpm,inConfig,packedKernel) in infos :
+                                local_kernelpath = packedKernel.m_launcher.m_kernelLib.m_filePath
+                                remoteSender.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
+                        # send pkl files and send OK message to remote tester
+                        remoteSender.upload_files(lps,rps)
+                        self.controller.send("[OK]")
+                    else:
+                        for pkl in pklFiles:
+                            arr = deserialize_from_file(pkl)
+                            valid_kernels += arr
+                        total_kernel_count += len(valid_kernels)
                     # DEBUG: 模拟进程crashed
                     # if total_kernel_count > 10 :
                     #     raise Exception('A Debug Exception')
@@ -278,7 +313,11 @@ class PerfTester :
                 except Exception as e:
                     print(f"exception occur when deal {pkl}: {e}")
                 pathLock.release()
-
+            
+            # When use remote perftester, skip local benchmark
+            if remoteSender is not None :
+                continue
+            # execute benchmark at local
             perf_data = []
             self.init_cuda()
             for (kpm,inConfig,packedKernel) in valid_kernels :
@@ -294,9 +333,10 @@ class PerfTester :
                 with open(outputPAth,mode='w') as f:
                     obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
-
+        # end signal triggered
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======\n Results store in : {str(outputPAth)} ")
-    
+        if remoteSender is not None :
+            self.controller.send("EXIT")
 
 class SerialCompileTask :
     def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
@@ -340,10 +380,11 @@ class SerialCompileTask :
             kernelCfg = kernelArg
             r = self._task_compile_kernel(kernelCfg,i, deviceId,backendtype,arch)  
             valid_kernels.append(r)
+        
         lock.acquire()
         serialize_to_file(output_path,valid_kernels)
         lock.release()
-        return valid_kernels
+
 
 
 class ParallelTaskManager :
@@ -351,7 +392,7 @@ class ParallelTaskManager :
     Process = ctx.Process
     def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, 
                  benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50,
-                 atol= 1e-4, rtol=1e-4):
+                 atol= 1e-4, rtol=1e-4, sender : RemoteFileSender = None):
         self.locks = [] # ParallelTaskManager.ctx.Lock()
         self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
@@ -370,6 +411,10 @@ class ParallelTaskManager :
         self.nTorchEpsInitTest = nTorchEpsInitTest
         self.atol = atol
         self.rtol = rtol
+        self.sender = sender  # run preftest on remote host
+        for devid in self.devIds :
+            lock = ParallelTaskManager.ctx.Lock()
+            self.locks.append(lock)
     
     def __del__(self) :
         for lk in self.locks :
@@ -383,7 +428,7 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol) :
+        nTorchEpsInitTest,atol,rtol,remotesender) :
 
         tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest)
         # pkl = g_getBaselinePklPath(dev)
@@ -410,7 +455,7 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest)
+        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender)
         del tester; tester = None
         
     @staticmethod
@@ -422,11 +467,11 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol) :
+        nTorchEpsInitTest,atol,rtol, remotesender) :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
+            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,))
         worker.start()
         while True:
             worker.join()
@@ -437,7 +482,7 @@ class ParallelTaskManager :
                 print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
                 del worker; worker = None
                 worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol))
+                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender))
                 worker.start()
     
     @staticmethod
@@ -459,9 +504,9 @@ class ParallelTaskManager :
         print(f"===== All baseline init OK ======")
         
     def _initPerfMonitors(self) :
-        for devid in self.devIds :
-            lock = ParallelTaskManager.ctx.Lock()
-            self.locks.append(lock)
+        for i in range(len(self.devIds)) :
+            devid = self.devIds[i]
+            lock = self.locks[i]
             monitor = ParallelTaskManager.Process(target= ParallelTaskManager._perfMonitorFunc,
                 args=(devid,
                     lock,
@@ -472,7 +517,8 @@ class ParallelTaskManager :
                     self.topNum,
                     self.torchDynamicLogPath,
                     self.nTorchEpsInitTest,
-                    self.atol,self.rtol
+                    self.atol,self.rtol,
+                    self.sender
                 ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)

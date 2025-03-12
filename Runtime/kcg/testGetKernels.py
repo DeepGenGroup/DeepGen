@@ -3,6 +3,7 @@ from KCGTask import *
 import multiprocessing 
 from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
 import sys
+from RemoteUtils import *
 
 def main():    
     # 路径管理器初始化 & 清理缓存数据（可选）
@@ -26,6 +27,7 @@ def main():
     M = N = K = 1024
     batch = 1
     elementType = torch.float32
+    sshsender = RemoteFileSender("10.18.96.58","2133","xushilong","xushilong")
     runMode = EnumRunMode.AsRemotePerftester
     ######################################################################################
     # 调优空间生成
@@ -52,7 +54,8 @@ def main():
             torchDynamicLogPath='',  # 是否周期性记录torch对应kernel的性能变化
             nTorchEpsInitTest=300,  # 测量torch的baseline时所运行次数（取中位数）
             atol=1e-3,  # 绝对误差
-            rtol=1e-3   # 相对误差
+            rtol=1e-3,   # 相对误差
+            sender = sshsender
         )
         tm.run(
             backendtype=backendType ,  # 后端类型

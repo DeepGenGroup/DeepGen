@@ -309,7 +309,7 @@ PyMODINIT_FUNC PyInit___kcg_launcher(void) {{
 
 
 class CUDALauncher :
-    def __init__(self, kernelBinaryPath,kernelFuncName,shmSize,signature:dict,gridDims:list,blockDims:list,device=DeviceInfo.get_current_device()):
+    def __init__(self, kernelBinaryPath,kernelFuncName,shmSize,signature:dict,gridDims:list,blockDims:list,device=0):
         self.m_cWrapper = None
         self.m_kernelLib = KernelLibFile(kernelBinaryPath,EnumBackendType.CUDA,kernelFuncName,shmSize,signature,gridDims,blockDims,device)
         self.m_launcherLibPath = None  # launcher.so 的路径

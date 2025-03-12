@@ -12,7 +12,7 @@ class CompiledKernel:
                  kernel_signature,
                  gridDims:list,
                  blockDims:list,
-                 device = DeviceInfo.get_current_device()):
+                 device = 0):
         self.signature = kernel_signature
         if backend == EnumBackendType.HIP :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
