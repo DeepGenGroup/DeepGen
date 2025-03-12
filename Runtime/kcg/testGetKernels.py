@@ -78,4 +78,7 @@ def main():
         )
 
 if __name__ == '__main__' :
+    st = time.time()
     main()
+    et = time.time()
+    print(f"====== Total Time Costs : {(et-st)/3600} Hours")
