@@ -352,7 +352,8 @@ class PerfTester :
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======\n Results store in : {str(outputPAth)} ")
         if remoteSender is not None and self.controller is not None:
             self.controller.send("EXIT")
-
+        return 0
+        
 class SerialCompileTask :
     def _task_compile_kernel(self, kpm : KernelArgMatmul, index:int, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[KernelArgMatmul,UserInputs,CompiledKernel] :
         Print = print
@@ -471,8 +472,11 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
+        rc = tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
         del tester; tester = None
+        if rc == 0:
+            # recv EXIT msg. return normally
+            endSignal.value = 1
         
     @staticmethod
     def _perfMonitorFunc(devId, 
