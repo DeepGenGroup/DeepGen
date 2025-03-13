@@ -29,15 +29,17 @@ def delete_files_in_directory(directory):
 rr = 'a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,0,1,2,3,4,5,6,7,8,9'.split(',')
 for e in rr:
     try:
-        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.ptx".split(' ')
-        res = subprocess.run(cmd,capture_output=True)
-        print(res.stdout)
+        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.ptx"
+        print(cmd)
+        # res = subprocess.run(cmd,capture_output=True)
+        # print(res.stdout)
     except subprocess.CalledProcessError as e:
         print('err ',e)
     try:
-        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.cubin".split(' ')
-        res = subprocess.run(cmd,capture_output=True)
-        print(res.stdout)
+        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.cubin"
+        print(cmd)
+        # res = subprocess.run(cmd,capture_output=True)
+        # print(res.stdout)
     except subprocess.CalledProcessError as e:
         print('err ',e)
 

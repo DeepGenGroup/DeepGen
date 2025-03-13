@@ -510,7 +510,9 @@ int main(){
   // };
   std::vector<std::string> names = {"GEMM_testKernel"};
   auto result = generateKernels(configs, names);
-
+  for(const auto& e : result){
+    std::cout << "binarypath = " << e.m_binaryPath << std::endl;
+  }
   return 0;
 }
 

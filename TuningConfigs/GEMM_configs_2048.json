@@ -1,6 +1,8 @@
 {
     "BLOCK_SIZE_M" : [32,64,128],
     "BLOCK_SIZE_N" : [32,64,128],
+    "BLOCK_SIZE_M" : [32,64,128],
+    "BLOCK_SIZE_N" : [32,64,128],
     "BLOCK_SIZE_K" : [8,16,32],
     "THREAD_SIZE_M" : [4,8],
     "THREAD_SIZE_N" : [4,8],

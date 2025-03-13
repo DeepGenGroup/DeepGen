@@ -14,7 +14,7 @@ def main():
     # perf文件路径前缀(用于记录当前最佳性能的case)
     perfPathPrefix = f'{PathManager.project_dir()}/_gemm_E2E_20250313'
     # 调优空间存储文件
-    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_gemm-e2e.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_gemm_2048.json'
     # 最大编译进程数
     maxCompilingProcess = 100
     # 可见设备列表
@@ -30,8 +30,8 @@ def main():
     batch = 1
     elementType = torch.float32
     remoteBenchmarker = RemotePerfTester("10.18.96.58","2133","xushilong","xushilong")
-    runMode = EnumRunMode.CallRemotePerftester
-    
+    runMode = EnumRunMode.AsRemotePerftester
+    keepTopNum = 100
     ######################################################################################
     # 调优空间生成
     totalLen = 0
@@ -61,7 +61,7 @@ def main():
             totalLen, cacheTuningSPaceFile, perfPathPrefix, 
             benchmarkcnt=10,  # 单个case执行次数
             warmupcnt=1,  # 每轮执行warmup次数
-            keepTopNum = 15,  # 最佳结果保留前xx（取中位数）
+            keepTopNum = keepTopNum,  # 最佳结果保留前xx（取中位数）
             torchDynamicLogPath='',  # 是否周期性记录torch对应kernel的性能变化
             nTorchEpsInitTest=300,  # 测量torch的baseline时所运行次数（取中位数）
             atol=1e-3,  # 绝对误差
