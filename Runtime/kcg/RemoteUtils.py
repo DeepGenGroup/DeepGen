@@ -33,10 +33,14 @@ class RemotePerfTester :
             scp.put(local_path, remote_path)
 
     def download_file(self,local_path : str, remote_path : str):
-        with SCPClient(self.ssh.get_transport()) as scp:
-            scp.get(remote_path,local_path)
-
-
+        try:
+            with SCPClient(self.ssh.get_transport()) as scp:
+                scp.get(remote_path,local_path)
+        except Exception as e:
+            print("[SCP error]",e)
+            return False
+        return True
+    
 DEFAULT_PORT = 18888
 MSG_LEN = 512
 SEPMARK = ';'
