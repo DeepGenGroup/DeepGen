@@ -10,11 +10,11 @@ def main():
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
     # Tuning 参数空间配置文件
-    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2_e2e.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
-    perfPathPrefix = f'{PathManager.project_dir()}/__test_bmm'
+    perfPathPrefix = f'{PathManager.project_dir()}/_gemm_E2E_20250313'
     # 调优空间存储文件
-    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_bmm_1024.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_gemm-e2e.json'
     # 最大编译进程数
     maxCompilingProcess = 100
     # 可见设备列表
@@ -24,10 +24,12 @@ def main():
     # 当前后端类型 & 架构信息
     backendType = EnumBackendType.CUDA  
     arch = "80"
-    M = N = K = 1024
+    M = 4096
+    N = 4096
+    K = 128
     batch = 1
     elementType = torch.float32
-    sshsender = RemoteFileSender("10.18.96.58","2133","xushilong","xushilong")
+    remoteBenchmarker = RemotePerfTester("10.18.96.58","2133","xushilong","xushilong")
     runMode = EnumRunMode.CallRemotePerftester
     
     ######################################################################################
@@ -48,11 +50,11 @@ def main():
         if runMode == EnumRunMode.AsRemotePerftester :
             need_compile = False
             isAsRemoteTester = True
-            sshsender = None
+            remoteBenchmarker = None
         if runMode == EnumRunMode.CallRemotePerftester :
             need_compile = True
             isAsRemoteTester = False
-            assert sshsender is not None
+            assert remoteBenchmarker is not None
             
         tm =  ParallelTaskManager(
             gpu_devices,
@@ -64,7 +66,7 @@ def main():
             nTorchEpsInitTest=300,  # 测量torch的baseline时所运行次数（取中位数）
             atol=1e-3,  # 绝对误差
             rtol=1e-3,   # 相对误差
-            sender = sshsender
+            remoteTestser = remoteBenchmarker
         )
         tm.run(
             backendtype=backendType ,  # 后端类型

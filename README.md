@@ -237,6 +237,9 @@ B作为执行机：其选择 `AsRemotePerftester` , 代表其仅仅执行A派送
 - 编译DeepGen时提示 Python.h 未找到：   
 *解决：请正确设置CMakeLists.txt 中的Python路径和Python版本号*
 
+- 编译报错： `error: use of enum ‘FusionMode’ without previous declaration`   
+*解决*：在对应位置加入 affine 名字空间即可   
+
 - Runtime报错：Cannot found nvcc. PLease set PATH env first!   
 *解决：请在运行benchmark前，添加 nvcc所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*
 

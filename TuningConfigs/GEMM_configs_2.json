@@ -24,6 +24,7 @@
     "M_SIZE" : [1024],
     "N_SIZE" : [1024],
     "K_SIZE" : [1024],
+    "BATCH_SIZE" : [1],
     "IS_ATRANS" : [1],
     "UNROLL_NUM" : [4],
     "REG_PREFETCH" :         [0],

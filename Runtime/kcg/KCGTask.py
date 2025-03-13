@@ -252,7 +252,7 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteSender : RemoteFileSender = None, isAsRemoteTester = False) : 
+    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteSender : RemotePerfTester = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
@@ -408,7 +408,7 @@ class ParallelTaskManager :
     Process = ctx.Process
     def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, 
                  benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50,
-                 atol= 1e-4, rtol=1e-4, sender : RemoteFileSender = None):
+                 atol= 1e-4, rtol=1e-4, remoteTestser : RemotePerfTester = None):
         self.locks = [] # ParallelTaskManager.ctx.Lock()
         self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
@@ -427,7 +427,7 @@ class ParallelTaskManager :
         self.nTorchEpsInitTest = nTorchEpsInitTest
         self.atol = atol
         self.rtol = rtol
-        self.sender = sender  # run preftest on remote host
+        self.sender = remoteTestser  # run preftest on remote host
         for devid in self.devIds :
             lock = ParallelTaskManager.ctx.Lock()
             self.locks.append(lock)

@@ -4,7 +4,7 @@ import paramiko
 from scp import SCPClient
 from typing import List
 
-class RemoteFileSender :
+class RemotePerfTester :
     def __init__(self,host,port,username,password):
         self.ssh = None
         self.host = host
