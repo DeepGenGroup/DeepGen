@@ -362,8 +362,8 @@ class PerfTester :
             if self.controller is not None:
                 # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
                 remotepath = self.controller.send_and_wait("EXIT")
-                remoteTester.download_file(PathManager.project_dir(), remotepath)
-                _lp = PathManager.project_dir() + '/' + remotepath.split('/')[-1]
+                remoteTester.download_file(str(PathManager.project_dir()), remotepath)
+                _lp = str(PathManager.project_dir()) + '/' + remotepath.split('/')[-1]
                 print(f"=== remote benchmark result has been downloaded : {_lp}  ")
                 self.controller.send("QUIT")
         else:  # local bencmark
