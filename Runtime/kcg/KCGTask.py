@@ -271,7 +271,7 @@ class PerfTester :
                         assert False,f"[Fatal] controller connect {remoteTester.host} failed! "
                         raise Exception("error connect server")
                     time.sleep(5)
-            print(f"=== connect {remoteTester.host} finish!")
+            print(f"=== connect {remoteTester.host} finish!",flush=True)
                 
         if isAsRemoteTester:
             # Perftester run as remote tester : collect remote send files and do benchmark
