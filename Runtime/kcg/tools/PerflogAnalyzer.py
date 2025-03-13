@@ -1,5 +1,7 @@
 from SavePerflogAsTuningSpace import *
 
+# 功能：将 bestperfs的数据抽取为 config params。对param中参数数量=1的key值进行扩空间。扩充规则为：以当前值为中心，在该项目内增加 *2 和 /2的值
+# 相当于遗传算法中的杂交（抽取为包含最优值的config）+变异（扩展参数）
 keys_noDiversify = [
     "WARP_SIZE",
     "DATATYPE_A",
@@ -9,11 +11,11 @@ keys_noDiversify = [
     "N_SIZE",
     "K_SIZE",
     "IS_ATRANS",
+    "UNROLL_NUM",
 ]
 
 keys_mustDiversify = {
     "LOCAL_SPLIT_U" : [1,2],
-    "UNROLL_NUM" : [8,16,32],
     "REG_PREFETCH" : [1,0],
     "SHARED_PREFETCH" : [1,0],
     "LOAD_CONTINUOUS" : [1,0],
@@ -57,3 +59,12 @@ def diversifyTuningParams(perflogPath : str) :
 # dd = diversifyTuningParams('/home/xushilong/DeepGenRun/__perf-20250304-dim2048_card0.json')
 # with open('/home/xushilong/DeepGenRun/myooo.json','w+') as f:
 #     json.dump(dd,f)
+if __name__ == '__main__' :
+    if len(sys.argv) > 2:
+        perflog = sys.argv[1]
+        outpath = sys.argv[2]
+        dd = diversifyTuningParams(perflog)
+        with open(outpath,'w+') as f:
+            json.dump(dd, f)
+    else:
+        print("Invalid args!")
