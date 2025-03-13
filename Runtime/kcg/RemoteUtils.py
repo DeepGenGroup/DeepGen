@@ -39,6 +39,7 @@ class RemotePerfTester :
 
 DEFAULT_PORT = 18888
 MSG_LEN = 512
+SEPMARK = ';'
 
 def get_local_ip() :
     import socket

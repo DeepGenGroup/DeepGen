@@ -287,6 +287,7 @@ class PerfTester :
                 # wait "upload finish or EXIT" signal from remote
                 msg = self.controller.recv()
                 print(f'recv = {msg}')
+                msg = msg.split(SEPMARK)[-1]
                 if msg == "EXIT" :
                     # all kernels has been sent to us. Current loop is the last glob.
                     startFlag = False
@@ -320,7 +321,7 @@ class PerfTester :
                         # send pkl files and send OK message to remote tester
                         remoteTester.upload_files(lps,rps)
                         if self.controller is not None:
-                            self.controller.send("UPOK")
+                            self.controller.send("UPOK"+SEPMARK)
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
@@ -361,15 +362,16 @@ class PerfTester :
         if remoteTester is not None : # use remote benchmark
             if self.controller is not None:
                 # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
-                remotepath = self.controller.send_and_wait("EXIT")
+                remotepath = self.controller.send_and_wait("EXIT"+SEPMARK)
                 remoteTester.download_file(str(PathManager.project_dir()), remotepath)
                 _lp = str(PathManager.project_dir()) + '/' + remotepath.split('/')[-1]
                 print(f"=== remote benchmark result has been downloaded : {_lp}  ")
-                self.controller.send("QUIT")
+                self.controller.send("DLOK"+SEPMARK)
         else:  # local bencmark
             print(f"=== local benchmark result : {str(outputPAth)} ")
             if needSendPerflogPath and self.controller is not None :
                 self.controller.reply_and_wait(outputPAth)
+                os.remove(outputPAth)
         return 0
         
 class SerialCompileTask :
