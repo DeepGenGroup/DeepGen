@@ -194,7 +194,7 @@ class PerfTester :
         if kpm.batch > 1:
             torchMM = torch.bmm
         for i in range(0,warmupCount) : 
-            torchMM(aUse, self.matB)
+            torchMM(self.matA, self.matB)
             packedKernel.run(aUse, self.matB, self.matC)
 
         # 计算torch的eps
