@@ -10,6 +10,7 @@ keys_noDiversify = [
     "M_SIZE",
     "N_SIZE",
     "K_SIZE",
+    "BATCH_SIZE",
     "IS_ATRANS",
     "UNROLL_NUM",
 ]
