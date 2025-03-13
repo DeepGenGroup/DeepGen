@@ -252,40 +252,48 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteSender : RemotePerfTester = None, isAsRemoteTester = False) : 
+    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemotePerfTester = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
         
-        if remoteSender is not None :
+        if remoteTester is not None :
             # using remote perftester : need to send local compiled files to remote
-            remoteSender.connect()
+            remoteTester.connect()
             self.controller = MyTCPClient()
-            print(f"=== try connect {remoteSender.host}",flush=True)
+            print(f"=== try connect remoteTester {remoteTester.host}",flush=True)
             failCount = 0
             if self.controller is not None:
-                while not self.controller.connect(remoteSender.host) :
+                while not self.controller.connect(remoteTester.host) :
                     failCount += 1
-                    if failCount >= 5 :
-                        assert False,f"[Fatal] controller connect {remoteSender.host} failed! "
+                    if failCount >= 10 :
+                        assert False,f"[Fatal] controller connect {remoteTester.host} failed! "
                         raise Exception("error connect server")
-                    time.sleep(8)
-            print(f"=== connect {remoteSender.host} finish!")
+                    time.sleep(5)
+            print(f"=== connect {remoteTester.host} finish!")
                 
         if isAsRemoteTester:
             # Perftester run as remote tester : collect remote send files and do benchmark
             self.controller = MyTCPServer()
             print("==== Run as remoter perftester. Controller listening ",flush=True)
             self.controller.listen()
-        while True:
+        
+        startFlag = True
+        needSendPerflogPath = False
+        while startFlag:
             msg = None
             if isAsRemoteTester and self.controller is not None :
                 # wait "upload finish or EXIT" signal from remote
                 msg = self.controller.recv()
                 print(f'recv = {msg}')
                 if msg == "EXIT" :
-                    break
+                    # all kernels has been sent to us. Current loop is the last glob.
+                    startFlag = False
+                    needSendPerflogPath = True
+                elif msg.startswith("Out=") :
+                    outputPAth = msg.split('=')[-1]
+                    print("specified perflog = ",outputPAth)
             pathLock.acquire()
             pklFiles = glob.glob(PathManager.pikle_dir() + f'/{self._devId}/*.pkl')
             if len(pklFiles) <= 0 :
@@ -298,7 +306,7 @@ class PerfTester :
                     time.sleep(2)
             else : 
                 try:
-                    if remoteSender is not None :
+                    if remoteTester is not None :
                         lps = []
                         rps = []
                         for pkl in pklFiles:
@@ -308,11 +316,11 @@ class PerfTester :
                             # send kernel file to remote
                             for (kpm,inConfig,packedKernel) in infos :
                                 local_kernelpath = packedKernel.m_launcher.m_kernelLib.m_filePath
-                                remoteSender.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
+                                remoteTester.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
                         # send pkl files and send OK message to remote tester
-                        remoteSender.upload_files(lps,rps)
+                        remoteTester.upload_files(lps,rps)
                         if self.controller is not None:
-                            self.controller.send("[OK]")
+                            self.controller.send("UPOK")
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
@@ -330,7 +338,7 @@ class PerfTester :
                 pathLock.release()
             
             # When use remote perftester, skip local benchmark
-            if remoteSender is not None :
+            if remoteTester is not None :
                 continue
             # execute benchmark at local
             perf_data = []
@@ -349,9 +357,19 @@ class PerfTester :
                     obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
         # end signal triggered
-        print(f"=====[ PerfTest on Device {self._devId} Finished ] =======\n Results store in : {str(outputPAth)} ")
-        if remoteSender is not None and self.controller is not None:
-            self.controller.send("EXIT")
+        print(f"=====[ PerfTest on Device {self._devId} Finished ] =======")
+        if remoteTester is not None : # use remote benchmark
+            if self.controller is not None:
+                # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
+                remotepath = self.controller.send_and_wait("EXIT")
+                remoteTester.download_file(PathManager.project_dir(), remotepath)
+                _lp = PathManager.project_dir() + '/' + remotepath.split('/')[-1]
+                print(f"=== remote benchmark result has been downloaded : {_lp}  ")
+                self.controller.send("QUIT")
+        else:  # local bencmark
+            print(f"=== local benchmark result : {str(outputPAth)} ")
+            if needSendPerflogPath and self.controller is not None :
+                self.controller.reply_and_wait(outputPAth)
         return 0
         
 class SerialCompileTask :

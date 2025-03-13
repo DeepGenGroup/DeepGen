@@ -32,8 +32,13 @@ class RemotePerfTester :
         with SCPClient(self.ssh.get_transport()) as scp:
             scp.put(local_path, remote_path)
 
+    def download_file(self,local_path : str, remote_path : str):
+        with SCPClient(self.ssh.get_transport()) as scp:
+            scp.get(remote_path,local_path)
+
 
 DEFAULT_PORT = 18888
+MSG_LEN = 512
 
 def get_local_ip() :
     import socket
@@ -66,9 +71,18 @@ class MyTCPServer :
         print(f"接收到了客户端的连接，客户端的信息：{address}")
         
     def recv(self) -> str:
-        data: str = self.conn.recv(4).decode("UTF-8")
+        data: str = self.conn.recv(MSG_LEN).decode("UTF-8")
         return data
+    
+    def reply(self,data:str) :
+        self.conn.send(data.encode("UTF-8"))
         
+    def reply_and_wait(self,send_msg) -> str :
+        self.conn.send(send_msg.encode("UTF-8"))
+        # 接受消息
+        recv_data = self.conn.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
+        return recv_data
+    
     def stop(self):
         self.conn.close()
         if self.server is not None:
@@ -94,7 +108,7 @@ class MyTCPClient :
     def send_and_wait(self,send_msg) -> str :
         self.socket_client.send(send_msg.encode("UTF-8"))
         # 接受消息
-        recv_data = self.socket_client.recv(4).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
+        recv_data = self.socket_client.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
         return recv_data
     
     def send(self,send_msg) :
