@@ -275,28 +275,28 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemotePerfTester = None, isAsRemoteTester = False) : 
+    def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemotePerfTester = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
         startFlag = True
-        # if isAsRemoteTester :
-        #     # wait "upload finish or EXIT" signal from remote
-        #     self._startController(outputPAth)
+        if isAsRemoteTester :
+            # wait "upload finish or EXIT" signal from remote
+            self._startController(outputPAth)
         socket_client = None
         if remoteTester is not None :
-            pass
             # use remote benchmark
-            # socket_client = MyTCPClient()
-            # connected = False
-            # for i in range(8):
-            #     connected = socket_client.connect(remoteTester.host)
-            #     if connected :
-            #         break
-            #     time.sleep(5)
-            # if not connected :
-            #     assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
+            remoteTester.connect()
+            socket_client = MyTCPClient()
+            connected = False
+            for i in range(8):
+                connected = socket_client.connect(remoteTester.host)
+                if connected :
+                    break
+                time.sleep(5)
+            if not connected :
+                assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
         else:
             # run local benchmark
             self.init_cuda()
@@ -364,7 +364,9 @@ class PerfTester :
                 with open(outputPAth,mode='w') as f:
                     obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
-                    
+            if not startFlag :
+                finishflag.value = 1
+
         # end signal triggered
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======")
         if remoteTester is not None and socket_client is not None: # use remote benchmark
@@ -445,6 +447,7 @@ class ParallelTaskManager :
         self.task_groups = []
         self.m_totalKernels = []
         self.endSignal = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)
+        self.finishflags = []
         self.perfTestFinalId = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)
         self.perf_out_path = perf_out_path
         self.perfProcMonitors = []
@@ -469,6 +472,7 @@ class ParallelTaskManager :
     @staticmethod
     def _innerCreateTesterProc(dev,lock,
         endSignal,
+        finishflag,
         outfilename,
         nBenchMark,
         nWarmup,
@@ -501,7 +505,7 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        rc = tester.runPerfTests(lock,endSignal,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
+        rc = tester.runPerfTests(lock,endSignal,finishflag,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
         del tester; tester = None
         if rc == 0:
             # recv EXIT msg. return normally
@@ -511,6 +515,7 @@ class ParallelTaskManager :
     def _perfMonitorFunc(devId, 
         lock,
         endSignal,
+        finishflag,
         perf_out_path,
         nBenchMark,
         nWarmup,
@@ -520,7 +525,7 @@ class ParallelTaskManager :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
+            args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
         worker.start()
         while True:
             worker.join()
@@ -545,7 +550,7 @@ class ParallelTaskManager :
     def init_baseline_matmul(batch,m,n,k, datatype : torch.dtype, devids : List[int], fProcess) :
         waitlist = []
         for devid in devids :
-            p = fProcess(target= ParallelTaskManager._createBaselineInit,args=(devid,batch,m,n,k,datatype))
+            p = fProcess(target= ParallelTaskManager._createBaselineInit, args=(devid,batch,m,n,k,datatype))
             waitlist.append(p)
             p.start()
         for p in waitlist :
@@ -556,10 +561,13 @@ class ParallelTaskManager :
         for i in range(len(self.devIds)) :
             devid = self.devIds[i]
             lock = self.locks[i]
+            finishflag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)
+            self.finishflags.append(finishflag)
             monitor = ParallelTaskManager.Process(target= ParallelTaskManager._perfMonitorFunc,
                 args=(devid,
                     lock,
                     self.endSignal,
+                    finishflag,
                     self.perf_out_path,
                     self.nBenchMark,
                     self.nWarmup,
