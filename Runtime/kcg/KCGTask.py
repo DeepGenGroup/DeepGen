@@ -281,21 +281,22 @@ class PerfTester :
         total_kernel_count = 0
         dyTorchCounter = 0
         startFlag = True
-        if isAsRemoteTester :
-            # wait "upload finish or EXIT" signal from remote
-            self._startController(outputPAth)
+        # if isAsRemoteTester :
+        #     # wait "upload finish or EXIT" signal from remote
+        #     self._startController(outputPAth)
         socket_client = None
         if remoteTester is not None :
+            pass
             # use remote benchmark
-            socket_client = MyTCPClient()
-            connected = False
-            for i in range(8):
-                connected = socket_client.connect(remoteTester.host)
-                if connected :
-                    break
-                time.sleep(5)
-            if not connected :
-                assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
+            # socket_client = MyTCPClient()
+            # connected = False
+            # for i in range(8):
+            #     connected = socket_client.connect(remoteTester.host)
+            #     if connected :
+            #         break
+            #     time.sleep(5)
+            # if not connected :
+            #     assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
         else:
             # run local benchmark
             self.init_cuda()
