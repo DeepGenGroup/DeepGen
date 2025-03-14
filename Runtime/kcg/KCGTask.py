@@ -78,7 +78,30 @@ class PerfTester :
         self._rtol = rtol
         self._isInited = False
         self.nTorchEpsInitTestCount = nTorchEpsInitTest
-        self.controller = None
+        self.controllerProc = None
+        self.workFlag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,1)  # continue glob pkl
+        self.finishFlag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)  # if the last batch of pkls has been tested ok. If ok, reply remotepath
+        self.Process = ParallelTaskManager.Process
+    
+    @staticmethod
+    def _controllerRemote(workflag,finishflag,perflogPath : str) :
+        server = MyTCPServer()
+        server.listen()
+        msg = ""
+        while finishflag.value <= 0 :
+            if workflag.value > 0 :
+                msg = server.recv()
+            if msg.find('EXIT') != -1 :
+                workflag.value = 0
+                return
+            time.sleep(1)
+        server.reply(perflogPath)
+        
+            
+    def _startController(self,perflogpath) :
+        if self.controllerProc is None :
+            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag, self.finishFlag, perflogpath))
+            self.controllerProc.start()
     
     def init_cuda(self) :
         DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
@@ -257,44 +280,29 @@ class PerfTester :
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
-        
-        if remoteTester is not None :
-            # using remote perftester : need to send local compiled files to remote
-            remoteTester.connect()
-            self.controller = MyTCPClient()
-            print(f"=== try connect remoteTester {remoteTester.host}",flush=True)
-            failCount = 0
-            if self.controller is not None:
-                while not self.controller.connect(remoteTester.host) :
-                    failCount += 1
-                    if failCount >= 10 :
-                        assert False,f"[Fatal] controller connect {remoteTester.host} failed! "
-                        raise Exception("error connect server")
-                    time.sleep(5)
-            print(f"=== connect {remoteTester.host} finish!",flush=True)
-                
-        if isAsRemoteTester:
-            # Perftester run as remote tester : collect remote send files and do benchmark
-            self.controller = MyTCPServer()
-            print("==== Run as remoter perftester. Controller listening ",flush=True)
-            self.controller.listen()
-        
         startFlag = True
-        needSendPerflogPath = False
+        if isAsRemoteTester :
+            # wait "upload finish or EXIT" signal from remote
+            self._startController(outputPAth)
+        socket_client = None
+        if remoteTester is not None :
+            # use remote benchmark
+            socket_client = MyTCPClient()
+            connected = False
+            for i in range(8):
+                connected = socket_client.connect(remoteTester.host)
+                if connected :
+                    break
+                time.sleep(5)
+            if not connected :
+                assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
+        else:
+            # run local benchmark
+            self.init_cuda()
+        
         while startFlag:
-            msg = None
-            if isAsRemoteTester and self.controller is not None :
-                # wait "upload finish or EXIT" signal from remote
-                msg = self.controller.recv()
-                print(f'recv = {msg}')
-                msg = msg.split(SEPMARK)[-1]
-                if msg == "EXIT" :
-                    # all kernels has been sent to us. Current loop is the last glob.
-                    startFlag = False
-                    needSendPerflogPath = True
-                elif msg.startswith("Out=") :
-                    outputPAth = msg.split('=')[-1]
-                    print("specified perflog = ",outputPAth)
+            if self.workFlag.value <= 0 : # when accepted EXIT msg, wait the last batch test complete
+                startFlag = False
             pathLock.acquire()
             pklFiles = glob.glob(PathManager.pikle_dir() + f'/{self._devId}/*.pkl')
             if len(pklFiles) <= 0 :
@@ -320,8 +328,6 @@ class PerfTester :
                                 remoteTester.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
                         # send pkl files and send OK message to remote tester
                         remoteTester.upload_files(lps,rps)
-                        if self.controller is not None:
-                            self.controller.send("UPOK"+SEPMARK)
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
@@ -343,7 +349,7 @@ class PerfTester :
                 continue
             # execute benchmark at local
             perf_data = []
-            self.init_cuda()
+
             for (kpm,inConfig,packedKernel) in valid_kernels :
                 dyTorchCounter+=1
                 if self.matA is None or self.matB is None :
@@ -357,25 +363,23 @@ class PerfTester :
                 with open(outputPAth,mode='w') as f:
                     obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
+                    
         # end signal triggered
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======")
-        if remoteTester is not None : # use remote benchmark
-            if self.controller is not None:
+        if remoteTester is not None and socket_client is not None: # use remote benchmark
                 # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
                 print("== Compile ends. send EXIT msg")
-                remotepath = self.controller.send_and_wait("EXIT"+SEPMARK)
+                remotepath = socket_client.send_and_wait("EXIT")
                 print("== waiting for remote log downloads ... ")
                 if remoteTester.download_file(str(PathManager.project_dir()), remotepath) :
                     _lp = str(PathManager.project_dir()) + '/' + remotepath.split('/')[-1]
                     print(f"=== remote benchmark result has been downloaded : {_lp}  ")
                 else:
                     print(f"=== remote benchmark result download failed! ")
-                self.controller.send("DLOK"+SEPMARK)
-        else:  # local bencmark
-            print(f"=== local benchmark result : {str(outputPAth)} ")
-            if needSendPerflogPath and self.controller is not None :
-                self.controller.reply_and_wait(outputPAth+SEPMARK)
-                os.remove(outputPAth)
+        if socket_client is not None:
+            socket_client.stop()
+        if self.controllerProc is not None :
+            self.controllerProc.join()
         return 0
         
 class SerialCompileTask :
