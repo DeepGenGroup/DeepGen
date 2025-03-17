@@ -93,8 +93,9 @@ class PerfTester :
                 msg = server.recv()
             if msg.find('EXIT') != -1 :
                 workflag.value = 0
-                return
-            time.sleep(1)
+                print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
+            time.sleep(0.5)
+        print("== controller reply perflogpath and ready to stop ... ")
         server.reply(perflogPath)
         
             
@@ -304,6 +305,7 @@ class PerfTester :
         while startFlag:
             if self.workFlag.value <= 0 : # when accepted EXIT msg, wait the last batch test complete
                 startFlag = False
+                print("[D] Deal Last batch of pkls!")
             pathLock.acquire()
             pklFiles = glob.glob(PathManager.pikle_dir() + f'/{self._devId}/*.pkl')
             if len(pklFiles) <= 0 :
@@ -365,6 +367,7 @@ class PerfTester :
                     obj = self.jsonfyBestPerfs()
                     json.dump(obj,f,indent=4)
             if not startFlag :
+                # the last batch of pkls test complete. set finishFlag to notify tcp controller to reply the perfrecord file path
                 finishflag.value = 1
 
         # end signal triggered
