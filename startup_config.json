@@ -1,0 +1,25 @@
+{
+    "workgroups" : [
+        {
+            "compiler" : {
+                "ssh_addr" : "10.18.95.15:22",
+                "cwd" : "/home/xushilong/DeepGen",
+                "tuning_config_relative_paths" : [
+                    ""
+                ],
+                "tuning_space_relative_paths" : [
+                    ""
+                ],
+                "perflog_prefix_list" : [
+                    ""
+                ],
+                "max_process_count" : 100
+            },
+            "perf_tester" : {
+                "ssh_addr" : "10.18.96.58:2133",
+                "cwd" : "/home/xushilong/DeepGen",
+                "devids" : [7]
+            }
+        }
+    ]
+}
