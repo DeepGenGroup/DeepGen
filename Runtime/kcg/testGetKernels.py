@@ -5,10 +5,58 @@ from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
 import sys
 from RemoteUtils import *
 
-def main():    
+class StartParam :
+    def __init__(self):
+        self.tuning_param_file  = []
+        self.perfPathPrefix = []
+        self.cacheTuningSPaceFile = []
+        self.maxCompilingProcess = 0
+        self.gpu_devices = []
+        self.tuningSpaceGenMode = 1
+        self.backendType = EnumBackendType.CUDA
+        self.arch = "80"
+        self.benchmarkcnt = 10
+        self.warmupcnt = 1
+        self.keepTopNum = 100
+        self.torchDynamicLogPath = ""
+        self.nTorchEpsInitTest = 400
+        self.atol = 1e-3
+        self.rtol = 1e-3
+        self.remoteTesterIP = ""
+        self.remoteTesterSSHPort = ""
+        self.remoteTesterUsername = ""
+        self.remoteTesterPwd = ""
+        
+    def parseFromJson(self,path) :
+        with open(path) as f:
+            obj = json.load(f)
+            self.tuning_param_file = obj['tuning_param_file']
+            self.perfPathPrefix = obj['perfPathPrefix']
+            self.cacheTuningSPaceFile = obj['cacheTuningSPaceFile']
+            self.maxCompilingProcess = obj['maxCompilingProcess']
+            self.gpu_devices = obj['gpu_devices']
+            self.tuningSpaceGenMode = obj['tuningSpaceGenMode']
+            self.backendType = obj['backendType']
+            self.arch = obj['arch']
+            self.benchmarkcnt = obj['benchmarkcnt']
+            self.warmupcnt = obj['warmupcnt']
+            self.keepTopNum = obj['keepTopNum']
+            self.torchDynamicLogPath = obj['torchDynamicLogPath']
+            self.nTorchEpsInitTest = obj['nTorchEpsInitTest']
+            self.atol = obj['atol']
+            self.rtol = obj['rtol']
+            self.remoteTesterIP = obj['remoteTesterIP']
+            self.remoteTesterSSHPort = obj['remoteTesterSSHPort']
+            self.remoteTesterUsername = obj['remoteTesterUsername']
+            self.remoteTesterPwd = obj['remoteTesterPwd']
+    
+def main_process():    
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
-
+    if len(sys.argv) > 1 :
+        startParamJsonPath = sys.argv[1]
+        param = StartParam()
+        param.parseFromJson(startParamJsonPath)
     # Tuning 参数空间配置文件
     tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
@@ -29,17 +77,7 @@ def main():
     keepTopNum = 100
     
     ######################################################################################
-    # perftester：获取算子类型、问题尺寸以及dtype，用于测试 bencmark baseline
-    M=N=K=batch=0
-    elementType = torch.float32
-    with open(tuning_param_file) as f:
-        config = json.load(f)
-        M = int(config[ConfigKeywords.KEY_M][0])
-        N = int(config[ConfigKeywords.KEY_N][0])
-        K = int(config[ConfigKeywords.KEY_K][0])
-        batch = int(config[ConfigKeywords.KEY_BATCH][0])
-        elementType = ToTorchType(int(config[ConfigKeywords.KEY_DTYPE_A][0]))
-        
+
     # 调优空间生成
     totalLen = 0
     if runMode != EnumRunMode.AsRemotePerftester:
@@ -82,12 +120,11 @@ def main():
             needCompile=need_compile, # 是否执行编译过程
             needPerfTest=need_bencmark, # 是否执行benchmark过程
             startFrom=0,     # 从空间里编号为x的config开始执行
-            baselineInitInfo= [batch, M, N ,K , elementType],    # 用于pytorch基准的测试。因为PerfTester设计上的通用性（不关注kernel的具体参数），理论上该值只能运行时查找，且不一定保证唯一。考虑到实现的复杂性，这里先简单处理，后期改进（结合其他算子、各种参数再重新设计）
             isAsRemoteTester=isAsRemoteTester
         )
 
 if __name__ == '__main__' :
     st = time.time()
-    main()
+    main_process()
     et = time.time()
     print(f"====== Total Time Costs : {(et-st)/3600} Hours")

@@ -67,7 +67,9 @@ class _WorkGroup :
             self.m_compiler.user_name,self.m_compiler.password)
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
-            self.m_sshToCompiler.execute_cmd_on_remote("")
+            self.m_sshToCompiler.execute_cmd_on_remote(f"cd {self.m_compiler.cwd} & . ./scripts/Benchmark.sh")
+            self.m_sshToTester.execute_cmd_on_remote(f"cd {self.m_perfTester.cwd} & . ./scripts/Benchmark.sh")
+        
 
 class WorkgroupManager :
     def __init__(self, startupJson : str):
