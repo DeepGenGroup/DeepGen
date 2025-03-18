@@ -80,7 +80,6 @@ class PerfTester :
         self.nTorchEpsInitTestCount = nTorchEpsInitTest
         self.controllerProc = None
         self.workFlag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,1)  # continue glob pkl
-        self.finishFlag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,0)  # if the last batch of pkls has been tested ok. If ok, reply remotepath
         self.Process = ParallelTaskManager.Process
     
     @staticmethod
@@ -99,9 +98,9 @@ class PerfTester :
         server.reply(perflogPath)
         
             
-    def _startController(self,perflogpath) :
+    def _startController(self,perflogpath,finishflag) :
         if self.controllerProc is None :
-            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag, self.finishFlag, perflogpath))
+            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag, finishflag, perflogpath))
             self.controllerProc.start()
     
     def init_cuda(self) :
@@ -284,7 +283,7 @@ class PerfTester :
         startFlag = True
         if isAsRemoteTester :
             # wait "upload finish or EXIT" signal from remote
-            self._startController(outputPAth)
+            self._startController(outputPAth,finishflag)
         socket_client = None
         if remoteTester is not None :
             # use remote benchmark
@@ -368,6 +367,7 @@ class PerfTester :
                     json.dump(obj,f,indent=4)
             if not startFlag :
                 # the last batch of pkls test complete. set finishFlag to notify tcp controller to reply the perfrecord file path
+                print("=== finishflag set")
                 finishflag.value = 1
 
         # end signal triggered
