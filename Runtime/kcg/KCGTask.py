@@ -312,7 +312,7 @@ class PerfTester :
             self.init_cuda()
             # wait init arg file upload to dir
             while startFlag :
-                argfile = glob.glob(PathManager.default_cache_dir() + self.initArgJsonName)
+                argfile = glob.glob(PathManager.default_cache_dir() +"/"+ self.initArgJsonName)
                 if len(argfile) <= 0:
                     time.sleep(1)
                 else:
@@ -512,8 +512,8 @@ class ParallelTaskManager :
         
         baseInit = OperatorBaseArgs()
         if len(baselineInitList) > 0 :
-            baseInit.operatorKind = baselineInitList[0]
-            baseInit.argList = baselineInitList[1:]
+            baseInit.operatorKind = EnumOperator.Matmul
+            baseInit.argList = baselineInitList
         tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest,baseInit)
         
         parsedBests = []
