@@ -470,17 +470,28 @@ class OperatorBaseArgs :
         self.argList = []  # arglist 中的参数为int类型 （int,torch.dtype）
         self._innerDict = {
             "kind" : self.operatorKind,
-            "args" : []
+            "b" : 0,
+            "m" : 0,
+            "n" : 0,
+            "k" : 0,
+            "dtype" : 0
         }
     def parseFromJsonfile(self,path : str):
         import json
         obj = None
         with open(path) as f :
             obj = json.load(f)
-    
+        self.argList = [obj['b'],obj['m'],obj['n'],obj['k'],obj['dtype']]
+        self.operatorKind = obj['kind']
+        
     def dumpToJson(self,path : str):
         import json
-        self._innerDict["args"] = self.argList
+        self._innerDict["kind"] = self.operatorKind
+        self._innerDict["b"] = self.argList[0]
+        self._innerDict["m"] = self.argList[1]
+        self._innerDict["n"] = self.argList[2]
+        self._innerDict["k"] = self.argList[3]
+        self._innerDict["dtype"] = self.argList[4]
         with open(path,'w') as f:
             json.dump(self._innerDict,f)
         
