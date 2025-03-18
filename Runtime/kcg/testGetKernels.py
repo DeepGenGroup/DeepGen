@@ -5,51 +5,7 @@ from ConfigGenerator import BuildTuningSpace, ParseTuningSpace
 import sys
 from RemoteUtils import *
 
-class StartParam :
-    def __init__(self):
-        self.tuning_param_file  = []
-        self.perfPathPrefix = []
-        self.cacheTuningSPaceFile = []
-        self.maxCompilingProcess = 0
-        self.gpu_devices = []
-        self.tuningSpaceGenMode = 1
-        self.backendType = EnumBackendType.CUDA
-        self.arch = "80"
-        self.benchmarkcnt = 10
-        self.warmupcnt = 1
-        self.keepTopNum = 100
-        self.torchDynamicLogPath = ""
-        self.nTorchEpsInitTest = 400
-        self.atol = 1e-3
-        self.rtol = 1e-3
-        self.remoteTesterIP = ""
-        self.remoteTesterSSHPort = ""
-        self.remoteTesterUsername = ""
-        self.remoteTesterPwd = ""
-        
-    def parseFromJson(self,path) :
-        with open(path) as f:
-            obj = json.load(f)
-            self.tuning_param_file = obj['tuning_param_file']
-            self.perfPathPrefix = obj['perfPathPrefix']
-            self.cacheTuningSPaceFile = obj['cacheTuningSPaceFile']
-            self.maxCompilingProcess = obj['maxCompilingProcess']
-            self.gpu_devices = obj['gpu_devices']
-            self.tuningSpaceGenMode = obj['tuningSpaceGenMode']
-            self.backendType = obj['backendType']
-            self.arch = obj['arch']
-            self.benchmarkcnt = obj['benchmarkcnt']
-            self.warmupcnt = obj['warmupcnt']
-            self.keepTopNum = obj['keepTopNum']
-            self.torchDynamicLogPath = obj['torchDynamicLogPath']
-            self.nTorchEpsInitTest = obj['nTorchEpsInitTest']
-            self.atol = obj['atol']
-            self.rtol = obj['rtol']
-            self.remoteTesterIP = obj['remoteTesterIP']
-            self.remoteTesterSSHPort = obj['remoteTesterSSHPort']
-            self.remoteTesterUsername = obj['remoteTesterUsername']
-            self.remoteTesterPwd = obj['remoteTesterPwd']
-    
+
 def main_process():    
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
