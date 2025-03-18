@@ -61,9 +61,9 @@ class KernelTestResult :
         self.kpm = KernelArgMatmul(0,0,0,0,1,1,1)
         self.kpm.assignWithJson(jsonObj['config'])
 
+
 class PerfTester :
-    
-    def __init__(self,devId:int,atol:float,rtol:float,nTorchEpsInitTest = 50):
+    def __init__(self,devId:int,atol:float,rtol:float,nTorchEpsInitTest = 50, baselineInitializer : OperatorBaseArgs = None):
         self.matA = None
         self.matB = None
         self.matC = None
@@ -80,16 +80,25 @@ class PerfTester :
         self.nTorchEpsInitTestCount = nTorchEpsInitTest
         self.controllerProc = None
         self.workFlag = ParallelTaskManager.ctx.Manager().Value(ctypes.c_int,1)  # continue glob pkl
+        tempstr = 128*'\x00'
+        self.readyflag = ParallelTaskManager.ctx.Manager().Array('c',tempstr)  # whether has recved initializer args
         self.Process = ParallelTaskManager.Process
+        self.baselineInitializer = baselineInitializer
     
     @staticmethod
-    def _controllerRemote(workflag,finishflag,perflogPath : str) :
+    def _controllerRemote(workflag,readyFlag,finishflag,perflogPath : str) :
         server = MyTCPServer()
         server.listen()
         msg = ""
+        initArgRcvMark = 'INIT='
         while finishflag.value <= 0 :
             if workflag.value > 0 :
                 msg = server.recv()
+            if msg.find(initArgRcvMark) != -1:
+                st = msg.find(initArgRcvMark)
+                et = msg.find(';',st)
+                st += len(initArgRcvMark)
+                readyFlag = msg[st:et]
             if msg.find('EXIT') != -1 :
                 workflag.value = 0
                 print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
@@ -100,7 +109,7 @@ class PerfTester :
             
     def _startController(self,perflogpath,finishflag) :
         if self.controllerProc is None :
-            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag, finishflag, perflogpath))
+            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag, self.readyflag,finishflag, perflogpath))
             self.controllerProc.start()
     
     def init_cuda(self) :
@@ -275,7 +284,7 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemotePerfTester = None, isAsRemoteTester = False) : 
+    def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemoteSSHConnect = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
@@ -286,7 +295,7 @@ class PerfTester :
             self._startController(outputPAth,finishflag)
         socket_client = None
         if remoteTester is not None :
-            # use remote benchmark
+            # use remote benchmark, connect remoteTester and send initializer args
             remoteTester.connect()
             socket_client = MyTCPClient()
             connected = False
@@ -297,10 +306,20 @@ class PerfTester :
                 time.sleep(5)
             if not connected :
                 assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
+            else:
+                print(f"connect remotePerfTester success : destip={remoteTester.host}")
+                if self.baselineInitializer is not None and self.baselineInitializer.operatorKind != EnumOperator.Invalid :
+                    initargJsonPath = PathManager.default_cache_dir() + f"/initargs_dev{self._devId}.json"
+                    self.baselineInitializer.dumpToJson(initargJsonPath)
+                    socket_client.send("INIT="+initargJsonPath+";")
         else:
             # run local benchmark
             self.init_cuda()
-        
+        while self.readyflag[0] <= 0:
+            time.sleep(1)
+        print("[D] init args recv OK! path=",self.readyflag.decode())
+        self.baselineInitializer = OperatorBaseArgs()
+        self.baselineInitializer.parseFromJsonfile()
         while startFlag:
             if self.workFlag.value <= 0 : # when accepted EXIT msg, wait the last batch test complete
                 startFlag = False
@@ -442,7 +461,7 @@ class ParallelTaskManager :
     Process = ctx.Process
     def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, 
                  benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50,
-                 atol= 1e-4, rtol=1e-4, remoteTestser : RemotePerfTester = None):
+                 atol= 1e-4, rtol=1e-4, remoteTestser : RemoteSSHConnect = None):
         self.locks = [] # ParallelTaskManager.ctx.Lock()
         self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
@@ -481,18 +500,14 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester) :
-
-        tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest)
-        # pkl = g_getBaselinePklPath(dev)
-        # if os.path.exists(pkl) :  
-        #     t = deserialize_from_file(pkl)
-        #     tester.matA = t.matA
-        #     tester.matB = t.matB
-        #     tester.matD = t.matD
-        #     tester.torch_eps = t.torch_eps
-        # RuntimeError: Attempting to deserialize object on CUDA device 6 but torch.cuda.device_count() is 1. 
-        # Please use torch.load with map_location to map your storages to an existing device.
+        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList) :
+        
+        baseInit = OperatorBaseArgs()
+        if len(baselineInitList) > 0 :
+            baseInit.argList = baselineInitList[1:]
+            baseInit.operatorKind = baselineInitList[0]
+        tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest,baseInit)
+        
         parsedBests = []
         try:
             if os.path.exists(outfilename):
@@ -524,11 +539,11 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester) :
+        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester,initializerList) :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
+            args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
         worker.start()
         while True:
             worker.join()
@@ -539,7 +554,7 @@ class ParallelTaskManager :
                 print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
                 del worker; worker = None
                 worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester))
+                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
                 worker.start()
     
     @staticmethod
@@ -560,7 +575,7 @@ class ParallelTaskManager :
             p.join()
         print(f"===== All baseline init OK ======")
         
-    def _initPerfMonitors(self,isAsRemoteTester) :
+    def _initPerfMonitors(self,isAsRemoteTester,initArgList) :
         for i in range(len(self.devIds)) :
             devid = self.devIds[i]
             lock = self.locks[i]
@@ -579,7 +594,8 @@ class ParallelTaskManager :
                     self.nTorchEpsInitTest,
                     self.atol,self.rtol,
                     self.sender,
-                    isAsRemoteTester
+                    isAsRemoteTester,
+                    initArgList
                 ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)
@@ -638,17 +654,33 @@ class ParallelTaskManager :
             for devid in self.devIds :
                 path = f"{PathManager.pikle_dir()}/{devid}"
                 os.makedirs(path,exist_ok=True)
+            # start perftest processes
+            tse = None
+            cfgstrs = []
+            batch = None, m = None, n = None, k = None, dtype = None
+            if needCompile and not isAsRemoteTester:
+                with open(self.tuningSpaceJson) as f :
+                    obj = json.load(f)
+                    tse = TuningSpaceEncoder_Matmul(obj['template'])
+                    cfgstrs = obj['cfgs']
+                    batch = obj['template'][ConfigKeywords.KEY_BATCH][0]
+                    m = obj['template'][ConfigKeywords.KEY_M][0]
+                    n = obj['template'][ConfigKeywords.KEY_N][0]
+                    k = obj['template'][ConfigKeywords.KEY_K][0]
+                    dtype = ToTorchType(obj['template'][ConfigKeywords.KEY_DTYPE_C][0])
+                    
             if needPerfTest:
-                # DeviceInfo.set_visible_devices(self.devIds)
-                if len(baselineInitInfo) == 4 :
-                    print('============ start running with GEMM baseline initializer ==============')
-                    batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
-                    ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
+                init_arg_list = []
+                if not isAsRemoteTester :
+                # if len(baselineInitInfo) == 4 :
+                #     print('============ start running with GEMM baseline initializer ==============')
+                #     batch,m,n,k,dtype = baselineInitInfo[0],baselineInitInfo[1],baselineInitInfo[2],baselineInitInfo[3],baselineInitInfo[4]
+                #     ParallelTaskManager.init_baseline_matmul(batch ,m, n, k, dtype, self.devIds, ParallelTaskManager.Process)
+                    init_arg_list = [batch,m,n,k,dtype]
                 print('============ start init perf monitors ==============')
-                self._initPerfMonitors(isAsRemoteTester)
+                self._initPerfMonitors(isAsRemoteTester,init_arg_list)
+            # start compiling processes
             if needCompile :
-                tse = None
-                cfgstrs = []
                 with open(self.tuningSpaceJson) as f :
                     obj = json.load(f)
                     tse = TuningSpaceEncoder_Matmul(obj['template'])

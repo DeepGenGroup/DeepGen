@@ -10,11 +10,11 @@ def main():
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
 
     # Tuning 参数空间配置文件
-    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2_e2e.json'
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
     # perf文件路径前缀(用于记录当前最佳性能的case)
-    perfPathPrefix = f'{PathManager.project_dir()}/_gemm_E2E_20250313_I'
+    perfPathPrefix = f'{PathManager.project_dir()}/_gemmPerf'
     # 调优空间存储文件
-    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/test_gemm_2048.json'
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_debug.json'
     # 最大编译进程数
     maxCompilingProcess = 100
     # 可见设备列表
@@ -24,12 +24,12 @@ def main():
     # 当前后端类型 & 架构信息
     backendType = EnumBackendType.CUDA  
     arch = "80"
-    remoteBenchmarker = RemotePerfTester("10.18.96.58","2133","xushilong","xushilong")
-    runMode = EnumRunMode.AsRemotePerftester
+    remoteBenchmarker = RemoteSSHConnect("10.18.96.58","2133","xushilong","xushilong")
+    runMode = EnumRunMode.CallRemotePerftester
     keepTopNum = 100
     
     ######################################################################################
-    # 读取调优参数
+    # perftester：获取算子类型、问题尺寸以及dtype，用于测试 bencmark baseline
     M=N=K=batch=0
     elementType = torch.float32
     with open(tuning_param_file) as f:
@@ -39,6 +39,7 @@ def main():
         K = int(config[ConfigKeywords.KEY_K][0])
         batch = int(config[ConfigKeywords.KEY_BATCH][0])
         elementType = ToTorchType(int(config[ConfigKeywords.KEY_DTYPE_A][0]))
+        
     # 调优空间生成
     totalLen = 0
     if runMode != EnumRunMode.AsRemotePerftester:

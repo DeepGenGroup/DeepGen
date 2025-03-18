@@ -3,14 +3,6 @@
 from kcg.CompiledKernel import *
 from kcg.Operators.matmul import *
 
-class EnumOperator(Enum):
-    Invalid = 0
-    Matmul = 1
-    Convolution = 2
-    Poll = 3
-    def __str__(self):
-        return f'{self.name}'
-
 
 class UserInputs:
     def __init__(self,binary_path:str,kernel_func_name:str,kernelParam : KernelArgMatmul, backend : EnumBackendType):

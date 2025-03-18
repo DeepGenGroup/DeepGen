@@ -4,11 +4,12 @@ import paramiko
 from scp import SCPClient
 from typing import List
 
-class RemotePerfTester :
-    def __init__(self,host,port,username,password):
+
+class RemoteSSHConnect :
+    def __init__(self,destip,destport,username,password):
         self.ssh = None
-        self.host = host
-        self.port = port
+        self.host = destip
+        self.port = destport
         self.username = username
         self.password = password
     def connect(self):
@@ -18,7 +19,10 @@ class RemotePerfTester :
             try:
                 self.ssh.connect(self.host, self.port, self.username, self.password,timeout=5)
             except Exception as e:
-                print("RemoteFileSenderError[SSH] : ",e)
+                print("RemotePerfTester[SSH] error: ",e)
+                return False
+            print("RemotePerfTester[SSH] connect OK!")
+            return True
 
     def upload_files(self,local_path : List[str], remote_path : List[str]):
         assert(len(local_path) == len(remote_path))
@@ -41,19 +45,33 @@ class RemotePerfTester :
             return False
         return True
     
+    def execute_cmd_on_remote(self,cmd:str) :
+        print("== exec results ===",flush=True)
+        myin, myout, myerr = self.ssh.exec_command(
+            cmd
+        )
+        for line in myout:
+            print(line,flush=True)
+        for line in myerr:
+            print(line,flush=True)
+    
+    
 DEFAULT_PORT = 18888
 MSG_LEN = 512
 SEPMARK = ';'
+_local_ip = None
 
-def get_local_ip() :
+def get_local_ip():
+    if _local_ip is not None:
+        return _local_ip
     import socket
     try:
         s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
         s.connect(('8.8.8.8',80))
-        ip = s.getsockname()[0]
+        _local_ip = s.getsockname()[0]
     finally:
         s.close()
-    return ip
+    return _local_ip
 
 class MyTCPServer :
     def __init__(self,listenPort = DEFAULT_PORT):
@@ -66,14 +84,14 @@ class MyTCPServer :
             return
         self.server = socket.socket()
         local_ip = get_local_ip()
-        print("local_ip=",local_ip,flush=True)
         self.server.bind((local_ip, self.port))
+        print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
         # 监听端口
         self.server.listen(1)
         # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
-        print(f"服务端已开始监听，正在等待客户端连接...")
+        print(f"tcpserver start listen ...")
         self.conn, address = self.server.accept()
-        print(f"接收到了客户端的连接，客户端的信息：{address}")
+        print(f"tcpserver accept client : {address}")
         
     def recv(self) -> str:
         data: str = self.conn.recv(MSG_LEN).decode("UTF-8")
@@ -106,8 +124,9 @@ class MyTCPClient :
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
         except Exception as e :
-            print("TCPClient Error : ",e)
+            print("[W] tcpclient error : ",e)
             return False
+        print(f"[I] tcpclient connect {destip}:{destport} success! ")
         return True
         
     def send_and_wait(self,send_msg) -> str :

@@ -199,6 +199,14 @@ class EnumRunMode(Enum):
     def __str__(self):
         return f'{self.name}'
     
+class EnumOperator:
+    Invalid = "INVALID"
+    Matmul = "MATMUL"
+    Convolution = "CONV"
+    Poll = "POLL"
+    def __str__(self):
+        return f'{self.name}'
+
 class EnumKernelDType(IntEnum):
     float8 = 1
     float16 = 2
@@ -455,6 +463,39 @@ def get_dtype_from_int(dtype : int) :
     if dtype == int( EnumKernelDType.int64) :
         return EnumKernelDType.int64
     return None
+
+class OperatorBaseArgs :
+    def __init__(self):
+        self.operatorKind = EnumOperator.Invalid
+        self.argList = []  # arglist 中的参数为int类型 （int,torch.dtype）
+        self._innerDict = {
+            "kind" : self.operatorKind,
+            "args" : []
+        }
+    def parseFromJsonfile(self,path : str):
+        import json
+        obj = None
+        with open(path) as f :
+            obj = json.load(f)
+    
+    def dumpToJson(self,path : str):
+        import json
+        self._innerDict["args"] = self.argList
+        with open(path,'w') as f:
+            json.dump(self._innerDict,f)
+        
+    
+class GEMMBaseArgs(OperatorBaseArgs) :
+    def __init__(self):
+        super().__init__()
+        self.operatorKind = EnumOperator.Matmul
+    def getDetailedInfo(self) :
+        batch = int(self.argList[1])
+        m = int(self.argList[2])
+        n = int(self.argList[3])
+        k = int(self.argList[4])
+        dtype = ToTorchType(EnumKernelDType(int(self.argList[5])))
+        return (batch,m,n,k,dtype)
 
 if __name__ == '__main__' :
     # PathManager.init()
