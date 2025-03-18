@@ -317,9 +317,11 @@ class PerfTester :
             self.init_cuda()
         while self.readyflag[0] <= 0:
             time.sleep(1)
-        print("[D] init args recv OK! path=",self.readyflag.decode())
+        initArgPath = self.readyflag.decode()
+        print("[D] init args recv OK! path=",initArgPath)
         self.baselineInitializer = OperatorBaseArgs()
-        self.baselineInitializer.parseFromJsonfile()
+        self.baselineInitializer.parseFromJsonfile(initArgPath)
+        
         while startFlag:
             if self.workFlag.value <= 0 : # when accepted EXIT msg, wait the last batch test complete
                 startFlag = False
@@ -504,8 +506,8 @@ class ParallelTaskManager :
         
         baseInit = OperatorBaseArgs()
         if len(baselineInitList) > 0 :
-            baseInit.argList = baselineInitList[1:]
             baseInit.operatorKind = baselineInitList[0]
+            baseInit.argList = baselineInitList[1:]
         tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest,baseInit)
         
         parsedBests = []
@@ -657,7 +659,7 @@ class ParallelTaskManager :
             # start perftest processes
             tse = None
             cfgstrs = []
-            batch = None, m = None, n = None, k = None, dtype = None
+            batch = None; m = None; n = None; k = None; dtype = None
             if needCompile and not isAsRemoteTester:
                 with open(self.tuningSpaceJson) as f :
                     obj = json.load(f)
@@ -667,7 +669,7 @@ class ParallelTaskManager :
                     m = obj['template'][ConfigKeywords.KEY_M][0]
                     n = obj['template'][ConfigKeywords.KEY_N][0]
                     k = obj['template'][ConfigKeywords.KEY_K][0]
-                    dtype = ToTorchType(obj['template'][ConfigKeywords.KEY_DTYPE_C][0])
+                    dtype = obj['template'][ConfigKeywords.KEY_DTYPE_C][0]
                     
             if needPerfTest:
                 init_arg_list = []
