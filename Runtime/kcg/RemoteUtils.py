@@ -3,7 +3,22 @@ import socket
 import paramiko
 from scp import SCPClient
 from typing import List
+import shutil
 
+_local_ip = None
+
+def get_local_ip():
+    global _local_ip
+    if _local_ip is not None:
+        return _local_ip
+    import socket
+    try:
+        s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
+        s.connect(('8.8.8.8',80))
+        _local_ip = s.getsockname()[0]
+    finally:
+        s.close()
+    return _local_ip
 
 class RemoteSSHConnect :
     def __init__(self,destip,destport,username,password):
@@ -12,7 +27,13 @@ class RemoteSSHConnect :
         self.port = destport
         self.username = username
         self.password = password
+        self._isLocalIP = False
+        if self.host == get_local_ip():
+            self._isLocalIP = True
     def connect(self):
+        if self._isLocalIP :
+            print("RemotePerfTester[SSH] connect OK(localhost, skip)")
+            return True
         if self.ssh is None :
             self.ssh = paramiko.SSHClient()
             self.ssh.set_missing_host_key_policy(paramiko.AutoAddPolicy())
@@ -26,17 +47,34 @@ class RemoteSSHConnect :
 
     def upload_files(self,local_path : List[str], remote_path : List[str]):
         assert(len(local_path) == len(remote_path))
-        with SCPClient(self.ssh.get_transport()) as scp:
+        if self._isLocalIP :
             for i in range(0,len(local_path)):
                 lp = local_path[i]
                 rp = remote_path[i]
-                scp.put(lp, rp)
+                shutil.copy2(lp,rp)
+        else:
+            with SCPClient(self.ssh.get_transport()) as scp:
+                for i in range(0,len(local_path)):
+                    lp = local_path[i]
+                    rp = remote_path[i]
+                    scp.put(lp, rp)
                 
     def upload_file(self,local_path : str, remote_path : str):
-        with SCPClient(self.ssh.get_transport()) as scp:
-            scp.put(local_path, remote_path)
-
+        try:
+            if self._isLocalIP :
+                shutil.copy2(local_path,remote_path)
+            else:    
+                with SCPClient(self.ssh.get_transport()) as scp:
+                    scp.put(local_path, remote_path)
+        except Exception as e :
+            print("[RemoteSSHConnect] Exception : ",e)
+            return False
+        return True
+    
     def download_file(self,local_path : str, remote_path : str):
+        if self._isLocalIP :
+            shutil.copy2(remote_path,local_path)
+            return True
         try:
             with SCPClient(self.ssh.get_transport()) as scp:
                 scp.get(remote_path,local_path)
@@ -47,31 +85,21 @@ class RemoteSSHConnect :
     
     def execute_cmd_on_remote(self,cmd:str) :
         print("== exec results ===",flush=True)
-        myin, myout, myerr = self.ssh.exec_command(
-            cmd
-        )
-        for line in myout:
-            print(line,flush=True)
-        for line in myerr:
-            print(line,flush=True)
-    
-    
+        if self._isLocalIP :
+            import os
+            os.system(cmd)
+        else:
+            myin, myout, myerr = self.ssh.exec_command(
+                cmd
+            )
+            for line in myout:
+                print(line,flush=True)
+            for line in myerr:
+                print(line,flush=True)
+
 DEFAULT_PORT = 18888
 MSG_LEN = 512
 SEPMARK = ';'
-_local_ip = None
-
-def get_local_ip():
-    if _local_ip is not None:
-        return _local_ip
-    import socket
-    try:
-        s = socket.socket(socket.AF_INET,socket.SOCK_DGRAM)
-        s.connect(('8.8.8.8',80))
-        _local_ip = s.getsockname()[0]
-    finally:
-        s.close()
-    return _local_ip
 
 class MyTCPServer :
     def __init__(self,listenPort = DEFAULT_PORT):

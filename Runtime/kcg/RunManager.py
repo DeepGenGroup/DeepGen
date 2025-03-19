@@ -1,9 +1,9 @@
 import json
 from typing import Dict,List,Tuple
 from RemoteUtils import RemoteSSHConnect
-from kcg.Utils import EnumBackendType
-# 集群运行管理器，用于读取用户配置的批量信息 建立compile-test任务集群 初始化各个机器的分工
+from Utils import *
 
+# 分发给各个机器的启动参数，用于被 main_processs() 读取
 class StartParam :
     def __init__(self):
         self.tuning_param_file  = []
@@ -25,6 +25,7 @@ class StartParam :
         self.remoteTesterSSHPort = ""
         self.remoteTesterUsername = ""
         self.remoteTesterPwd = ""
+        self.runMode = EnumRunMode.GetTuneSpace_Local_Only
         
     def parseFromJson(self,path) :
         with open(path) as f:
@@ -35,7 +36,13 @@ class StartParam :
             self.maxCompilingProcess = obj['maxCompilingProcess']
             self.gpu_devices = obj['gpu_devices']
             self.tuningSpaceGenMode = obj['tuningSpaceGenMode']
-            self.backendType = obj['backendType']
+            if obj['backendType'] == "CUDA" :
+                self.backendType = EnumBackendType.CUDA
+            elif obj['backendType'] == "HIP" :
+                self.backendType = EnumBackendType.HIP
+            else:
+                self.backendType = EnumBackendType.INVALID
+                assert False , f"illegal backend Type {obj['backendType']}"
             self.arch = obj['arch']
             self.benchmarkcnt = obj['benchmarkcnt']
             self.warmupcnt = obj['warmupcnt']
@@ -48,11 +55,68 @@ class StartParam :
             self.remoteTesterSSHPort = obj['remoteTesterSSHPort']
             self.remoteTesterUsername = obj['remoteTesterUsername']
             self.remoteTesterPwd = obj['remoteTesterPwd']
-    
+            if obj['runMode'] == "GetTuneSpace_Local_Only" :
+                self.runMode = EnumRunMode.GetTuneSpace_Local_Only
+            elif obj['runMode'] == "CallRemotePerftester" :
+                self.runMode = EnumRunMode.CallRemotePerftester
+            elif obj['runMode'] == "AsRemotePerftester" :
+                self.runMode = EnumRunMode.AsRemotePerftester
+            elif obj['runMode'] == "GetTuneSpace_Compile_Benchmark_Local" :
+                self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
+            else:
+                assert False, f"illegal runmode {obj['runMode']}"
+            
+    def toJson(self) :
+        dd = {
+            'tuning_param_file' : None,
+            'perfPathPrefix' : None,
+            'cacheTuningSPaceFile' : None,
+            'maxCompilingProcess' : None,
+            'gpu_devices' : None,
+            'tuningSpaceGenMode' : None,
+            'backendType' : None,
+            'arch' : None,
+            'benchmarkcnt' : None,
+            'warmupcnt' : None,
+            'keepTopNum' : None,
+            'torchDynamicLogPath' : None,
+            'nTorchEpsInitTest' : None,
+            'atol' : None,
+            'rtol' : None,
+            'remoteTesterIP' : None,
+            'remoteTesterSSHPort' : None,
+            'remoteTesterUsername' : None,
+            'remoteTesterPwd' : None,
+            'runMode' : None,
+        }
+        dd['tuning_param_file'] = self.tuning_param_file
+        dd['perfPathPrefix'] = self.perfPathPrefix
+        dd['cacheTuningSPaceFile'] = self.cacheTuningSPaceFile
+        dd['maxCompilingProcess'] = self.maxCompilingProcess
+        dd['gpu_devices'] = self.gpu_devices
+        dd['tuningSpaceGenMode'] = self.tuningSpaceGenMode
+        dd['backendType'] = str(self.backendType)
+        dd['arch'] = self.arch
+        dd['benchmarkcnt'] = self.benchmarkcnt
+        dd['warmupcnt'] = self.warmupcnt
+        dd['keepTopNum'] = self.keepTopNum
+        dd['torchDynamicLogPath'] = self.torchDynamicLogPath
+        dd['nTorchEpsInitTest'] = self.nTorchEpsInitTest
+        dd['atol'] = self.atol
+        dd['rtol'] = self.rtol
+        dd['remoteTesterIP'] = self.remoteTesterIP
+        dd['remoteTesterSSHPort'] = self.remoteTesterSSHPort
+        dd['remoteTesterUsername'] = self.remoteTesterUsername
+        dd['remoteTesterPwd'] = self.remoteTesterPwd
+        dd['runMode'] = str(self.runMode)
+        return dd
+        
 class _Compiler :
     def __init__(self):
         self.ip_addr = ""
         self.sshPort = 0
+        self.user_name = ""
+        self.password = ""
         self.cwd = ""
         self.tuning_config_relative_paths = ""
         self.tuning_space_relative_paths = ""
@@ -101,13 +165,13 @@ class _Benchmarker :
         self.keep_top = config['keep_top']
     
 class _WorkGroup :
-    def __init__(self):
+    def __init__(self,id = 0):
         self.m_compiler = None
         self.m_perfTester = None
         self.m_isUseRemoteBenchmark = True
         self.m_sshToCompiler = None
         self.m_sshToTester = None
-    
+        self.id = id
     # parse on element in json list("workgroups" elements), build  _Benchmarker & _Compiler
     def build(self, workgroupElement : Dict) :
         self.m_compiler = _Compiler()
@@ -118,28 +182,40 @@ class _WorkGroup :
         if self.m_compiler.ip_addr == self.m_perfTester.ip_addr :
             self.m_isUseRemoteBenchmark = False
     
-    def getStartParam(self) -> StartParam :
-        ret = StartParam()
-        ret.tuning_param_file = self.m_compiler.tuning_config_relative_paths
-        ret.perfPathPrefix = self.m_compiler.perflog_prefix_list
-        ret.cacheTuningSPaceFile = self.m_compiler.tuning_space_relative_paths
-        ret.maxCompilingProcess = self.m_compiler.max_process_count
-        ret.gpu_devices = self.m_perfTester.devIds
-        ret.tuningSpaceGenMode = self.m_compiler.tuning_space_generate_strategy
-        ret.backendType = self.m_compiler.backendType
-        ret.arch = self.m_compiler.arch
-        ret.benchmarkcnt = self.m_perfTester.benchmark_count
-        ret.warmupcnt = self.m_perfTester.warmup_count
-        ret.keepTopNum = self.m_perfTester.keep_top
-        ret.torchDynamicLogPath = ""
-        ret.nTorchEpsInitTest = 400
-        ret.atol = 1e-3
-        ret.rtol = 1e-3
-        ret.remoteTesterIP = self.m_perfTester.ip_addr
-        ret.remoteTesterSSHPort = self.m_perfTester.sshPort
-        ret.remoteTesterUsername = self.m_perfTester.user_name
-        ret.remoteTesterPwd = self.m_perfTester.password
-        return ret
+    def getStartParamForCompilerAndTester(self) -> Tuple[StartParam,StartParam] :
+        com = StartParam()
+        com.tuning_param_file = self.m_compiler.tuning_config_relative_paths
+        com.perfPathPrefix = self.m_compiler.perflog_prefix_list
+        com.cacheTuningSPaceFile = self.m_compiler.tuning_space_relative_paths
+        com.maxCompilingProcess = self.m_compiler.max_process_count
+        com.gpu_devices = self.m_perfTester.devIds
+        com.tuningSpaceGenMode = self.m_compiler.tuning_space_generate_strategy
+        com.backendType = self.m_compiler.backendType
+        com.arch = self.m_compiler.arch
+        com.benchmarkcnt = self.m_perfTester.benchmark_count
+        com.warmupcnt = self.m_perfTester.warmup_count
+        com.keepTopNum = self.m_perfTester.keep_top
+        com.torchDynamicLogPath = ""
+        com.nTorchEpsInitTest = 400
+        com.atol = 1e-3
+        com.rtol = 1e-3
+        com.remoteTesterIP = self.m_perfTester.ip_addr
+        com.remoteTesterSSHPort = self.m_perfTester.sshPort
+        com.remoteTesterUsername = self.m_perfTester.user_name
+        com.remoteTesterPwd = self.m_perfTester.password
+        if self.m_isUseRemoteBenchmark :
+            com.runMode = EnumRunMode.CallRemotePerftester
+            tester = com
+            tester.runMode = EnumRunMode.AsRemotePerftester
+            return (com,tester)
+        else:
+            com.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
+            return (com,com)
+    
+    def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
+        c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
+        t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
+        return (c,t)
     
     # start compiler and perftester :
     def start(self) :
@@ -149,12 +225,28 @@ class _WorkGroup :
         self.m_sshToCompiler = RemoteSSHConnect(
             self.m_compiler.ip_addr,self.m_compiler.sshPort,
             self.m_compiler.user_name,self.m_compiler.password)
+        # generate json file locally. Then scp to remote
+        param_c, param_t = self.getStartParamForCompilerAndTester()
+        fname_c ,fname_t = self.getCompilerTesterParamfileNames()
+        shortname_c = fname_c.split('/')[-1]
+        shortname_t = fname_t.split('/')[-1]
+        with open(fname_c, 'w') as f:
+            json.dump(param_c.toJson(),f)
+        with open(fname_t, 'w') as f:
+            json.dump(param_t.toJson(),f)
+        
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
-            self.m_sshToCompiler.execute_cmd_on_remote(f"cd {self.m_compiler.cwd} & . ./scripts/Benchmark.sh")
-            self.m_sshToTester.execute_cmd_on_remote(f"cd {self.m_perfTester.cwd} & . ./scripts/Benchmark.sh")
+            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cache")
+            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cache")
+            def getStartCmd(wd : str ,shortfname : str) -> str :
+                return f"cd {wd} ; ./scripts/Benchmark.sh  ./_cache/{shortfname}"
+            
+            self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
+            self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
         
-
+        
+# 集群运行管理器，用于读取用户配置的批量信息 建立compile-test任务集群 初始化各个机器的分工
 class WorkgroupManager :
     def __init__(self, startupJson : str):
         self.m_config = None
@@ -162,12 +254,15 @@ class WorkgroupManager :
         self.workgroups = []
     
     # build workgorups with startupJson
-    def loadConfig(self):
+    def loadAndStart(self):
         with open(self.m_startupJsonPath) as f :
             self.m_config = json.load(f)
         # check json format
         assert self.m_config is not None
-        for wg in self.m_config['workgroups'] :
-            temp = _WorkGroup()
-            temp.build(wg)
-            self.workgroups.append(temp)
+        
+        for i in range(len(self.m_config['workgroups'])) :
+            wg_param = self.m_config['workgroups'][i]
+            wg = _WorkGroup(id=i)
+            wg.build(wg_param)
+            wg.start()
+            self.workgroups.append(wg)
