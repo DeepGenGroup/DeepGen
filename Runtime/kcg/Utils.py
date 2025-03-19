@@ -334,12 +334,16 @@ class DeviceInfo :
 # 路径管理器。存放了各种路径设置
 class PathManager :
     _s_cuda_install_dir = ""
+    _s_path_obj = None
     @staticmethod
     def project_dir()->str:
         return Path(os.path.dirname(os.path.realpath(__file__))).parent.parent
     
     @staticmethod
     def cuda_install_dir()->str:
+        assert PathManager._s_path_obj is not None
+        if len(PathManager._s_path_obj['cuda_install_dir']) > 1:
+            return PathManager._s_path_obj['cuda_install_dir']
         if len(PathManager._s_cuda_install_dir) <= 0 :
             import subprocess
             result = subprocess.run(['which','nvcc'], capture_output=True, text=True)
@@ -407,6 +411,11 @@ class PathManager :
             delete_files_in_directory(PathManager.default_dump_dir())
         if clearTmp :
             delete_files_in_directory(PathManager.tmp_dir())
+        userPathConfigfile = str(PathManager.project_dir()) + "/thirdPartyPath.json"
+        assert os.path.exists(userPathConfigfile)
+        with open(userPathConfigfile) as f:
+            import json
+            PathManager._s_path_obj = json.load(f)
         
 #  关键字
 class ConfigKeywords :

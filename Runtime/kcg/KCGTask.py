@@ -555,18 +555,27 @@ class ParallelTaskManager :
             target= ParallelTaskManager._innerCreateTesterProc, 
             args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
         worker.start()
+        lastDeathTime = 0
+        deadtime = 0
+        minDeathDurationSeconds = 30
         while True:
             worker.join()
             if endSignal.value == 1 :  # 进程收到结束信号正常结束
                 print(f"======= PerfTester {devId} Stopped OK ==========")
                 return
             else:
-                print(f"======= [W] PerfTester {devId} Broken. Restart it ==========")
-                del worker; worker = None
-                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
-                worker.start()
-    
+                deadtime = time.time()
+                if lastDeathTime == 0 or (deadtime - lastDeathTime) > minDeathDurationSeconds :
+                    lastDeathTime = deadtime
+                    print(f"======= [W] PerfTester {devId} crash. Restart it ==========")
+                    del worker; worker = None
+                    time.sleep(3)
+                    worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+                        args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
+                    worker.start()
+                else:
+                    print(f"======= [Fatal] PerfTester {devId} crash too frequently(<30s). No Restart! ==========")
+                    return
     # @staticmethod
     # def _createBaselineInit(devid,batch,m,n,k,datatype) :
     #     baselineTester = PerfTester(devid,0.001,0.001,400)
@@ -683,6 +692,13 @@ class ParallelTaskManager :
                 init_arg_list = []
                 if not isAsRemoteTester :
                     init_arg_list = [batch,m,n,k,dtype]
+                else:
+                    init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
+                    if len(init_f) > 0:
+                        file = init_f[0]
+                        with open(file) as f:
+                            o = json.load(f)
+                            init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
                 print('============ start init perf monitors ==============')
                 self._initPerfMonitors(isAsRemoteTester,init_arg_list)
             # start compiling processes
