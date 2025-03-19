@@ -693,12 +693,14 @@ class ParallelTaskManager :
                 if not isAsRemoteTester :
                     init_arg_list = [batch,m,n,k,dtype]
                 else:
+                    # when act as remotetestser, RunManager may upload serveral init_arg files corresponding to several gpu cards to us. This need to be considered in future
                     init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
                     if len(init_f) > 0:
-                        file = init_f[0]
-                        with open(file) as f:
-                            o = json.load(f)
-                            init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
+                        for file in init_f:
+                            with open(file) as f:
+                                o = json.load(f)
+                                init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
+                            os.remove(file)
                 print('============ start init perf monitors ==============')
                 self._initPerfMonitors(isAsRemoteTester,init_arg_list)
             # start compiling processes
