@@ -86,11 +86,20 @@ if __name__ == '__main__' :
         param = StartParam()
         param.parseFromJson(startParamJsonPath)
         # Tuning 参数空间配置文件
-        tuning_param_file = param.tuning_param_file
+        tuning_param_file_list =  param.tuning_param_file
         # perf文件路径前缀(用于记录当前最佳性能的case)
-        perfPathPrefix = param.perfPathPrefix
+        perfPathPrefix_list =  param.perfPathPrefix
         # 调优空间存储文件
-        cacheTuningSPaceFile = param.cacheTuningSPaceFile
+        cacheTuningSPaceFile_list =  param.cacheTuningSPaceFile
+        
+        def addProjectDirAhead(arr : List) :
+            for i in range(len(arr)):
+                arr[i] = str(PathManager.project_dir()) + "/" + arr[i]
+        
+        addProjectDirAhead(tuning_param_file_list) 
+        addProjectDirAhead(perfPathPrefix_list) 
+        addProjectDirAhead(cacheTuningSPaceFile_list) 
+        
         # 最大编译进程数
         maxCompilingProcess = param.maxCompilingProcess
         # 可见设备列表

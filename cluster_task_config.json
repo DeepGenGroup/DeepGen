@@ -11,8 +11,8 @@
                     "TuningConfigs/GEMM_configs_2.json"
                 ],
                 "tuning_space_relative_paths" : [
-                    "TuningCombs/tuingspace_gemm_debug.json",
-                    "TuningCombs/tuingspace_gemm_debug_2.json"
+                    "TuningCombs/ts_1.json",
+                    "TuningCombs/ts_2.json"
                 ],
                 "perflog_prefix_list" : [
                     "testLog_1",

@@ -29,42 +29,44 @@ class StartParam :
         
     def parseFromJson(self,path) :
         with open(path) as f:
+            print(f"==== startParam parsing {path} ")
             obj = json.load(f)
-            self.tuning_param_file = obj['tuning_param_file']
-            self.perfPathPrefix = obj['perfPathPrefix']
-            self.cacheTuningSPaceFile = obj['cacheTuningSPaceFile']
-            self.maxCompilingProcess = obj['maxCompilingProcess']
-            self.gpu_devices = obj['gpu_devices']
-            self.tuningSpaceGenMode = obj['tuningSpaceGenMode']
-            if obj['backendType'] == "CUDA" :
-                self.backendType = EnumBackendType.CUDA
-            elif obj['backendType'] == "HIP" :
-                self.backendType = EnumBackendType.HIP
-            else:
-                self.backendType = EnumBackendType.INVALID
-                assert False , f"illegal backend Type {obj['backendType']}"
-            self.arch = obj['arch']
-            self.benchmarkcnt = obj['benchmarkcnt']
-            self.warmupcnt = obj['warmupcnt']
-            self.keepTopNum = obj['keepTopNum']
-            self.torchDynamicLogPath = obj['torchDynamicLogPath']
-            self.nTorchEpsInitTest = obj['nTorchEpsInitTest']
-            self.atol = obj['atol']
-            self.rtol = obj['rtol']
-            self.remoteTesterIP = obj['remoteTesterIP']
-            self.remoteTesterSSHPort = obj['remoteTesterSSHPort']
-            self.remoteTesterUsername = obj['remoteTesterUsername']
-            self.remoteTesterPwd = obj['remoteTesterPwd']
-            if obj['runMode'] == "GetTuneSpace_Local_Only" :
-                self.runMode = EnumRunMode.GetTuneSpace_Local_Only
-            elif obj['runMode'] == "CallRemotePerftester" :
-                self.runMode = EnumRunMode.CallRemotePerftester
-            elif obj['runMode'] == "AsRemotePerftester" :
-                self.runMode = EnumRunMode.AsRemotePerftester
-            elif obj['runMode'] == "GetTuneSpace_Compile_Benchmark_Local" :
-                self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
-            else:
-                assert False, f"illegal runmode {obj['runMode']}"
+        self.tuning_param_file = obj['tuning_param_file']
+        self.perfPathPrefix = obj['perfPathPrefix']
+        self.cacheTuningSPaceFile = obj['cacheTuningSPaceFile']
+        self.maxCompilingProcess = obj['maxCompilingProcess']
+        self.gpu_devices = obj['gpu_devices']
+        self.tuningSpaceGenMode = obj['tuningSpaceGenMode']
+        if obj['backendType'] == "CUDA" :
+            self.backendType = EnumBackendType.CUDA
+        elif obj['backendType'] == "HIP" :
+            self.backendType = EnumBackendType.HIP
+        else:
+            self.backendType = EnumBackendType.INVALID
+            print(f"[Fatal] illegal backend Type {obj['backendType']}")
+            assert False , f"illegal backend Type {obj['backendType']}"
+        self.arch = obj['arch']
+        self.benchmarkcnt = obj['benchmarkcnt']
+        self.warmupcnt = obj['warmupcnt']
+        self.keepTopNum = obj['keepTopNum']
+        self.torchDynamicLogPath = obj['torchDynamicLogPath']
+        self.nTorchEpsInitTest = obj['nTorchEpsInitTest']
+        self.atol = obj['atol']
+        self.rtol = obj['rtol']
+        self.remoteTesterIP = obj['remoteTesterIP']
+        self.remoteTesterSSHPort = obj['remoteTesterSSHPort']
+        self.remoteTesterUsername = obj['remoteTesterUsername']
+        self.remoteTesterPwd = obj['remoteTesterPwd']
+        if obj['runMode'] == "GetTuneSpace_Local_Only" :
+            self.runMode = EnumRunMode.GetTuneSpace_Local_Only
+        elif obj['runMode'] == "CallRemotePerftester" :
+            self.runMode = EnumRunMode.CallRemotePerftester
+        elif obj['runMode'] == "AsRemotePerftester" :
+            self.runMode = EnumRunMode.AsRemotePerftester
+        elif obj['runMode'] == "GetTuneSpace_Compile_Benchmark_Local" :
+            self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
+        else:
+            assert False, f"illegal runmode {obj['runMode']}"
             
     def toJson(self) :
         dd = {
@@ -237,10 +239,10 @@ class _WorkGroup :
         
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
-            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cache")
-            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cache")
+            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_tmp")
+            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_tmp")
             def getStartCmd(wd : str ,shortfname : str) -> str :
-                return f"cd {wd} ; ./scripts/Benchmark.sh  ./_cache/{shortfname}"
+                return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_tmp/{shortfname}"
             
             self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
             self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
