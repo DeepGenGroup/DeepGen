@@ -12,7 +12,7 @@ class StartParam :
         self.maxCompilingProcess = 0
         self.gpu_devices = []
         self.tuningSpaceGenMode = 1
-        self.backendType = EnumBackendType.CUDA
+        self.backendType = EnumBackendType.INVALID
         self.arch = "80"
         self.benchmarkcnt = 10
         self.warmupcnt = 1
@@ -22,15 +22,18 @@ class StartParam :
         self.atol = 1e-3
         self.rtol = 1e-3
         self.remoteTesterIP = ""
-        self.remoteTesterSSHPort = ""
+        self.remoteTesterSSHPort = 22
         self.remoteTesterUsername = ""
         self.remoteTesterPwd = ""
         self.runMode = EnumRunMode.GetTuneSpace_Local_Only
         
     def parseFromJson(self,path) :
+        obj = None
         with open(path) as f:
             print(f"==== startParam parsing {path} ")
             obj = json.load(f)
+        assert obj is not None
+        
         self.tuning_param_file = obj['tuning_param_file']
         self.perfPathPrefix = obj['perfPathPrefix']
         self.cacheTuningSPaceFile = obj['cacheTuningSPaceFile']
@@ -43,7 +46,7 @@ class StartParam :
             self.backendType = EnumBackendType.HIP
         else:
             self.backendType = EnumBackendType.INVALID
-            print(f"[Fatal] illegal backend Type {obj['backendType']}")
+            print(f"[Fatal] illegal backend Type {obj['backendType']}",flush=True)
             assert False , f"illegal backend Type {obj['backendType']}"
         self.arch = obj['arch']
         self.benchmarkcnt = obj['benchmarkcnt']
@@ -185,29 +188,32 @@ class _WorkGroup :
             self.m_isUseRemoteBenchmark = False
     
     def getStartParamForCompilerAndTester(self) -> Tuple[StartParam,StartParam] :
-        com = StartParam()
-        com.tuning_param_file = self.m_compiler.tuning_config_relative_paths
-        com.perfPathPrefix = self.m_compiler.perflog_prefix_list
-        com.cacheTuningSPaceFile = self.m_compiler.tuning_space_relative_paths
-        com.maxCompilingProcess = self.m_compiler.max_process_count
-        com.gpu_devices = self.m_perfTester.devIds
-        com.tuningSpaceGenMode = self.m_compiler.tuning_space_generate_strategy
-        com.backendType = self.m_compiler.backendType
-        com.arch = self.m_compiler.arch
-        com.benchmarkcnt = self.m_perfTester.benchmark_count
-        com.warmupcnt = self.m_perfTester.warmup_count
-        com.keepTopNum = self.m_perfTester.keep_top
-        com.torchDynamicLogPath = ""
-        com.nTorchEpsInitTest = 400
-        com.atol = 1e-3
-        com.rtol = 1e-3
-        com.remoteTesterIP = self.m_perfTester.ip_addr
-        com.remoteTesterSSHPort = self.m_perfTester.sshPort
-        com.remoteTesterUsername = self.m_perfTester.user_name
-        com.remoteTesterPwd = self.m_perfTester.password
+        def __get_object() :
+            com = StartParam()
+            com.tuning_param_file = self.m_compiler.tuning_config_relative_paths
+            com.perfPathPrefix = self.m_compiler.perflog_prefix_list
+            com.cacheTuningSPaceFile = self.m_compiler.tuning_space_relative_paths
+            com.maxCompilingProcess = self.m_compiler.max_process_count
+            com.gpu_devices = self.m_perfTester.devIds
+            com.tuningSpaceGenMode = self.m_compiler.tuning_space_generate_strategy
+            com.backendType = self.m_compiler.backendType
+            com.arch = self.m_compiler.arch
+            com.benchmarkcnt = self.m_perfTester.benchmark_count
+            com.warmupcnt = self.m_perfTester.warmup_count
+            com.keepTopNum = self.m_perfTester.keep_top
+            com.torchDynamicLogPath = ""
+            com.nTorchEpsInitTest = 400
+            com.atol = 1e-3
+            com.rtol = 1e-3
+            com.remoteTesterIP = self.m_perfTester.ip_addr
+            com.remoteTesterSSHPort = self.m_perfTester.sshPort
+            com.remoteTesterUsername = self.m_perfTester.user_name
+            com.remoteTesterPwd = self.m_perfTester.password
+            return com
+        com = __get_object()
+        tester = __get_object()
         if self.m_isUseRemoteBenchmark :
             com.runMode = EnumRunMode.CallRemotePerftester
-            tester = com
             tester.runMode = EnumRunMode.AsRemotePerftester
             return (com,tester)
         else:

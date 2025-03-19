@@ -14,11 +14,11 @@ class CompiledKernel:
                  blockDims:list,
                  device = 0):
         self.signature = kernel_signature
-        if backend == EnumBackendType.HIP :
+        if backend is EnumBackendType.HIP :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = HIPLoaderST()
             self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-        if backend == EnumBackendType.CUDA :
+        if backend is EnumBackendType.CUDA :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = CudaLoaderST()
             self.m_launcher = CUDALauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)

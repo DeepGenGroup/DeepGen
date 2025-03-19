@@ -422,10 +422,13 @@ class SerialCompileTask :
         # Print("===== KCGCompiler ctor ========")
         kernelCompiler = KCGCompiler()
         _backend = 0
-        if backendtype == EnumBackendType.CUDA :
+        if backendtype.value == EnumBackendType.CUDA.value :
             _backend = 1
-        if backendtype == EnumBackendType.HIP :
+        elif backendtype.value == EnumBackendType.HIP.value :
             _backend = 2
+        else:
+            assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
+        print("Call set_platform :" , _backend)
         kernelCompiler.set_platform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = kernelCompiler.compileKernel(kpm)[0] 
@@ -455,6 +458,7 @@ class SerialCompileTask :
             lbs = 0; ubs =1
         for i in range(lbs,ubs) :
             kernelCfg = kernelArg
+            print("before _task_compile_kernel: ",str(backendtype))
             r = self._task_compile_kernel(kernelCfg,i, deviceId,backendtype,arch)  
             valid_kernels.append(r)
         
@@ -654,6 +658,7 @@ class ParallelTaskManager :
         return arg
     
     def run(self, backendtype : EnumBackendType, archInfo : str, maxProcess = 10, needCompile = True, needPerfTest = True, startFrom = 0, isAsRemoteTester = False) :
+        print(f"run:: backendType = {str(backendtype)}")
         try:
             procCount = 0
             dealed = startFrom

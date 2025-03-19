@@ -51,7 +51,7 @@ class UserInputs:
 class CompiledKernelFactory :
     @staticmethod
     def getKernel(info : UserInputs, deviceId : int) -> CompiledKernel:
-        if info.operatorKind==EnumOperator.Matmul :
+        if info.operatorKind is EnumOperator.Matmul :
             signature = getMatmulSignature(info.kernelParam.dtypeTorch('A'),info.kernelParam.dtypeTorch('B'),info.kernelParam.dtypeTorch('C'))
             return CompiledKernel(
                 info.backend,
@@ -63,7 +63,7 @@ class CompiledKernelFactory :
                 info.blockDims(),
                 deviceId
             )
-        if info.operatorKind==EnumOperator.Convolution :
+        if info.operatorKind is EnumOperator.Convolution :
             return None
-        if info.operatorKind==EnumOperator.Poll:
+        if info.operatorKind is EnumOperator.Poll:
             return None

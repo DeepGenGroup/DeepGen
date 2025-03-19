@@ -16,8 +16,7 @@ def main_process(
     remoteTesterPwd
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
-    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
-
+    PathManager.init(clearPkl=True, clearTmp=False, clearCache=True,clearDump=True)
     ######################################################################################
     st = time.time()
 
@@ -59,7 +58,7 @@ def main_process(
             remoteTestser = remoteBenchmarker
         )
         tm.run(
-            backendtype=backendType ,  # 后端类型
+            backendType ,  # 后端类型
             archInfo=arch,
             maxProcess= maxCompilingProcess , # 编译kernel的最大进程数 
             needCompile=need_compile, # 是否执行编译过程
@@ -76,14 +75,37 @@ if __name__ == '__main__' :
     perfPathPrefix_list = []
     cacheTuningSPaceFile_list = []
     
-    remoteTesterIP = ""
-    remoteTesterSSHPort = ""
-    remoteTesterUsername = ""
-    remoteTesterPwd = ""
+
     
+    # Tuning 参数空间配置文件
+    tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
+    # perf文件路径前缀(用于记录当前最佳性能的case)
+    perfPathPrefix = f'{PathManager.project_dir()}/_gemmPerf'
+    # 调优空间存储文件
+    cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_debug.json'
+    # 最大编译进程数
+    maxCompilingProcess = 100
+    # 可见设备列表
+    gpu_devices = [7]  
+    # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
+    tuningSpaceGenMode = 1  
+    # 当前后端类型 & 架构信息
+    backendType = EnumBackendType.CUDA  
+    arch = "80"
+    remoteTesterIP = "10.18.96.58"
+    remoteTesterSSHPort = 2133
+    remoteTesterUsername = "xushilong"
+    remoteTesterPwd = "xushilong"
+    runMode = EnumRunMode.CallRemotePerftester
+    keepTopNum = 100
+
+    tuning_param_file_list.append(tuning_param_file)
+    perfPathPrefix_list.append(perfPathPrefix)
+    cacheTuningSPaceFile_list.append(cacheTuningSPaceFile)
+    
+    param = StartParam()
     if len(sys.argv) > 1 :
         startParamJsonPath = sys.argv[1]
-        param = StartParam()
         param.parseFromJson(startParamJsonPath)
         # Tuning 参数空间配置文件
         tuning_param_file_list =  param.tuning_param_file
@@ -111,30 +133,7 @@ if __name__ == '__main__' :
         arch = param.arch
         runMode = param.runMode
         keepTopNum = param.keepTopNum
-    
-    else:
-        # Tuning 参数空间配置文件
-        tuning_param_file = f'{PathManager.project_dir()}/TuningConfigs/GEMM_configs_2.json'
-        # perf文件路径前缀(用于记录当前最佳性能的case)
-        perfPathPrefix = f'{PathManager.project_dir()}/_gemmPerf'
-        # 调优空间存储文件
-        cacheTuningSPaceFile = f'{PathManager.project_dir()}/TuningCombs/tuingspace_gemm_debug.json'
-        # 最大编译进程数
-        maxCompilingProcess = 100
-        # 可见设备列表
-        gpu_devices = [7]  
-        # 调优空间生成策略（0：先生成space再剪枝 1：直接生成剪枝后的space）
-        tuningSpaceGenMode = 1  
-        # 当前后端类型 & 架构信息
-        backendType = EnumBackendType.CUDA  
-        arch = "80"
-        # remoteBenchmarker = RemoteSSHConnect("10.18.96.58","2133","xushilong","xushilong")
-        runMode = EnumRunMode.CallRemotePerftester
-        keepTopNum = 100
 
-        tuning_param_file_list.append(tuning_param_file)
-        perfPathPrefix_list.append(perfPathPrefix)
-        cacheTuningSPaceFile_list.append(cacheTuningSPaceFile)
     
     for i in range(len(tuning_param_file_list)) :
         tuning_param_file = tuning_param_file_list[i]

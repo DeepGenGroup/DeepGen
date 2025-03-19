@@ -180,14 +180,14 @@ def build(name, src, srcdir):
 
 
 
-class EnumBackendType(Enum):
+class EnumBackendType(IntEnum):
     CUDA = 1
     HIP = 2
     INVALID = 3
     def __str__(self):
         return f'{self.name}'
 
-class EnumRunMode(Enum):
+class EnumRunMode(IntEnum):
     # 在本机执行生成调优空间、编译kernel以及benchmark
     GetTuneSpace_Compile_Benchmark_Local = 1  
     # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
