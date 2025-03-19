@@ -119,6 +119,7 @@ class MyTCPServer :
         if self.server is not None :
             return
         self.server = socket.socket()
+        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         local_ip = get_local_ip()
         self.server.bind((local_ip, self.port))
         print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
