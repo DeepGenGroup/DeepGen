@@ -1,10 +1,9 @@
 #!/bin/bash
-
 # 查找所有包含 "Get" 关键字的进程（排除 grep 自身）
-pids=$(pgrep -f "testGetKernels" -u $USER)
+pids=$(pgrep -f "deepGenMain" -u $USER)
 
 if [ -z "$pids" ]; then
-    echo "未找到任何 testGetKernels 进程"
+    echo "未找到任何 deepGenMain 进程"
     exit 0
 fi
 
@@ -44,9 +43,9 @@ for pid in $pids; do
 done
 
 # 二次确认清理结果
-remaining=$(pgrep -f "Get")
+remaining=$(pgrep -f "deepGenMain")
 if [ -n "$remaining" ]; then
     echo "警告：以下进程未被终止: $remaining"
 else
-    echo "所有 Get 进程及子进程已终止"
+    echo "所有 deepGenMain 进程及子进程已终止"
 fi
