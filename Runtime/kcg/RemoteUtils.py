@@ -30,6 +30,10 @@ class RemoteSSHConnect :
         self._isLocalIP = False
         if self.host == get_local_ip():
             self._isLocalIP = True
+    def __del__(self):
+        if self.ssh is not None:
+            self.ssh.close()
+
     def connect(self):
         if self._isLocalIP :
             print("RemotePerfTester[SSH] connect OK(localhost, skip)")
@@ -106,6 +110,10 @@ class MyTCPServer :
         self.server = None
         self.port = listenPort    
         self.conn = None    
+        
+    def __del__(self) :
+        self.stop()
+        
     def listen(self) :
         import socket
         if self.server is not None :
@@ -135,14 +143,20 @@ class MyTCPServer :
         return recv_data
     
     def stop(self):
-        self.conn.close()
+        if self.conn is not None:
+            self.conn.close()
+            self.conn = None
         if self.server is not None:
             self.server.close()
+            self.server = None
         
 class MyTCPClient :
     def __init__(self):
         self.socket_client = None
-        
+    
+    def __del__(self):
+        self.stop()
+    
     def connect(self, destip, destport = DEFAULT_PORT) :
         try:
             if self.socket_client is None:
@@ -167,5 +181,7 @@ class MyTCPClient :
         self.socket_client.send(send_msg.encode("UTF-8"))
     
     def stop(self) :
-        self.socket_client.close()
+        if self.socket_client is not None:
+            self.socket_client.close()
+            self.socket_client = None
     
