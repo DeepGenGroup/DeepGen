@@ -58,7 +58,7 @@ def main_process():
     # 调优空间生成
     totalLen = 0
     if runMode != EnumRunMode.AsRemotePerftester:
-        print('===== Waiting for tuning space build ... ',flush=True)
+        print(f'===== Waiting for tuning space build with {tuning_param_file} ... ',flush=True)
         totalLen = BuildTuningSpace(tuning_param_file, cacheTuningSPaceFile, tuningSpaceGenMode)
         print(f'===== Tuning space build OK! size = {totalLen} ==== ',flush=True)
         if totalLen <= 0 :

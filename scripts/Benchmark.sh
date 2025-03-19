@@ -3,15 +3,11 @@ startParamfile=$1
 temp=$(dirname "$0")
 cd ${temp}/..
 mydir=`pwd`
-echo $mydir
-
-cd ${mydir} 
+echo $mydir ; cd ${mydir} 
 # sh Compile.sh
-conda activate py310
+source ~/anaconda3/etc/profile.d/conda.sh ; conda activate py310
 export PYTHONPATH=${mydir}/Runtime
 cd ${mydir}/Runtime/kcg
-
-
 # 启动指令1 ：使用Benchmark脚本参数启动，会话进程分离，用于长期执行
 nohup python MainProc.py $startParamfile > $mydir/log.log 2>&1 & 
 
