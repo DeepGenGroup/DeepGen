@@ -16,7 +16,7 @@ def main_process(
     remoteTesterPwd
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
-    PathManager.init(clearPkl=True, clearTmp=False, clearCache=True,clearDump=True)
+    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
     ######################################################################################
     st = time.time()
 

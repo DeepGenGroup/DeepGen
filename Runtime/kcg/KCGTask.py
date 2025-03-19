@@ -290,8 +290,13 @@ class PerfTester :
             self._startController(outputPAth,finishflag)
         socket_client = None
         if remoteTester is not None :
-            # use remote benchmark, connect remoteTester and send initializer args
-            remoteTester.connect()
+            # use remote benchmark, connect remoteTester and send initializer args of different tasks
+            if remoteTester.connect():
+                print(f"connect remotePerfTester success : destip={remoteTester.host}")
+                if self.baselineInitializer is not None and self.baselineInitializer.operatorKind != EnumOperator.Invalid :
+                    initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
+                    self.baselineInitializer.dumpToJson(initargJsonPath)
+                    remoteTester.upload_file(initargJsonPath, PathManager.default_cache_dir())
             socket_client = MyTCPClient()
             connected = False
             for i in range(8):
@@ -300,13 +305,9 @@ class PerfTester :
                     break
                 time.sleep(5)
             if not connected :
-                assert False, f"connect remotePerfTester failed : destip={remoteTester.host}"
+                assert False, f"[Fatal] connect tcpserver failed : destip={remoteTester.host}"
             else:
-                print(f"connect remotePerfTester success : destip={remoteTester.host}")
-                if self.baselineInitializer is not None and self.baselineInitializer.operatorKind != EnumOperator.Invalid :
-                    initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
-                    self.baselineInitializer.dumpToJson(initargJsonPath)
-                    remoteTester.upload_file(initargJsonPath, PathManager.default_cache_dir())
+                print(f"[I] connect tcpserver success! destip={remoteTester.host}")
         else:
             # run local benchmark
             self.init_cuda()
@@ -701,6 +702,7 @@ class ParallelTaskManager :
                                 o = json.load(f)
                                 init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
                             os.remove(file)
+                            print(f"[D] deleted initArgFile: {file}")
                 print('============ start init perf monitors ==============')
                 self._initPerfMonitors(isAsRemoteTester,init_arg_list)
             # start compiling processes
