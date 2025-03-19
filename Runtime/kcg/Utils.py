@@ -221,11 +221,11 @@ class EnumKernelDType(IntEnum):
         return f'{self.name}'
 
 def ToTorchType (t : EnumKernelDType) -> torch.dtype:
-    if t==EnumKernelDType.float32 :
+    if t.value == EnumKernelDType.float32.value :
         return torch.float32
-    if t==EnumKernelDType.float64 :
+    if t.value == EnumKernelDType.float64.value :
         return torch.float64
-    if t==EnumKernelDType.float16 :
+    if t.value == EnumKernelDType.float16.value :
         return torch.float16
 
 def sizeof(t : EnumKernelDType) : # bytes

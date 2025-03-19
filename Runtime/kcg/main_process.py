@@ -33,14 +33,14 @@ def main_process(
     isAsRemoteTester = False
     remoteBenchmarker = RemoteSSHConnect(remoteTesterIP, remoteTesterSSHPort, remoteTesterUsername,remoteTesterPwd)
 
-    if runMode != EnumRunMode.GetTuneSpace_Local_Only :
+    if runMode.value != EnumRunMode.GetTuneSpace_Local_Only.value :
         need_compile = True
         need_bencmark = True
-        if runMode == EnumRunMode.AsRemotePerftester :
+        if runMode.value == EnumRunMode.AsRemotePerftester.value :
             need_compile = False
             isAsRemoteTester = True
             remoteBenchmarker = None
-        if runMode == EnumRunMode.CallRemotePerftester :
+        if runMode.value == EnumRunMode.CallRemotePerftester.value :
             need_compile = True
             isAsRemoteTester = False
             assert remoteBenchmarker is not None

@@ -14,15 +14,19 @@ class CompiledKernel:
                  blockDims:list,
                  device = 0):
         self.signature = kernel_signature
-        if backend is EnumBackendType.HIP :
+        self.m_loader = None
+        self.m_launcher = None
+        if backend.value == EnumBackendType.HIP.value :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = HIPLoaderST()
             self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-        if backend is EnumBackendType.CUDA :
+        elif backend.value == EnumBackendType.CUDA.value :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = CudaLoaderST()
             self.m_launcher = CUDALauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-            
+        else:
+            assert False, f"Invalid backend value {backend.value}"
+        
     def deleteBinary(self):
         if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
             os.remove(self.m_launcher.m_kernelLib.m_filePath)
