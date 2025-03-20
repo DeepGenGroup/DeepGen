@@ -1,2 +1,2 @@
 #! /bin/bash
-python ~/DeepGen/Runtime/kcg/startup_cluster_tasks.py
+python ~/DeepGen/Runtime/kcg/startup_cluster_tasks.py ~/DeepGen/ClusterTaskConfigs/task_config_gemm.json

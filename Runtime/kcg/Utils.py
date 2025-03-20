@@ -367,6 +367,10 @@ class PathManager :
         return str(PathManager.project_dir())+'/_tmp'
     
     @staticmethod
+    def cluster_run_dir() ->str :
+        return str(PathManager.project_dir())+'/_cluster_run'
+    
+    @staticmethod
     def default_cache_dir()->str:
         # return os.path.join(Path.home(), ".kcg", "cache")
         return str(PathManager.project_dir()) + '/_cache'
@@ -401,6 +405,7 @@ class PathManager :
         os.makedirs(PathManager.default_override_dir(),exist_ok=True)
         os.makedirs(PathManager.default_dump_dir(),exist_ok=True)
         os.makedirs(PathManager.tmp_dir(),exist_ok=True)
+        os.makedirs(PathManager.cluster_run_dir(),exist_ok=True)
         if clearPkl :
             delete_files_in_directory(PathManager.pikle_dir())
         if clearCache :

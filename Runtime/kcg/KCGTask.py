@@ -562,45 +562,34 @@ class ParallelTaskManager :
             target= ParallelTaskManager._innerCreateTesterProc, 
             args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
         worker.start()
-        lastDeathTime = 0
-        deadtime = 0
-        minDeathDurationSeconds = 30
+        lastCrashTs = 0
+        crashTs = 0
+        minCrashDurationSeconds = 30
+        abnormal_continuous_crash_limit = 3
+        continuous_crash_count = 0
         while True:
             worker.join()
             if endSignal.value == 1 :  # 进程收到结束信号正常结束
                 print(f"======= PerfTester {devId} Stopped OK ==========")
                 return
             else:
-                deadtime = time.time()
-                if lastDeathTime == 0 or (deadtime - lastDeathTime) > minDeathDurationSeconds :
-                    lastDeathTime = deadtime
-                    print(f"======= [W] PerfTester {devId} crash. Restart it ==========")
-                    del worker; worker = None
-                    time.sleep(3)
-                    worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                        args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
-                    worker.start()
+                crashTs = time.time()
+                if (crashTs - lastCrashTs) > minCrashDurationSeconds :
+                    print(f"======= [W] PerfTester {devId} unexpectedly crash. Restart ==========")
+                    continuous_crash_count = 0
+                elif continuous_crash_count < abnormal_continuous_crash_limit :
+                    continuous_crash_count += 1
+                    print(f"[W] PerfTester {devId} quickly crash {continuous_crash_count}. Try restart ==========")
                 else:
-                    print(f"======= [Fatal] PerfTester {devId} crash too frequently(<30s). No Restart! ==========")
+                    print(f"[Fatal] PerfTester{devId} continuous quickly crash exceeed {abnormal_continuous_crash_limit} times , Stop restart. PLEASE CHECK DEV CODES ==========")
                     return
-    # @staticmethod
-    # def _createBaselineInit(devid,batch,m,n,k,datatype) :
-    #     baselineTester = PerfTester(devid,0.001,0.001,400)
-    #     baselineTester.init_cuda()
-    #     baselineTester._init_AB_with_detailed_info(batch,m,n,k,datatype)
-    #     baselineTester._init_torch_eps()
-        
-    # @staticmethod
-    # def init_baseline_matmul(batch,m,n,k, datatype : torch.dtype, devids : List[int], fProcess) :
-    #     waitlist = []
-    #     for devid in devids :
-    #         p = fProcess(target= ParallelTaskManager._createBaselineInit, args=(devid,batch,m,n,k,datatype))
-    #         waitlist.append(p)
-    #         p.start()
-    #     for p in waitlist :
-    #         p.join()
-    #     print(f"===== All baseline init OK ======")
-        
+                lastCrashTs = crashTs
+                del worker; worker = None
+                time.sleep(3)
+                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
+                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
+                worker.start()
+
     def _initPerfMonitors(self,isAsRemoteTester,initArgList) :
         for i in range(len(self.devIds)) :
             devid = self.devIds[i]
@@ -700,29 +689,14 @@ class ParallelTaskManager :
             if needPerfTest:
                 if not isAsRemoteTester :
                     init_arg_list = [batch,m,n,k,dtype]
-                    print(f"[I] use local init_arg_list {init_arg_list}")
+                    print(f"[D] use local init_arg_list {init_arg_list}")
                 else:
-                    print(f"[I] use empty init_arg_list")
-                    # when act as remotetestser, RunManager may upload serveral init_arg files corresponding to several gpu cards to us. This need to be considered in future
-                    # while not isFoundInitArgs :
-                    #     init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
-                    #     if len(init_f) > 0:
-                    #         isFoundInitArgs = True
-                    #         for file in init_f:
-                    #             with open(file) as f:
-                    #                 o = json.load(f)
-                    #                 init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
-                    #                 print(f"[D] initargs bmnk= ",o['b'],o['m'],o['n'],o['k'],o['dtype'],flush=True)
-                    #             os.remove(file)
-                    #             print(f"[D] deleted initArgFile: {file}",flush=True)
-                    #     else:
-                    #         time.sleep(0.5)
+                    print(f"[D] use empty init_arg_list")
             print('============ start init perf monitors ==============')
             # start perf monitors
             self._initPerfMonitors(isAsRemoteTester,init_arg_list)
             # start compiling processes
             if needCompile :
-                print("[D] ======== 4")
                 with open(self.tuningSpaceJson) as f :
                     obj = json.load(f)
                     tse = TuningSpaceEncoder_Matmul(obj['template'])

@@ -221,8 +221,8 @@ class _WorkGroup :
             return (com,com)
     
     def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
-        c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
-        t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
+        c = PathManager.cluster_run_dir() + f"/param_c_{self.id}.json"
+        t = PathManager.cluster_run_dir() + f"/param_t_{self.id}.json"
         return (c,t)
     
     # start compiler and perftester :
@@ -245,10 +245,10 @@ class _WorkGroup :
         
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
-            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_tmp")
-            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_tmp")
+            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cluster_run")
+            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cluster_run")
             def getStartCmd(wd : str ,shortfname : str) -> str :
-                return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_tmp/{shortfname}"
+                return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname}"
             
             self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
             self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))

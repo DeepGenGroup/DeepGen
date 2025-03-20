@@ -66,18 +66,24 @@ class RemoteSSHConnect :
     def upload_file(self,local_path : str, remote_path : str):
         try:
             if self._isLocalIP :
-                shutil.copy2(local_path,remote_path)
+                if local_path != remote_path :
+                    shutil.copy2(local_path,remote_path)
+                else:
+                    print(f'[W] SSH Upload: path same at local: {remote_path}, skip copy!')
             else:    
                 with SCPClient(self.ssh.get_transport()) as scp:
                     scp.put(local_path, remote_path)
         except Exception as e :
-            print("[RemoteSSHConnect] Exception : ",e)
+            print("[SCP error]",e)
             return False
         return True
     
     def download_file(self,local_path : str, remote_path : str):
         if self._isLocalIP :
-            shutil.copy2(remote_path,local_path)
+            if remote_path != local_path :
+                shutil.copy2(remote_path,local_path)
+            else:
+                print(f'[W] SSH Download: path same at local: {remote_path}, skip copy!')
             return True
         try:
             with SCPClient(self.ssh.get_transport()) as scp:
