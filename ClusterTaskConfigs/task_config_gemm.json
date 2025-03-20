@@ -1,0 +1,66 @@
+{
+    "workgroups" : [
+        {
+            "compiler" : {
+                "ip_addr" : "10.18.95.15",
+                "ssh_port" : 22,
+                "cwd" : "/home/xushilong/DeepGen",
+                "tuning_config_relative_paths" : [
+                    "TuningConfigs/GEMM_configs_2.json"
+                ],
+                "tuning_space_relative_paths" : [
+                    "TuningCombs/ts_1.json"
+                ],
+                "perflog_prefix_list" : [
+                    "testLog_1"
+                ],
+                "max_process_count" : 20,
+                "tuning_space_generate_strategy" : 1,
+                "backendType" : "CUDA",
+                "arch" : "80"
+            },
+            "perf_tester" : {
+                "ip_addr" : "10.18.96.58",
+                "ssh_port" : 2133,
+                "cwd" : "/home/xushilong/DeepGen",
+                "user_name" : "xushilong",
+                "password" : "xushilong",
+                "devids" : [7],
+                "benchmark_count" : 10,
+                "warmup_count" : 1,
+                "keep_top" : 100
+            }
+        },
+        {
+            "compiler" : {
+                "ip_addr" : "10.18.95.15",
+                "ssh_port" : 22,
+                "cwd" : "/home/xushilong/DeepGen",
+                "tuning_config_relative_paths" : [
+                    "TuningConfigs/GEMM_configs_3.json"
+                ],
+                "tuning_space_relative_paths" : [
+                    "TuningCombs/ts_2.json"
+                ],
+                "perflog_prefix_list" : [
+                    "testLog_2"
+                ],
+                "max_process_count" : 20,
+                "tuning_space_generate_strategy" : 1,
+                "backendType" : "CUDA",
+                "arch" : "80"
+            },
+            "perf_tester" : {
+                "ip_addr" : "10.18.96.58",
+                "ssh_port" : 2133,
+                "cwd" : "/home/xushilong/DeepGen",
+                "user_name" : "xushilong",
+                "password" : "xushilong",
+                "devids" : [6],
+                "benchmark_count" : 10,
+                "warmup_count" : 1,
+                "keep_top" : 100
+            }
+        }
+    ]
+}
