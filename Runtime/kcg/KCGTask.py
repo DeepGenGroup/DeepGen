@@ -359,7 +359,8 @@ class PerfTester :
                         rps = []
                         for pkl in pklFiles:
                             lps.append(pkl)
-                            rps.append(pkl[0:pkl.rfind("/")])
+                            rps.append(remoteTester.work_directory + "/_pkls/" + str(self._devId) + "/")
+                            # rps.append(pkl[0:pkl.rfind("/")])
                             infos = deserialize_from_file(pkl)
                             # send kernel file to remote
                             for (kpm,inConfig,packedKernel) in infos :
