@@ -1,2 +1,7 @@
 #! /bin/bash
-python ~/DeepGen/Runtime/kcg/startup_cluster_tasks.py ~/DeepGen/ClusterTaskConfigs/task_config_gemm.json
+temp=$(dirname "$0")
+cd ${temp}/..
+project_dir=`pwd`
+echo "ProjectDir="$project_dir ; cd ${project_dir} 
+mkdir ${project_dir}/_cluster_run
+python ${project_dir}/Runtime/kcg/startup_cluster_tasks.py ${project_dir}/ClusterTaskConfigs/task_config.json

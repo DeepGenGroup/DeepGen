@@ -10,12 +10,12 @@
                     "TuningConfigs/GEMM_configs_3.json"
                 ],
                 "tuning_space_relative_paths" : [
-                    "TuningCombs/ts_1.json",
-                    "TuningCombs/ts_2.json"
+                    "TuningCombs/ts_GEMM_configs_2.json",
+                    "TuningCombs/ts_GEMM_configs_3.json"
                 ],
                 "perflog_prefix_list" : [
-                    "testLog_1",
-                    "testLog_2"
+                    "testLog_GEMM_configs_2",
+                    "testLog_GEMM_configs_3"
                 ],
                 "max_process_count" : 100,
                 "tuning_space_generate_strategy" : 1,
