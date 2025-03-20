@@ -296,28 +296,34 @@ class PerfTester :
                 if self.baselineInitializer is not None and self.baselineInitializer.operatorKind != EnumOperator.Invalid :
                     initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
                     self.baselineInitializer.dumpToJson(initargJsonPath)
-                    remoteTester.upload_file(initargJsonPath, PathManager.default_cache_dir())
+                    print(f'[D] wait uploading init_arg json {initargJsonPath}')
+                    if remoteTester.upload_file(initargJsonPath, PathManager.default_cache_dir()):
+                        print(f'[D] upload init_arg {initargJsonPath} success!',flush=True)
+                    else:
+                        print(f"[E] upload init_arg failed!")
             socket_client = MyTCPClient()
             connected = False
-            for i in range(8):
+            for i in range(6):
                 connected = socket_client.connect(remoteTester.host)
                 if connected :
                     break
                 time.sleep(5)
             if not connected :
-                assert False, f"[Fatal] connect tcpserver failed : destip={remoteTester.host}"
+                assert False, f"[Fatal] connect tcpserver failed (timeout=30s) : destip={remoteTester.host}"
             else:
                 print(f"[I] connect tcpserver success! destip={remoteTester.host}")
         else:
-            # run local benchmark
+            print("[D] run benchmark local")
             self.init_cuda()
             # wait init arg file upload to dir
             while True :
+                print("[D] globbing init_arg file ...",flush=True)
                 argfile = glob.glob(PathManager.default_cache_dir() +"/"+ self.initArgJsonName)
                 if len(argfile) <= 0:
                     time.sleep(1)
                 else:
                     break
+            print(f"[D] globbing init_arg file OK! file= {argfile[0]}",flush=True)
             self.baselineInitializer.parseFromJsonfile(argfile[0])
             arglist = self.baselineInitializer.argList
             b = arglist[0]
@@ -328,7 +334,7 @@ class PerfTester :
             self.init_cuda()
             self._init_AB_with_detailed_info(b,m,n,k,dt)
             self._init_torch_eps()
-        
+        print("[D] start main test loop",flush=True)
         while startFlag:
             if self.workFlag.value <= 0 : # when accepted EXIT msg, wait the last batch test complete
                 startFlag = False
@@ -694,8 +700,9 @@ class ParallelTaskManager :
             if needPerfTest:
                 if not isAsRemoteTester :
                     init_arg_list = [batch,m,n,k,dtype]
+                    print(f"[I] use local init_arg_list {init_arg_list}")
                 else:
-                    pass
+                    print(f"[I] use empty init_arg_list")
                     # when act as remotetestser, RunManager may upload serveral init_arg files corresponding to several gpu cards to us. This need to be considered in future
                     # while not isFoundInitArgs :
                     #     init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
