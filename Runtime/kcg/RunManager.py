@@ -1,6 +1,6 @@
 import json
 from typing import Dict,List,Tuple
-from RemoteUtils import RemoteSSHConnect
+from RemoteUtils import DEFAULT_PORT, RemoteSSHConnect
 from Utils import *
 
 # 分发给各个机器的启动参数，用于被 main_processs() 读取
@@ -26,6 +26,7 @@ class StartParam :
         self.remoteTesterUsername = ""
         self.remoteTesterPwd = ""
         self.runMode = EnumRunMode.GetTuneSpace_Local_Only
+        self.tcp_port = DEFAULT_PORT
         
     def parseFromJson(self,path) :
         obj = None
@@ -70,7 +71,8 @@ class StartParam :
             self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
         else:
             assert False, f"illegal runmode {obj['runMode']}"
-            
+        self.tcp_port = obj['tcp_port']
+        
     def toJson(self) :
         dd = {
             'tuning_param_file' : None,
@@ -93,6 +95,7 @@ class StartParam :
             'remoteTesterUsername' : None,
             'remoteTesterPwd' : None,
             'runMode' : None,
+            'tcp_port' : None,
         }
         dd['tuning_param_file'] = self.tuning_param_file
         dd['perfPathPrefix'] = self.perfPathPrefix
@@ -114,6 +117,7 @@ class StartParam :
         dd['remoteTesterUsername'] = self.remoteTesterUsername
         dd['remoteTesterPwd'] = self.remoteTesterPwd
         dd['runMode'] = str(self.runMode)
+        dd['tcp_port'] = self.tcp_port
         return dd
         
 class _Compiler :
@@ -209,6 +213,7 @@ class _WorkGroup :
             com.remoteTesterSSHPort = self.m_perfTester.sshPort
             com.remoteTesterUsername = self.m_perfTester.user_name
             com.remoteTesterPwd = self.m_perfTester.password
+            com.tcp_port = self.id + DEFAULT_PORT
             return com
         com = __get_object()
         tester = __get_object()
@@ -221,8 +226,8 @@ class _WorkGroup :
             return (com,com)
     
     def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
-        c = PathManager.cluster_run_dir() + f"/param_c_{self.id}.json"
-        t = PathManager.cluster_run_dir() + f"/param_t_{self.id}.json"
+        c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
+        t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
         return (c,t)
     
     # start compiler and perftester :
@@ -245,11 +250,14 @@ class _WorkGroup :
         
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
-            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cluster_run")
-            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cluster_run")
             def getStartCmd(wd : str ,shortfname : str) -> str :
                 return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname}"
-            
+            def getInitDirCmd(wd) -> str :
+                return f"cd {wd} ; rm -rf ./cluster_run ; mkdir _cluster_run/"
+            self.m_sshToCompiler.execute_cmd_on_remote( getInitDirCmd(self.m_compiler.cwd))
+            self.m_sshToTester.execute_cmd_on_remote( getInitDirCmd(self.m_perfTester.cwd))
+            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cluster_run")
+            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cluster_run")
             self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
             self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
         

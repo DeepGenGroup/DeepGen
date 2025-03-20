@@ -13,7 +13,8 @@ def main_process(
     remoteTesterIP,
     remoteTesterSSHPort,
     remoteTesterUsername,
-    remoteTesterPwd
+    remoteTesterPwd,
+    tcpPort = DEFAULT_PORT
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
@@ -55,7 +56,8 @@ def main_process(
             nTorchEpsInitTest=300,  # 测量torch的baseline时所运行次数（取中位数）
             atol=1e-3,  # 绝对误差
             rtol=1e-3,   # 相对误差
-            remoteTestser = remoteBenchmarker
+            remoteTestser = remoteBenchmarker,
+            tcp_port=tcpPort
         )
         tm.run(
             backendType ,  # 后端类型
@@ -98,6 +100,7 @@ if __name__ == '__main__' :
     remoteTesterPwd = "xushilong"
     runMode = EnumRunMode.CallRemotePerftester
     keepTopNum = 100
+    tcp_port = DEFAULT_PORT
 
     tuning_param_file_list.append(tuning_param_file)
     perfPathPrefix_list.append(perfPathPrefix)
@@ -133,7 +136,7 @@ if __name__ == '__main__' :
         arch = param.arch
         runMode = param.runMode
         keepTopNum = param.keepTopNum
-
+        tcp_port = param.tcp_port
     
     for i in range(len(tuning_param_file_list)) :
         tuning_param_file = tuning_param_file_list[i]
@@ -143,6 +146,6 @@ if __name__ == '__main__' :
             runMode,
             tuning_param_file,cacheTuningSPaceFile,tuningSpaceGenMode,
             gpu_devices,perfPathPrefix,backendType,keepTopNum,
-            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd
+            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd, tcp_port
         )
     

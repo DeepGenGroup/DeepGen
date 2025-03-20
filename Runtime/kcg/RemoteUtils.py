@@ -94,18 +94,22 @@ class RemoteSSHConnect :
         return True
     
     def execute_cmd_on_remote(self,cmd:str) :
-        print("== exec results ===",flush=True)
-        if self._isLocalIP :
-            import os
-            os.system(cmd)
-        else:
-            myin, myout, myerr = self.ssh.exec_command(
-                cmd
-            )
-            for line in myout:
-                print(line,flush=True)
-            for line in myerr:
-                print(line,flush=True)
+        try:
+            print("== exec results ===",flush=True)
+            if self._isLocalIP :
+                import os
+                os.system(cmd)
+            else:
+                myin, myout, myerr = self.ssh.exec_command(
+                    cmd
+                )
+                for line in myout:
+                    print(line,flush=True)
+                for line in myerr:
+                    print(line,flush=True)
+        except ... as e:
+            print(e)
+        return
 
 DEFAULT_PORT = 18888
 MSG_LEN = 512

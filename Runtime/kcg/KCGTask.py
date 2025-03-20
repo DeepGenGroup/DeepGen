@@ -86,8 +86,8 @@ class PerfTester :
         self.baselineInitializer = baselineInitializer
     
     @staticmethod
-    def _controllerRemote(workflag,finishflag,perflogPath : str) :
-        server = MyTCPServer()
+    def _controllerRemote(workflag,finishflag,perflogPath : str,tcp_port) :
+        server = MyTCPServer(tcp_port)
         assert server.listen()
         msg = ""
         
@@ -102,9 +102,9 @@ class PerfTester :
         server.reply(perflogPath)
         
             
-    def _startController(self,perflogpath,finishflag) :
+    def _startController(self,perflogpath,finishflag,tcp_port=DEFAULT_PORT) :
         if self.controllerProc is None :
-            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag,finishflag, perflogpath))
+            self.controllerProc = self.Process(target=PerfTester._controllerRemote,args=(self.workFlag,finishflag, perflogpath, tcp_port))
             self.controllerProc.start()
     
     def init_cuda(self) :
@@ -279,7 +279,9 @@ class PerfTester :
             ff.write(f'[{index}] - {new_torchEps};\n')
         return new_torchEps
     
-    def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemoteSSHConnect = None, isAsRemoteTester = False) : 
+    def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, 
+                     benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemoteSSHConnect = None, 
+                     isAsRemoteTester = False, tcp_port = DEFAULT_PORT) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
@@ -287,7 +289,7 @@ class PerfTester :
         startFlag = True
         if isAsRemoteTester :
             # wait "upload finish or EXIT" signal from remote
-            self._startController(outputPAth,finishflag)
+            self._startController(outputPAth,finishflag,tcp_port)
         socket_client = None
         if remoteTester is not None :
             # use remote benchmark, connect remoteTester and send initializer args of different tasks
@@ -478,7 +480,7 @@ class ParallelTaskManager :
     Process = ctx.Process
     def __init__(self, devids : List[int], total_cfg_count , tuningSpaceJson : str , perf_out_path : str, 
                  benchmarkcnt = 5, warmupcnt = 1, keepTopNum = 1, torchDynamicLogPath='',nTorchEpsInitTest=50,
-                 atol= 1e-4, rtol=1e-4, remoteTestser : RemoteSSHConnect = None):
+                 atol= 1e-4, rtol=1e-4, remoteTestser : RemoteSSHConnect = None, tcp_port = DEFAULT_PORT):
         self.locks = [] # ParallelTaskManager.ctx.Lock()
         self.compileProcs = []
         self.tuningSpaceJson = tuningSpaceJson
@@ -499,6 +501,7 @@ class ParallelTaskManager :
         self.atol = atol
         self.rtol = rtol
         self.sender = remoteTestser  # run preftest on remote host
+        self.tcp_port = tcp_port
         for devid in self.devIds :
             lock = ParallelTaskManager.ctx.Lock()
             self.locks.append(lock)
@@ -517,7 +520,7 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList) :
+        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList, tcp_port) :
         
         baseInit = OperatorBaseArgs()
         if len(baselineInitList) > 0 :
@@ -540,7 +543,7 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        rc = tester.runPerfTests(lock,endSignal,finishflag,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester)
+        rc = tester.runPerfTests(lock,endSignal,finishflag,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester,tcp_port)
         del tester; tester = None
         if rc == 0:
             # recv EXIT msg. return normally
@@ -556,11 +559,13 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester,initializerList) :
+        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester,initializerList,tcp_port) :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
-            args=(devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
+            args=(devId, lock, endSignal,finishflag ,perfLog,
+                  nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,
+                  atol,rtol,remotesender,isAsRemoteTester,initializerList,tcp_port))
         worker.start()
         lastCrashTs = 0
         crashTs = 0
@@ -586,8 +591,11 @@ class ParallelTaskManager :
                 lastCrashTs = crashTs
                 del worker; worker = None
                 time.sleep(3)
-                worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
-                    args=(devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,initializerList))
+                worker = ParallelTaskManager.Process(
+                    target= ParallelTaskManager._innerCreateTesterProc, 
+                    args=(devId, lock, endSignal,finishflag ,perfLog,
+                        nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,
+                        atol,rtol,remotesender,isAsRemoteTester,initializerList,tcp_port))
                 worker.start()
 
     def _initPerfMonitors(self,isAsRemoteTester,initArgList) :
@@ -610,7 +618,8 @@ class ParallelTaskManager :
                     self.atol,self.rtol,
                     self.sender,
                     isAsRemoteTester,
-                    initArgList
+                    initArgList,
+                    self.tcp_port
                 ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)
