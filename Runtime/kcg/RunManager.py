@@ -127,14 +127,17 @@ class _Compiler :
         self.user_name = ""
         self.password = ""
         self.cwd = ""
-        self.tuning_config_relative_paths = ""
-        self.tuning_space_relative_paths = ""
-        self.perflog_prefix_list = ""
+        self.tuning_config_relative_paths = []
+        self.tuning_space_relative_paths = []
+        self.perflog_prefix_list = []
         self.max_process_count = 0
         self.tuning_space_generate_strategy = 1
         self.backendType = EnumBackendType.INVALID
         self.arch = ""
-        
+    
+    def getUUID(self) -> str :
+        return self.ip_addr +"_"+ self.user_name +"_"+ self.cwd
+    
     def build(self, cfg : Dict) :
         self.ip_addr = cfg['ip_addr']
         self.sshPort =  cfg['ssh_port']
@@ -142,6 +145,12 @@ class _Compiler :
         self.tuning_config_relative_paths = cfg['tuning_config_relative_paths']
         self.tuning_space_relative_paths = cfg['tuning_space_relative_paths']
         self.perflog_prefix_list = cfg['perflog_prefix_list']
+        
+        if len(self.tuning_config_relative_paths) == len(self.tuning_space_relative_paths) \
+            and len(self.tuning_space_relative_paths) == len(self.perflog_prefix_list) :
+            pass
+        else:
+            assert False, f"[Fatal] Compiler {self.getUUID()} task list lengths illegal!"
         self.max_process_count = cfg['max_process_count']
         self.tuning_space_generate_strategy = cfg['tuning_space_generate_strategy']
         if cfg['backendType'] == 'CUDA':
@@ -162,6 +171,12 @@ class _Benchmarker :
         self.benchmark_count = 0
         self.warmup_count = 0
         
+    def getUUID(self) -> str :
+        ret = self.ip_addr +"_"+ self.user_name +"_"+ self.cwd
+        for devid in self.devIds :
+            ret += str(f'_dev{devid}')
+        return ret
+    
     def build(self,config : Dict) :
         self.ip_addr = config['ip_addr']
         self.sshPort = config['ssh_port']
@@ -262,15 +277,18 @@ class _WorkGroup :
             self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
         
         
-# 集群运行管理器，用于读取用户配置的批量信息 建立compile-test任务集群 初始化各个机器的分工
+# Wrokgroup 运行管理器，用于读取用户配置的批量信息 建立compile-test任务组 初始化各个机器的分工
+# 一个Workgroup内的任务是串行执行的。
 class WorkgroupManager :
     def __init__(self, startupJson : str):
         self.m_config = None
         self.m_startupJsonPath = startupJson
-        self.workgroups = []
-    
-    # build workgorups with startupJson
-    def loadAndStart(self):
+        self.workgroups : List[_WorkGroup] = []
+        self.compilerUUIDs = []
+        self.testerUUIDs = []
+        
+    # build workgorups with startupJson, then check whether all workgroups can run in parallel
+    def _loadAndCheck(self) -> bool:
         with open(self.m_startupJsonPath) as f :
             self.m_config = json.load(f)
         # check json format
@@ -280,5 +298,23 @@ class WorkgroupManager :
             wg_param = self.m_config['workgroups'][i]
             wg = _WorkGroup(id=i)
             wg.build(wg_param)
-            wg.start()
+            com_uid = wg.m_compiler.getUUID()
+            tester_uid = wg.m_perfTester.getUUID()
+            if com_uid not in self.compilerUUIDs:
+                self.compilerUUIDs.append(com_uid)
+            else:
+                print(f"[E] workgroup {i} : compilerUUID {com_uid} already exsists!")  # deepGen 暂不支持多个compile任务同时运行在同台机器的相同项目目录
+                return False
+            if tester_uid not in self.testerUUIDs:
+                self.testerUUIDs.append(tester_uid)
+            else:
+                print(f"[E] workgroup {i} : TesterUUID {com_uid} already exsists!")  # deepGen 暂不支持多个test任务同时运行在同台机器的相同项目目录
+                return False
             self.workgroups.append(wg)
+        return True
+    
+    def run(self) :
+        if self._loadAndCheck() :
+            for wg in self.workgroups :
+                wg.start()
+        

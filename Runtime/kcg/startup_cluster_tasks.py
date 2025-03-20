@@ -9,4 +9,4 @@ if __name__ == "__main__" :
     PathManager.init()
     assert os.path.exists(clusterTaskConfig) 
     wgm =  WorkgroupManager(clusterTaskConfig)
-    wgm.loadAndStart()
+    wgm.run()
