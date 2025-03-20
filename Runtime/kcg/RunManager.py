@@ -25,6 +25,7 @@ class StartParam :
         self.remoteTesterSSHPort = 22
         self.remoteTesterUsername = ""
         self.remoteTesterPwd = ""
+        self.remoteTesterCWD = ""
         self.runMode = EnumRunMode.GetTuneSpace_Local_Only
         self.tcp_port = DEFAULT_PORT
         
@@ -72,6 +73,7 @@ class StartParam :
         else:
             assert False, f"illegal runmode {obj['runMode']}"
         self.tcp_port = obj['tcp_port']
+        self.remoteTesterCWD = obj['remote_tester_cwd']
         
     def toJson(self) :
         dd = {
@@ -96,6 +98,7 @@ class StartParam :
             'remoteTesterPwd' : None,
             'runMode' : None,
             'tcp_port' : None,
+            'remote_tester_cwd' : None
         }
         dd['tuning_param_file'] = self.tuning_param_file
         dd['perfPathPrefix'] = self.perfPathPrefix
@@ -118,6 +121,7 @@ class StartParam :
         dd['remoteTesterPwd'] = self.remoteTesterPwd
         dd['runMode'] = str(self.runMode)
         dd['tcp_port'] = self.tcp_port
+        dd['remote_tester_cwd'] = self.remoteTesterCWD
         return dd
         
 class _Compiler :
@@ -229,6 +233,7 @@ class _WorkGroup :
             com.remoteTesterUsername = self.m_perfTester.user_name
             com.remoteTesterPwd = self.m_perfTester.password
             com.tcp_port = self.id + DEFAULT_PORT
+            com.remoteTesterCWD = self.m_perfTester.cwd
             return com
         com = __get_object()
         tester = __get_object()

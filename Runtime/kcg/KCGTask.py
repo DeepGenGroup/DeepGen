@@ -299,7 +299,7 @@ class PerfTester :
                     initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
                     self.baselineInitializer.dumpToJson(initargJsonPath)
                     print(f'[D] wait uploading init_arg json {initargJsonPath}')
-                    if remoteTester.upload_file(initargJsonPath, PathManager.cluster_run_dir()):
+                    if remoteTester.upload_file(initargJsonPath, remoteTester.work_directory + "/_cluster_run"):
                         print(f'[D] upload init_arg {initargJsonPath} success!',flush=True)
                     else:
                         print(f"[E] upload init_arg failed!")

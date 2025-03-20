@@ -14,6 +14,7 @@ def main_process(
     remoteTesterSSHPort,
     remoteTesterUsername,
     remoteTesterPwd,
+    remoteTesterCWD,
     tcpPort = DEFAULT_PORT
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
@@ -33,7 +34,7 @@ def main_process(
     # 编译及benchmark启动
     isAsRemoteTester = False
     remoteBenchmarker = RemoteSSHConnect(remoteTesterIP, remoteTesterSSHPort, remoteTesterUsername,remoteTesterPwd)
-
+    remoteBenchmarker.work_directory = remoteTesterCWD
     if runMode.value != EnumRunMode.GetTuneSpace_Local_Only.value :
         need_compile = True
         need_bencmark = True
@@ -101,6 +102,7 @@ if __name__ == '__main__' :
     runMode = EnumRunMode.CallRemotePerftester
     keepTopNum = 100
     tcp_port = DEFAULT_PORT
+    remoteTesterCwd = str(PathManager.project_dir())
 
     tuning_param_file_list.append(tuning_param_file)
     perfPathPrefix_list.append(perfPathPrefix)
@@ -137,6 +139,7 @@ if __name__ == '__main__' :
         runMode = param.runMode
         keepTopNum = param.keepTopNum
         tcp_port = param.tcp_port
+        remoteTesterCwd = param.remoteTesterCWD
     
     for i in range(len(tuning_param_file_list)) :
         tuning_param_file = tuning_param_file_list[i]
@@ -146,6 +149,6 @@ if __name__ == '__main__' :
             runMode,
             tuning_param_file,cacheTuningSPaceFile,tuningSpaceGenMode,
             gpu_devices,perfPathPrefix,backendType,keepTopNum,
-            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd, tcp_port
+            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd,remoteTesterCwd, tcp_port
         )
     

@@ -27,6 +27,7 @@ class RemoteSSHConnect :
         self.port = destport
         self.username = username
         self.password = password
+        self.work_directory = None
         self._isLocalIP = False
         if self.host == get_local_ip():
             self._isLocalIP = True
