@@ -293,7 +293,7 @@ class PerfTester :
         socket_client = None
         if remoteTester is not None :
             # use remote benchmark, connect remoteTester and send initializer args of different tasks
-            if remoteTester.connect():
+            if remoteTester.connectSSH():
                 print(f"connect remotePerfTester success : destip={remoteTester.host}")
                 if self.baselineInitializer is not None and self.baselineInitializer.operatorKind != EnumOperator.Invalid :
                     initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
@@ -306,14 +306,14 @@ class PerfTester :
             socket_client = MyTCPClient()
             connected = False
             for i in range(6):
-                connected = socket_client.connect(remoteTester.host)
+                connected = socket_client.connect(remoteTester.host, tcp_port)
                 if connected :
                     break
                 time.sleep(5)
             if not connected :
-                assert False, f"[Fatal] connect tcpserver failed (timeout=30s) : destip={remoteTester.host}"
+                assert False, f"[Fatal] connect tcpserver failed (timeout=30s) : destip={remoteTester.host}, destport:{tcp_port}"
             else:
-                print(f"[I] connect tcpserver success! destip={remoteTester.host}")
+                print(f"[I] connect tcpserver success! {remoteTester.host}:{tcp_port}")
         else:
             print("[D] run benchmark local")
             self.init_cuda()

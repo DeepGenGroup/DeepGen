@@ -34,7 +34,7 @@ class RemoteSSHConnect :
         if self.ssh is not None:
             self.ssh.close()
 
-    def connect(self):
+    def connectSSH(self):
         if self._isLocalIP :
             print("RemotePerfTester[SSH] connect OK(localhost, skip)")
             return True

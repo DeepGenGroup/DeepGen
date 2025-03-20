@@ -264,7 +264,7 @@ class _WorkGroup :
             json.dump(param_t.toJson(),f)
         
         # connect to compiler and tester, execute startup shell command
-        if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
+        if self.m_sshToCompiler.connectSSH() and self.m_sshToTester.connectSSH() :
             def getStartCmd(wd : str ,shortfname : str) -> str :
                 return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname}"
             def getInitDirCmd(wd) -> str :
