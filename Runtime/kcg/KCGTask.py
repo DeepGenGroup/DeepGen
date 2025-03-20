@@ -88,16 +88,16 @@ class PerfTester :
     @staticmethod
     def _controllerRemote(workflag,finishflag,perflogPath : str) :
         server = MyTCPServer()
-        server.listen()
+        assert server.listen()
         msg = ""
-        initArgRcvMark = 'INIT='
+        
         while finishflag.value <= 0 :
             if workflag.value > 0 :
                 msg = server.recv()
             if msg.find('EXIT') != -1 :
                 workflag.value = 0
                 print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
-            time.sleep(0.5)
+            time.sleep(1)
         print("== controller reply perflogpath and ready to stop ... ")
         server.reply(perflogPath)
         
@@ -312,7 +312,7 @@ class PerfTester :
             # run local benchmark
             self.init_cuda()
             # wait init arg file upload to dir
-            while startFlag :
+            while True :
                 argfile = glob.glob(PathManager.default_cache_dir() +"/"+ self.initArgJsonName)
                 if len(argfile) <= 0:
                     time.sleep(1)
@@ -670,6 +670,7 @@ class ParallelTaskManager :
             procCount = 0
             dealed = startFrom
             print(f"=== start from cfg[{startFrom}] =====")
+            print(f"[D] needCompile = {needCompile} needPerfTest = {needPerfTest} isAsRemoteTester = {isAsRemoteTester}")
             # make sub pkl dirs for each visible card
             for devid in self.devIds :
                 path = f"{PathManager.pikle_dir()}/{devid}"
@@ -689,24 +690,32 @@ class ParallelTaskManager :
                     k = obj['template'][ConfigKeywords.KEY_K][0]
                     dtype = obj['template'][ConfigKeywords.KEY_DTYPE_C][0]
                     
+            init_arg_list = []
             if needPerfTest:
-                init_arg_list = []
                 if not isAsRemoteTester :
                     init_arg_list = [batch,m,n,k,dtype]
                 else:
+                    pass
                     # when act as remotetestser, RunManager may upload serveral init_arg files corresponding to several gpu cards to us. This need to be considered in future
-                    init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
-                    if len(init_f) > 0:
-                        for file in init_f:
-                            with open(file) as f:
-                                o = json.load(f)
-                                init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
-                            os.remove(file)
-                            print(f"[D] deleted initArgFile: {file}")
-                print('============ start init perf monitors ==============')
-                self._initPerfMonitors(isAsRemoteTester,init_arg_list)
+                    # while not isFoundInitArgs :
+                    #     init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
+                    #     if len(init_f) > 0:
+                    #         isFoundInitArgs = True
+                    #         for file in init_f:
+                    #             with open(file) as f:
+                    #                 o = json.load(f)
+                    #                 init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
+                    #                 print(f"[D] initargs bmnk= ",o['b'],o['m'],o['n'],o['k'],o['dtype'],flush=True)
+                    #             os.remove(file)
+                    #             print(f"[D] deleted initArgFile: {file}",flush=True)
+                    #     else:
+                    #         time.sleep(0.5)
+            print('============ start init perf monitors ==============')
+            # start perf monitors
+            self._initPerfMonitors(isAsRemoteTester,init_arg_list)
             # start compiling processes
             if needCompile :
+                print("[D] ======== 4")
                 with open(self.tuningSpaceJson) as f :
                     obj = json.load(f)
                     tse = TuningSpaceEncoder_Matmul(obj['template'])

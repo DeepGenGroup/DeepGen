@@ -115,20 +115,28 @@ class MyTCPServer :
         self.stop()
         
     def listen(self) :
-        import socket
-        if self.server is not None :
-            return
-        self.server = socket.socket()
-        self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        local_ip = get_local_ip()
-        self.server.bind((local_ip, self.port))
-        print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
-        # 监听端口
-        self.server.listen(1)
-        # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
-        print(f"tcpserver start listen ...")
-        self.conn, address = self.server.accept()
-        print(f"tcpserver accept client : {address}")
+        try:
+            import socket
+            if self.server is not None :
+                return True
+            self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            local_ip = get_local_ip()
+            self.server.bind((local_ip, self.port))
+            print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
+            # 监听端口
+            self.server.listen(1)
+            # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
+            print(f"tcpserver start listen ...")
+            self.conn, address = self.server.accept()
+            print(f"tcpserver accept client : {address}")
+            self.reply("Server accepted client")
+            return True
+        except Exception as e:
+            print(e)
+        except OSError as e:
+            print(e)
+        return False
         
     def recv(self) -> str:
         data: str = self.conn.recv(MSG_LEN).decode("UTF-8")
@@ -163,13 +171,15 @@ class MyTCPClient :
             if self.socket_client is None:
                 import socket
             # 创建socket对象
-                self.socket_client = socket.socket()
+                self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
         except Exception as e :
             print("[W] tcpclient error : ",e)
             return False
         print(f"[I] tcpclient connect {destip}:{destport} success! ")
+        reply = self.socket_client.recv(MSG_LEN).decode("UTF-8") 
+        print("[D] server reply :",reply)
         return True
         
     def send_and_wait(self,send_msg) -> str :
