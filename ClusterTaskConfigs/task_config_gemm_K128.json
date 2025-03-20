@@ -4,7 +4,7 @@
             "compiler" : {
                 "ip_addr" : "10.18.95.15",
                 "ssh_port" : 22,
-                "cwd" : "/home/xushilong/DeepGen",
+                "cwd" : "/home/xushilong/DeepGenRun",
                 "tuning_config_relative_paths" : [
                     "TuningConfigs/GEMM_configs_2.json"
                 ],
