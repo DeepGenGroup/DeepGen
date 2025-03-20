@@ -299,7 +299,7 @@ class PerfTester :
                     initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
                     self.baselineInitializer.dumpToJson(initargJsonPath)
                     print(f'[D] wait uploading init_arg json {initargJsonPath}')
-                    if remoteTester.upload_file(initargJsonPath, PathManager.default_cache_dir()):
+                    if remoteTester.upload_file(initargJsonPath, PathManager.cluster_run_dir()):
                         print(f'[D] upload init_arg {initargJsonPath} success!',flush=True)
                     else:
                         print(f"[E] upload init_arg failed!")
@@ -320,13 +320,14 @@ class PerfTester :
             # wait init arg file upload to dir
             while True :
                 print("[D] globbing init_arg file ...",flush=True)
-                argfile = glob.glob(PathManager.default_cache_dir() +"/"+ self.initArgJsonName)
+                argfile = glob.glob(PathManager.cluster_run_dir() +"/"+ self.initArgJsonName)
                 if len(argfile) <= 0:
                     time.sleep(1)
                 else:
                     break
             print(f"[D] globbing init_arg file OK! file= {argfile[0]}",flush=True)
             self.baselineInitializer.parseFromJsonfile(argfile[0])
+            os.remove(argfile[0])
             arglist = self.baselineInitializer.argList
             b = arglist[0]
             m = arglist[1]
