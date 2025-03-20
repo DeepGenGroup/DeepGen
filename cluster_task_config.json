@@ -8,7 +8,7 @@
                 "cwd" : "/home/xushilong/DeepGen",
                 "tuning_config_relative_paths" : [
                     "TuningConfigs/GEMM_configs_2.json",
-                    "TuningConfigs/GEMM_configs_2.json"
+                    "TuningConfigs/GEMM_configs_3.json"
                 ],
                 "tuning_space_relative_paths" : [
                     "TuningCombs/ts_1.json",
