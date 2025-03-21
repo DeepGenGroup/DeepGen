@@ -92,11 +92,14 @@ class PerfTester :
         msg = ""
         
         while finishflag.value <= 0 :
-            if workflag.value > 0 :
-                msg = server.recv()
-            if msg.find('EXIT') != -1 :
-                workflag.value = 0
-                print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
+            try:
+                if workflag.value > 0 :
+                    msg = server.recv()
+                if msg.find('EXIT') != -1 :
+                    workflag.value = 0
+                    print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
+            except Exception as e:
+                pass
             time.sleep(1)
         print("== controller reply perflogpath and ready to stop ... ")
         server.reply("PATH=" + perflogPath)
