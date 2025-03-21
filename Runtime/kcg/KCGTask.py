@@ -298,6 +298,7 @@ class PerfTester :
             # wait "upload finish or EXIT" signal from remote
             self._startController(outputPAth,finishflag,tcp_port)
         socket_client = None
+        init_arg_file = ""
         if remoteTester is not None :
             # use remote benchmark, connect remoteTester and send initializer args of different tasks
             if remoteTester.connectSSH():
@@ -330,10 +331,14 @@ class PerfTester :
                 argfile = glob.glob(PathManager.cluster_run_dir() +"/"+ self.initArgJsonName)
                 if len(argfile) <= 0:
                     time.sleep(1)
-                else:
+                elif len(argfile) == 1:
                     break
-            print(f"[D] globbing init_arg file OK! file= {argfile[0]}",flush=True)
-            self.baselineInitializer.parseFromJsonfile(argfile[0])
+                else:
+                    print(f"[W] glob more than 1 argfiles : {len(argfile)}. Maybe error ")
+                    break
+            init_arg_file = argfile[0]
+            print(f"[D] globbing init_arg file OK! file= {init_arg_file}",flush=True)
+            self.baselineInitializer.parseFromJsonfile(init_arg_file)
             arglist = self.baselineInitializer.argList
             b = arglist[0]
             m = arglist[1]
@@ -441,7 +446,8 @@ class PerfTester :
             socket_client.stop()
         if self.controllerProc is not None :
             self.controllerProc.join()
-        os.remove(argfile[0])
+        if len(init_arg_file) > 0 and os.path.exists(init_arg_file):
+            os.remove(init_arg_file)
         return 0
         
 class SerialCompileTask :
