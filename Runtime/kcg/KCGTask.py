@@ -362,6 +362,8 @@ class PerfTester :
                             remote_pkls.append(remoteTester.work_directory + "/_pkls/" + str(self._devId) + "/")
                             # rps.append(pkl[0:pkl.rfind("/")])
                             infos = deserialize_from_file(pkl)
+                            if infos is None:
+                                continue
                             # send kernel file to remote
                             for (kpm,inConfig,packedKernel) in infos :
                                 local_kernelpath = packedKernel.m_launcher.m_kernelLib.m_filePath
@@ -372,7 +374,8 @@ class PerfTester :
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
-                            valid_kernels += arr
+                            if arr is not None:
+                                valid_kernels += arr
                         total_kernel_count += len(valid_kernels)
                     # DEBUG: 模拟进程crashed
                     # if total_kernel_count > 10 :

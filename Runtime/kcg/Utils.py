@@ -32,14 +32,18 @@ def serialize_to_file(pkl_path, obj) :
         print('[E] generatePklError : ',e)
         
 def deserialize_from_file(pkl_path) :
-    with open(pkl_path, 'rb') as f:
-        try:
-            temp = pickle.load(f)  # 进行反序列化
-        except EOFError as e:
-            print("EOF Error!")
-            return []
-        return temp
-
+    try:
+        with open(pkl_path, 'rb') as f:
+            try:
+                temp = pickle.load(f)  # 进行反序列化
+            except EOFError as e:
+                print("EOF Error!")
+                return []
+            return temp
+    except Exception as e:
+        print("[dsError]",e)
+    return None
+    
 def delete_files_in_directory(directory):
     # 确保目录存在
     if os.path.exists(directory) and os.path.isdir(directory):
