@@ -327,7 +327,6 @@ class PerfTester :
                     break
             print(f"[D] globbing init_arg file OK! file= {argfile[0]}",flush=True)
             self.baselineInitializer.parseFromJsonfile(argfile[0])
-            os.remove(argfile[0])
             arglist = self.baselineInitializer.argList
             b = arglist[0]
             m = arglist[1]
@@ -417,7 +416,13 @@ class PerfTester :
         if remoteTester is not None and socket_client is not None: # use remote benchmark
                 # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
                 print("== Compile ends. send EXIT msg, waiting for remote log downloads ...`")
-                remotepath = socket_client.send_and_wait("EXIT","PATH=")
+                remotepath = ""
+                while len(remotepath) <= 5: 
+                    try:
+                        remotepath = socket_client.send_and_wait("EXIT","PATH=")
+                    except Exception as e:
+                        pass
+                    time.sleep(1)
                 st = remotepath.find("PATH=")
                 remotepath = remotepath[st+5:]
                 if remoteTester.download_file(str(PathManager.project_dir()), remotepath) :
@@ -429,6 +434,7 @@ class PerfTester :
             socket_client.stop()
         if self.controllerProc is not None :
             self.controllerProc.join()
+        os.remove(argfile[0])
         return 0
         
 class SerialCompileTask :

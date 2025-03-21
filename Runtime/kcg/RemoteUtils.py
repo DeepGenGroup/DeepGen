@@ -118,6 +118,7 @@ class RemoteSSHConnect :
         return
 
 DEFAULT_PORT = 18888
+DEFAULT_TIMEOUT = 30
 MSG_LEN = 512
 SEPMARK = ';'
 
@@ -137,6 +138,7 @@ class MyTCPServer :
                 return True
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            self.server.settimeout(DEFAULT_TIMEOUT)
             local_ip = get_local_ip()
             self.server.bind((local_ip, self.port))
             print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
@@ -188,14 +190,15 @@ class MyTCPClient :
                 import socket
             # 创建socket对象
                 self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                self.socket_client.settimeout(30)
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
+            print(f"[I] tcpclient connect {destip}:{destport} success! ")
+            reply = self.socket_client.recv(MSG_LEN).decode("UTF-8") 
+            print("[D] server reply :",reply)
         except Exception as e :
             print("[W] tcpclient error : ",e)
             return False
-        print(f"[I] tcpclient connect {destip}:{destport} success! ")
-        reply = self.socket_client.recv(MSG_LEN).decode("UTF-8") 
-        print("[D] server reply :",reply)
         return True
         
     def send_and_wait(self,send_msg,expected_msg = "") -> str :
@@ -207,11 +210,10 @@ class MyTCPClient :
                 recv_data = self.socket_client.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
                 if recv_data.find(expected_msg) >= 0:
                     return recv_data
-                else:
-                    time.sleep(1)
+                time.sleep(1)
         else:
             return self.socket_client.recv(MSG_LEN).decode("UTF-8")
-         
+
     def send(self,send_msg) :
         self.socket_client.send(send_msg.encode("UTF-8"))
     
