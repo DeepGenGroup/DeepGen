@@ -52,17 +52,22 @@ class RemoteSSHConnect :
 
     def upload_files(self,local_path : List[str], remote_path : List[str]):
         assert(len(local_path) == len(remote_path))
-        if self._isLocalIP :
-            for i in range(0,len(local_path)):
-                lp = local_path[i]
-                rp = remote_path[i]
-                shutil.copy2(lp,rp)
-        else:
-            with SCPClient(self.ssh.get_transport()) as scp:
+        try:
+            if self._isLocalIP :
                 for i in range(0,len(local_path)):
                     lp = local_path[i]
                     rp = remote_path[i]
-                    scp.put(lp, rp)
+                    shutil.copy2(lp,rp)
+            else:
+                with SCPClient(self.ssh.get_transport()) as scp:
+                    for i in range(0,len(local_path)):
+                        lp = local_path[i]
+                        rp = remote_path[i]
+                        scp.put(lp, rp)
+        except Exception as e:
+            print("[ScpUploadsError]",e)
+            return False
+        return True
                 
     def upload_file(self,local_path : str, remote_path : str):
         try:

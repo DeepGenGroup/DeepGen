@@ -355,11 +355,11 @@ class PerfTester :
             else : 
                 try:
                     if remoteTester is not None :
-                        lps = []
-                        rps = []
+                        local_pkls = []
+                        remote_pkls = []
                         for pkl in pklFiles:
-                            lps.append(pkl)
-                            rps.append(remoteTester.work_directory + "/_pkls/" + str(self._devId) + "/")
+                            local_pkls.append(pkl)
+                            remote_pkls.append(remoteTester.work_directory + "/_pkls/" + str(self._devId) + "/")
                             # rps.append(pkl[0:pkl.rfind("/")])
                             infos = deserialize_from_file(pkl)
                             # send kernel file to remote
@@ -367,7 +367,8 @@ class PerfTester :
                                 local_kernelpath = packedKernel.m_launcher.m_kernelLib.m_filePath
                                 remoteTester.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
                         # send pkl files and send OK message to remote tester
-                        remoteTester.upload_files(lps,rps)
+                        remoteTester.upload_files(local_pkls,remote_pkls)
+                        
                     else:
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
