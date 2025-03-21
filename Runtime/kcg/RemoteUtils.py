@@ -113,7 +113,7 @@ class RemoteSSHConnect :
                     print(line,flush=True)
                 for line in myerr:
                     print(line,flush=True)
-        except ... as e:
+        except Exception as e:
             print(e)
         return
 
@@ -138,7 +138,7 @@ class MyTCPServer :
                 return True
             self.server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            self.server.settimeout(DEFAULT_TIMEOUT)
+            # self.server.settimeout(DEFAULT_TIMEOUT)
             local_ip = get_local_ip()
             self.server.bind((local_ip, self.port))
             print(f"tcpserver localAddr = {local_ip}:{self.port}",flush=True)
@@ -190,7 +190,7 @@ class MyTCPClient :
                 import socket
             # 创建socket对象
                 self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                self.socket_client.settimeout(30)
+                # self.socket_client.settimeout(30)
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
             print(f"[I] tcpclient connect {destip}:{destport} success! ")
