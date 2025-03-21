@@ -198,12 +198,20 @@ class MyTCPClient :
         print("[D] server reply :",reply)
         return True
         
-    def send_and_wait(self,send_msg) -> str :
+    def send_and_wait(self,send_msg,expected_msg = "") -> str :
+        import time
         self.socket_client.send(send_msg.encode("UTF-8"))
         # 接受消息
-        recv_data = self.socket_client.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
-        return recv_data
-    
+        if len(expected_msg) > 0:
+            while True:
+                recv_data = self.socket_client.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
+                if recv_data.find(expected_msg) >= 0:
+                    return recv_data
+                else:
+                    time.sleep(1)
+        else:
+            return self.socket_client.recv(MSG_LEN).decode("UTF-8")
+         
     def send(self,send_msg) :
         self.socket_client.send(send_msg.encode("UTF-8"))
     

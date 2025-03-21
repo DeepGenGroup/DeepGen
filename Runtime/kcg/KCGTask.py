@@ -99,7 +99,7 @@ class PerfTester :
                 print("== recv EXIT message, waiting for last batch pkls testing ok ... ")
             time.sleep(1)
         print("== controller reply perflogpath and ready to stop ... ")
-        server.reply(perflogPath)
+        server.reply("PATH=" + perflogPath)
         
             
     def _startController(self,perflogpath,finishflag,tcp_port=DEFAULT_PORT) :
@@ -416,9 +416,10 @@ class PerfTester :
         print(f"=====[ PerfTest on Device {self._devId} Finished ] =======")
         if remoteTester is not None and socket_client is not None: # use remote benchmark
                 # notify remoteTester stop globing pkls, wait for perftest ends, finally get the location of benchmark result
-                print("== Compile ends. send EXIT msg")
-                remotepath = socket_client.send_and_wait("EXIT")
-                print("== waiting for remote log downloads ... ")
+                print("== Compile ends. send EXIT msg, waiting for remote log downloads ...`")
+                remotepath = socket_client.send_and_wait("EXIT","PATH=")
+                st = remotepath.find("PATH=")
+                remotepath = remotepath[st+5:]
                 if remoteTester.download_file(str(PathManager.project_dir()), remotepath) :
                     _lp = str(PathManager.project_dir()) + '/' + remotepath.split('/')[-1]
                     print(f"=== remote benchmark result has been downloaded : {_lp}  ")
