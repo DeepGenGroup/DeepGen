@@ -219,6 +219,10 @@ class PerfTester :
             aUse = atrans
         else:
             aUse = self.matA
+        # check kernel validity. if error, break test of this kernel at once
+        if not packedKernel.run(aUse, self.matB, self.matC):
+            packedKernel.deleteBinary()
+            return result
         # warmup
         torchMM = torch.matmul
         if kpm.batch > 1:

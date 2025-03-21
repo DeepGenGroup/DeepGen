@@ -145,9 +145,9 @@ class MyTCPServer :
             # 监听端口
             self.server.listen(1)
             # 等待客户端连接，accept方法返回二元元组(连接对象, 客户端地址信息)
-            print(f"tcpserver start listen ...")
+            print(f"tcpserver start listen ...",flush=True)
             self.conn, address = self.server.accept()
-            print(f"tcpserver accept client : {address}")
+            print(f"tcpserver accept client : {address}",flush=True)
             self.reply("Server accepted client")
             return True
         except Exception as e:
@@ -190,14 +190,14 @@ class MyTCPClient :
                 import socket
             # 创建socket对象
                 self.socket_client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                # self.socket_client.settimeout(30)
+                # self.socket_client.settimeout(DEFAULT_TIMEOUT)
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
-            print(f"[I] tcpclient connect {destip}:{destport} success! ")
+            print(f"[I] tcpclient connect {destip}:{destport} success! ",flush=True)
             reply = self.socket_client.recv(MSG_LEN).decode("UTF-8") 
-            print("[D] server reply :",reply)
+            print("[D] server reply :",reply,flush=True)
         except Exception as e :
-            print("[W] tcpclient error : ",e)
+            print("[W] tcpclient error : ",e,flush=True)
             return False
         return True
         
