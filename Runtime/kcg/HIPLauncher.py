@@ -273,19 +273,23 @@ class HIPLauncher :
         loader.loadBinary(self.m_kernelLib)
     
     def _getWrapper(self) -> Callable:
-        if self.m_launcherLibPath is None :
-            if self.m_kernelLib.m_kernelInfo is None : 
-                self.__loadKernel()
-            # compile launcher.so
-            self.m_launcherLibPath = make_stub(self.m_kernelLib)
-        if self.m_cWrapper is None :
-			# import launcher.so as module
-            spec = importlib.util.spec_from_file_location("__kcg_launcher", self.m_launcherLibPath)
-            mod = importlib.util.module_from_spec(spec)
-            spec.loader.exec_module(mod)
-            self.m_cWrapper = getattr(mod, "launch")
-        return self.m_cWrapper
-
+        try:
+            if self.m_launcherLibPath is None :
+                if self.m_kernelLib.m_kernelInfo is None : 
+                    self.__loadKernel()
+                # compile launcher.so
+                self.m_launcherLibPath = make_stub(self.m_kernelLib)
+            if self.m_cWrapper is None :
+        # import launcher.so as module
+                spec = importlib.util.spec_from_file_location("__kcg_launcher", self.m_launcherLibPath)
+                mod = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(mod)
+                self.m_cWrapper = getattr(mod, "launch")
+            return self.m_cWrapper
+        except Exception as e:
+            print("[error _getWrapper]",e)
+        return None
+        
     def launchKernel(self,*args):
         wrapper = self._getWrapper()
         devid = self.m_kernelLib.m_device

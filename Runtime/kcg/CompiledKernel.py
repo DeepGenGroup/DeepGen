@@ -36,6 +36,10 @@ class CompiledKernel:
         self.m_launcher.m_kernelLib.m_device = devId
     
     def run(self,*args):
-        if self.m_launcher is not None:
-            self.m_launcher.launchKernel(*args)
-    
+        try:
+            if self.m_launcher is not None:
+                self.m_launcher.launchKernel(*args)
+                return True
+        except Exception as e :
+            print("CompilerKernelRunErr:",e)
+        return False
