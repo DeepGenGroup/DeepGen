@@ -75,7 +75,7 @@ class RemoteSSHConnect :
                 with SCPClient(self.ssh.get_transport()) as scp:
                     scp.put(local_path, remote_path)
         except Exception as e :
-            print("[SCP error]",e)
+            print("[SCP upload error]",e, f"{local_path} -> {remote_path}" )
             return False
         return True
     
@@ -90,7 +90,7 @@ class RemoteSSHConnect :
             with SCPClient(self.ssh.get_transport()) as scp:
                 scp.get(remote_path,local_path)
         except Exception as e:
-            print("[SCP error]",e)
+            print("[SCP download error]",e, f"{remote_path} -> {local_path}")
             return False
         return True
     
