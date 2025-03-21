@@ -216,17 +216,17 @@ Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAt
 经过实测，发现在cpu负载重的工况下，pytorch的benchmark的准确性有所降低（torch的性能会降低），因此建议使用***cluster运行模式***将kernel编译和benchmark分配到不同主机执行
 
 #### 3.4.1 概念说明
-- *compiler, perf_tester, workgroup*
+- *compiler, perf_tester, workgroup*   
 cluster模式下，主机具有不同角色，可以为 `compiler` 或 `perf_tester`. `compiler` 即编译机，表示该主机用于编译kernel； `perf_tester` 即测试机，表示该主机使用自身gpu设备测试 `compiler` 生成的kernel。一个compiler和一个perf_tester 组成一个`workgroup`。
 
-- *tuning_config, tuning_space 与workgroup的执行模式*
+- *tuning_config, tuning_space 与workgroup的执行模式*   
 kernel的编译和调优依赖于调优参数文件 `tuning_config`，单个`tuning_config`可以产出一个调优空间 `tuning_space`,进而生成若干同类kernel。从tuning_config 生成调优空间，再产出kernel的过程称为一个编译任务。一个`compiler`下可以有多个编译任务，这些编译任务是由该compiler串行执行的。这些编译任务都由workgroup内的 `perf_tester` 测试。测试在workgroup内也是串行的
 
-- *master & workgroup之间的关系, 限制条件*
+- *master & workgroup之间的关系, 限制条件*   
 cluster集群通过管理者master启动。master可以为compiler或perf_tester, 也可以不进行实际的编译或测试。master下的workgroup可以有多个，这些workgroup之间是并行的关系   
 不同workgroup之间，`compiler` 必须是不同的，`perf_tester`也必须不同
 
-- *什么是相同的compiler & perf_tester*
+- *什么是相同的compiler & perf_tester*   
 如果两个compiler的 `ip_addr`,`cwd` 相同，那么这两个compiler相同
 如果两个perf_tester的 `ip_addr`,`cwd`,`devids`相同，那么这两个 perf_tester 相同
 
