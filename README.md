@@ -13,47 +13,47 @@ Deepgen 的自动调优支持本机运行，也支持集群运行，充分利用
 
 ### 1.2 目录结构
 
-运行时目录：
-**_cache** : 缓存目录，存放程序运行时的编译器缓存文件（kernel loader&launcher的so及stubcode、benchmarkTorchEps记录
-**_dump** : 临时目录，存放MLIR生成kernel过程里·生成的bc和o文件
-**_cluster_run** : 集群运行模式下，存放从master接收到的进程启动参数，以及存放benchmark的运行结果
-**_override** : 临时存放master生成的compiler/tester进程参数文件，用于跨host执行
-**_pkls** : 运行时存放生成的kernel信息序列化后的pkl文件。perftester会根据自己的devid周期性检测对应文件夹下的pkl，反序列化之并做perftest
-**_tmp** : 其他缓存目录
+运行时目录：   
+**_cache** : 缓存目录，存放程序运行时的编译器缓存文件（kernel loader&launcher的so及stubcode、benchmarkTorchEps记录   
+**_dump** : 临时目录，存放MLIR生成kernel过程里·生成的bc和o文件   
+**_cluster_run** : 集群运行模式下，存放从master接收到的进程启动参数，以及存放benchmark的运行结果   
+**_override** : 临时存放master生成的compiler/tester进程参数文件，用于跨host执行   
+**_pkls** : 运行时存放生成的kernel信息序列化后的pkl文件。perftester会根据自己的devid周期性检测对应文件夹下的pkl，反序列化之并做perftest   
+**_tmp** : 其他缓存目录   
 
-代码目录：
-**_TempCodes** : 其他code，不是项目本体代码
-**.vscode/c_cpp_properties.json** : intellisense 使用的头文件目录、宏定义
-**.vscode/launch.json** : debug配置
-**.vscode/settings.json** : 文件后缀名关联以及颜色主题
-**bin** : DeepGen编译后的库/可执行文件存放位置
-**build** : 构建目录
-**ClusterTaskConfigs** : 集群运行模式的配置文件示例
-**cmake** : MLIR使用的cmake
-**doc** : 项目文档
-**include** : MLIR后端的头文件
-**Runtime** : python runtime后端
-    |-**Runtime/kcg/loaderCCode** : 存放loader的C源码
-    |-**Runtime/kcg/Operators** : 存放Operator相关代码。后期拓展算子时在此添加算子相关代码
-    |-**Runtime/kcg/tools** : 工具脚本，不参与Runtime的实际运行
-**src** : MLIR后端源代码目录
-**src/lib** : MLIR后端源码
-**src/CMakeLists.txt** : MLIR后端CMakeLists
-**src/main.cc :** MLIR后端源码，定义了exe以及python module的接口
-**third_party** : cuda和hip的第三方头文件、bitcode、其他所需程序等
-**TuningCombs** : 存放生成好的调优空间文件
-**TuningConfigs** : 调优参数配置文件
-**ClearTemp**.sh : 清理临时目录
-**CMakeLists.txt** : 根CMakeLists文件。用户变量在这里赋值
-**Compile.sh** : 编译MLIR后端的脚本
-**config.h.in** : 用户变量模板文件
+代码目录：   
+**_TempCodes** : 其他code，不是项目本体代码    
+**.vscode/c_cpp_properties.json** : intellisense 使用的头文件目录、宏定义    
+**.vscode/launch.json** : debug配置    
+**.vscode/settings.json** : 文件后缀名关联以及颜色主题    
+**bin** : DeepGen编译后的库/可执行文件存放位置    
+**build** : 构建目录    
+**ClusterTaskConfigs** : 集群运行模式的配置文件示例    
+**cmake** : MLIR使用的cmake    
+**doc** : 项目文档    
+**include** : MLIR后端的头文件    
+**Runtime** : python runtime后端    
+    |-**Runtime/kcg/loaderCCode** : 存放loader的C源码    
+    |-**Runtime/kcg/Operators** : 存放Operator相关代码。后期拓展算子时在此添加算子相关代码    
+    |-**Runtime/kcg/tools** : 工具脚本，不参与Runtime的实际运行    
+**src** : MLIR后端源代码目录    
+**src/lib** : MLIR后端源码    
+**src/CMakeLists.txt** : MLIR后端CMakeLists    
+**src/main.cc :** MLIR后端源码，定义了exe以及python module的接口    
+**third_party** : cuda和hip的第三方头文件、bitcode、其他所需程序等    
+**TuningCombs** : 存放生成好的调优空间文件    
+**TuningConfigs** : 调优参数配置文件    
+**ClearTemp**.sh : 清理临时目录    
+**CMakeLists.txt** : 根CMakeLists文件。用户变量在这里赋值    
+**Compile.sh** : 编译MLIR后端的脚本    
+**config.h.in** : 用户变量模板文件    
 
-脚本：
-**scripts/Benchmark.sh** ：单机模式启动Deepgen
-**scripts/ClearTmpKernels.py** ：删除/tmp目录下的kernel文件
-**scripts/GetCudaInfo.py** ：获取cuda的计算力和ptxas信息，用于填入CMakeLists的对应变量
-**scripts/StopBenchmark.sh** ：杀死所有DeepGen运行的进程（cluster模式下存在问题，无法杀死，只能手动kill ）
-**scripts/StartBatchTestWithCluster.sh** : 以集群模式启动Deepgen
+脚本：    
+**scripts/Benchmark.sh** ：单机模式启动Deepgen    
+**scripts/ClearTmpKernels.py** ：删除/tmp目录下的kernel文件    
+**scripts/GetCudaInfo.py** ：获取cuda的计算力和ptxas信息，用于填入CMakeLists的对应变量    
+**scripts/StopBenchmark.sh** ：杀死所有DeepGen运行的进程（cluster模式下存在问题，无法杀死，只能手动kill ）    
+**scripts/StartBatchTestWithCluster.sh** : 以集群模式启动Deepgen    
 
 ## 2.安装&构建&运行
 
