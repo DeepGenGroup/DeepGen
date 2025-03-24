@@ -288,7 +288,7 @@ class PerfTester :
     
     def runPerfTests(self, pathLock, endsignal,finishflag ,outputPAth = None, 
                      benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTester : RemoteSSHConnect = None, 
-                     isAsRemoteTester = False, tcp_port = DEFAULT_PORT) : 
+                     isAsRemoteTester = False, server_port = DEFAULT_PORT) : 
         # collect kernels from pkl         
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
@@ -296,7 +296,7 @@ class PerfTester :
         startFlag = True
         if isAsRemoteTester :
             # wait "upload finish or EXIT" signal from remote
-            self._startController(outputPAth,finishflag,tcp_port)
+            self._startController(outputPAth,finishflag,server_port)
         socket_client = None
         init_arg_file = ""
         if remoteTester is not None :
@@ -312,17 +312,17 @@ class PerfTester :
                         print(f'[D] upload init_arg {initargJsonPath} success!',flush=True)
                     else:
                         print(f"[E] upload init_arg failed!")
-            socket_client = MyTCPClient()
+            socket_client = MyTCPClient(heartbeat_interval=60)
             connected = False
             for i in range(6):
-                connected = socket_client.connect_and_wait(remoteTester.host, tcp_port)
+                connected = socket_client.connect_and_wait(remoteTester.host, server_port)
                 if connected :
                     break
                 time.sleep(5)
             if not connected :
-                assert False, f"[Fatal] connect tcpserver failed (timeout=30s) : destip={remoteTester.host}, destport:{tcp_port}"
+                assert False, f"[Fatal] connect tcpserver failed (timeout=30s) : destip={remoteTester.host}, destport:{server_port}"
             else:
-                print(f"[I] connect tcpserver success! {remoteTester.host}:{tcp_port}")
+                print(f"[I] connect tcpserver success! {remoteTester.host}:{server_port}")
         else:
             print("[D] run benchmark local")
             self.init_cuda()
@@ -547,7 +547,7 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList, tcp_port) :
+        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList, tcpServer_port) :
         
         baseInit = OperatorBaseArgs()
         if len(baselineInitList) > 0 :
@@ -570,7 +570,7 @@ class ParallelTaskManager :
             pass
         if len(parsedBests) > 0 :
             tester.BestPerf = parsedBests
-        rc = tester.runPerfTests(lock,endSignal,finishflag,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester,tcp_port)
+        rc = tester.runPerfTests(lock,endSignal,finishflag,outfilename,nBenchMark, nWarmup, topNum,torchDynamicLogPath , nTorchEpsInitTest, remotesender,isAsRemoteTester,tcpServer_port)
         del tester; tester = None
         if rc == 0:
             # recv EXIT msg. return normally
