@@ -324,9 +324,9 @@ std::vector<KernelInfo> generateKernels(
         std::cout << e << "," ;
       }
       std::cout << std::endl;
-#endif
       // result[config] = info;
       std::cout << "==== kernel name : " << info.m_kernelName << "\n";
+#endif
       return info;
     };  // end std::function<>
     result.push_back(task(configs[i]));
