@@ -315,9 +315,8 @@ class PerfTester :
             socket_client = MyTCPClient()
             connected = False
             for i in range(6):
-                connected = socket_client.connect(remoteTester.host, tcp_port)
+                connected = socket_client.connect_and_wait(remoteTester.host, tcp_port)
                 if connected :
-                    print("[D] client recv: ",socket_client.recv(),flush=True)
                     break
                 time.sleep(5)
             if not connected :
