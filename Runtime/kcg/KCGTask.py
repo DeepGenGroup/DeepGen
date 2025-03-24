@@ -300,6 +300,7 @@ class PerfTester :
         socket_client = None
         init_arg_file = ""
         if remoteTester is not None :
+            print(f"[D] run remote bencmark on {remoteTester.host}")
             # use remote benchmark, connect remoteTester and send initializer args of different tasks
             if remoteTester.connectSSH():
                 print(f"connect remotePerfTester success : destip={remoteTester.host}")
@@ -316,6 +317,7 @@ class PerfTester :
             for i in range(6):
                 connected = socket_client.connect(remoteTester.host, tcp_port)
                 if connected :
+                    print("[D] client recv: ",socket_client.recv(),flush=True)
                     break
                 time.sleep(5)
             if not connected :
