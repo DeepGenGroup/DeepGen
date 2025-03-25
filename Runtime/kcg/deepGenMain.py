@@ -109,6 +109,7 @@ if __name__ == '__main__' :
     cacheTuningSPaceFile_list.append(cacheTuningSPaceFile)
     
     param = StartParam()
+    print("input=",sys.argv)
     if len(sys.argv) > 1 :
         startParamJsonPath = sys.argv[1]
         param.parseFromJson(startParamJsonPath)
@@ -140,6 +141,10 @@ if __name__ == '__main__' :
         keepTopNum = param.keepTopNum
         tcp_port = param.tcp_port
         remoteTesterCwd = param.remoteTesterCWD
+        remoteTesterIP = param.remoteTesterIP
+        remoteTesterSSHPort = param.remoteTesterSSHPort
+        remoteTesterUsername = param.remoteTesterUsername
+        remoteTesterPwd = param.remoteTesterPwd
     
     for i in range(len(tuning_param_file_list)) :
         tuning_param_file = tuning_param_file_list[i]
