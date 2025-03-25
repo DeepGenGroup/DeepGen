@@ -148,7 +148,7 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
   llvm::sys::fs::createTemporaryFile("compile-ptx-log", "", flog);
   auto name =  ptxPath.substr(0, ptxPath.size()-3);
   std::string fbin = std::string(name) + "cubin";
-  // llvm::FileRemover logRemover(flog);
+  llvm::FileRemover logRemover(flog);
   // llvm::FileRemover binRemover(fbin);
   const char *_flog = flog.c_str();
   std::string cmd;
