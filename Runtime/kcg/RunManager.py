@@ -145,6 +145,8 @@ class _Compiler :
     def build(self, cfg : Dict) :
         self.ip_addr = cfg['ip_addr']
         self.sshPort =  cfg['ssh_port']
+        self.user_name = cfg['user_name']
+        self.password = cfg['password']
         self.cwd = cfg['cwd']
         self.tuning_config_relative_paths = cfg['tuning_config_relative_paths']
         self.tuning_space_relative_paths = cfg['tuning_space_relative_paths']
