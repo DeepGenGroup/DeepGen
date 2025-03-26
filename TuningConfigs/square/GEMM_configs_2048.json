@@ -23,7 +23,7 @@
     "DATATYPE_C" : [4],
     "M_SIZE" : [2048],
     "N_SIZE" : [2048],
-    "K_SIZE" : [128],
+    "K_SIZE" : [2048],
     "BATCH_SIZE" : [1],
     "IS_ATRANS" : [1],
     "UNROLL_NUM" : [16,32,64],

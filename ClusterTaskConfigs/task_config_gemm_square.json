@@ -1,0 +1,44 @@
+{
+    "workgroups" : [
+        {
+            "compiler" : {
+                "ip_addr" : "10.18.95.15",
+                "ssh_port" : 22,
+                "user_name" : "xushilong",
+                "password" : "xushilong",
+                "cwd" : "/home/xushilong/DeepGen",
+                "tuning_config_relative_paths" : [
+                    "TuningConfigs/square/GEMM_configs_512.json",
+                    "TuningConfigs/square/GEMM_configs_1024.json",
+                    "TuningConfigs/square/GEMM_configs_2048.json"
+                ],
+                "tuning_space_relative_paths" : [
+                    "TuningCombs/ts_GEMM_sqare_512.json",
+                    "TuningCombs/ts_GEMM_sqare_1024.json",
+                    "TuningCombs/ts_GEMM_sqare_2048.json"
+                ],
+                "perflog_prefix_list" : [
+                    "perf_GEMM_sqare_512",
+                    "perf_GEMM_sqare_1024",
+                    "perf_GEMM_sqare_2048"
+                ],
+                "max_process_count" : 100,
+                "tuning_space_generate_strategy" : 1,
+                "backendType" : "CUDA",
+                "arch" : "80",
+                "start_from" : 0
+            },
+            "perf_tester" : {
+                "ip_addr" : "10.18.96.58",
+                "ssh_port" : 2133,
+                "cwd" : "/home/xushilong/DeepGen",
+                "user_name" : "xushilong",
+                "password" : "xushilong",
+                "devids" : [7],
+                "benchmark_count" : 10,
+                "warmup_count" : 1,
+                "keep_top" : 100
+            }
+        }
+    ]
+}
