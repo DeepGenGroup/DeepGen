@@ -1,28 +1,26 @@
-#ifndef __Matmul_h__
-#define __Matmul_h__
+#ifndef __Softmax_h__
+#define __Softmax_h__
 #include "Operators/Operators.h"
 
 namespace KernelCodeGen {
 namespace Operators {
   
-struct Matmul : Operator<Matmul> {
+struct Softmax : Operator<Softmax> {
   static void buildNaiveExpress(mlir::ModuleOp module, 
     std::vector<int64_t> shape, 
-    const std::vector<std::string>& dtypes,
+    const std::string& dtype,
     const std::string& kernelName,
-    bool isTransposeA = false,
-    bool isTransposeB = false
+    bool isTranspose = false
     );
 
-  static std::optional<std::string> verify(mlir::OpBuilder builder, std::vector<int64_t> shape, const std::vector<std::string>& dtype);
+  static std::optional<std::string> verify(mlir::OpBuilder builder, std::vector<int64_t> shape, const std::string& dtype);
   
   static mlir::func::FuncOp createFunc(mlir::OpBuilder& builder, 
     std::vector<int64_t> batchs, 
     std::vector<int64_t> shape, 
-    const std::vector<std::string>& dtypes,
+    const std::string& dtype,
     const std::string& kernelName,
-    bool isTransposeA = false, 
-    bool isTransposeB = false
+    bool isTranspose = false
     );
 
   static std::string s_function;
@@ -37,4 +35,4 @@ struct Matmul : Operator<Matmul> {
 
 }  // KernelCodeGen
 
-#endif //  __Matmul_h__
+#endif //  __Softmax_h__

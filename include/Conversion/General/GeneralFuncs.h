@@ -87,6 +87,8 @@ int getOpIndex(mlir::Operation* haveBlockOp, mlir::Operation* targetOp);
 
 std::set<mlir::Operation*> getValueUsers(mlir::Value var);
 
+void replaceLoadAndStoreOpBuf(mlir::Value oldBuf, mlir::Value newBuf);
+
 mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount);
 
 mlir::AffineExpr shiftAffineExprDim(mlir::OpBuilder builder, mlir::AffineExpr expr, int shift);
@@ -132,7 +134,6 @@ int replaceIndexWithExpr(mlir::Value oldIv, std::vector<mlir::Value>& newIvs, Af
   return operands.size();
 }
 
-std::vector<int64_t> getOptVectorizeGroup(int64_t width);
 
 mlir::affine::AffineForOp shiftBufferDatas(mlir::OpBuilder builder, mlir::Value src, mlir::Value dst, mlir::AffineMap srcMap, mlir::AffineMap dstMap, 
                                           llvm::SmallVector<mlir::Value> srcOperands, llvm::SmallVector<mlir::Value> dstOperands, 

@@ -78,6 +78,24 @@ std::set<mlir::Operation*> getValueUsers(mlir::Value var) {
   return users;
 }
 
+void replaceLoadAndStoreOpBuf(mlir::Value oldBuf, mlir::Value newBuf) {
+  // 根据 oldBuf 获取到使用它的 loadOp 和 storeOp , 并使用 newBuf 替换
+  auto users = getValueUsers(oldBuf);
+  for (auto user : users) {
+    mlir::OpBuilder b(user);
+    if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(user)) {
+      auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(b.getUnknownLoc(), newBuf, 
+                                                            loadOp.getAffineMap(), loadOp.getMapOperands());
+      loadOp.getResult().replaceAllUsesWith(newLoadOp.getResult());
+      loadOp.erase();
+    } else if (auto storeOp = mlir::dyn_cast<mlir::affine::AffineStoreOp>(user)) {
+      auto newstoreOp = b.create<mlir::affine::AffineStoreOp>(b.getUnknownLoc(), storeOp.getValue(), newBuf, 
+                                                              storeOp.getAffineMap(), storeOp.getMapOperands());
+      storeOp.erase();
+    }
+  }
+}
+
 mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount) {
   // 获取一个有序的连续累加的affine表达式
   mlir::AffineExpr sumExpr = builder.getAffineConstantExpr(0);
@@ -181,24 +199,6 @@ mlir::AffineExpr shiftTargetAffineExprDim(mlir::OpBuilder builder, mlir::AffineE
     auto constExpr = expr.dyn_cast<mlir::AffineConstantExpr>();
     return constExpr;
   }
-}
-
-std::vector<int64_t> getOptVectorizeGroup(int64_t width) {
-  // 计算最优的向量化组合根据width
-  std::vector<int64_t> group;
-  while (width != 0) {
-    if (width - 4 >= 0) {
-      width = width - 4;
-      group.push_back(4);
-    } else if (width - 2 >= 0) {
-      width = width - 2;
-      group.push_back(2);
-    } else {
-      width = width -1;
-      group.push_back(1);
-    }
-  }
-  return group;
 }
 
 mlir::affine::AffineForOp shiftBufferDatas(mlir::OpBuilder builder, mlir::Value src, mlir::Value dst, mlir::AffineMap srcMap, mlir::AffineMap dstMap, 
