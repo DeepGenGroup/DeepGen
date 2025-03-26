@@ -47,7 +47,7 @@ class RemoteSSHConnect :
             try:
                 self.ssh.connect(self.host, self.port, self.username, self.password,timeout=5)
             except Exception as e:
-                print("RemotePerfTester[SSH] error: ",e)
+                print(f"RemotePerfTester[SSH] error: {self.host}:{self.port}",e)
                 return False
             print("RemotePerfTester[SSH] connect OK!")
             return True

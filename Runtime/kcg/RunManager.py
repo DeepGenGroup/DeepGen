@@ -28,6 +28,7 @@ class StartParam :
         self.remoteTesterCWD = ""
         self.runMode = EnumRunMode.GetTuneSpace_Local_Only
         self.tcp_port = DEFAULT_PORT
+        self.start_from = 0
         
     def parseFromJson(self,path) :
         obj = None
@@ -74,6 +75,7 @@ class StartParam :
             assert False, f"illegal runmode {obj['runMode']}"
         self.tcp_port = obj['tcp_port']
         self.remoteTesterCWD = obj['remote_tester_cwd']
+        self.start_from = obj['start_from']
         
     def toJson(self) :
         dd = {
@@ -98,7 +100,8 @@ class StartParam :
             'remoteTesterPwd' : None,
             'runMode' : None,
             'tcp_port' : None,
-            'remote_tester_cwd' : None
+            'remote_tester_cwd' : None,
+            'start_from' : None
         }
         dd['tuning_param_file'] = self.tuning_param_file
         dd['perfPathPrefix'] = self.perfPathPrefix
@@ -122,6 +125,7 @@ class StartParam :
         dd['runMode'] = str(self.runMode)
         dd['tcp_port'] = self.tcp_port
         dd['remote_tester_cwd'] = self.remoteTesterCWD
+        dd['start_from'] = self.start_from
         return dd
         
 class _Compiler :
@@ -138,6 +142,7 @@ class _Compiler :
         self.tuning_space_generate_strategy = 1
         self.backendType = EnumBackendType.INVALID
         self.arch = ""
+        self.start_from = 0
     
     def getUUID(self) -> str :
         return self.ip_addr +"_"+ self.user_name +"_"+ self.cwd
@@ -164,7 +169,7 @@ class _Compiler :
         else:
             self.backendType = EnumBackendType.HIP
         self.arch = cfg['arch']
-        
+        self.start_from = cfg['start_from']
         
 class _Benchmarker :
     def __init__(self):
@@ -236,6 +241,7 @@ class _WorkGroup :
             com.remoteTesterPwd = self.m_perfTester.password
             com.tcp_port = self.id + DEFAULT_PORT
             com.remoteTesterCWD = self.m_perfTester.cwd
+            com.start_from = self.m_compiler.start_from
             return com
         com = __get_object()
         tester = __get_object()
@@ -248,9 +254,14 @@ class _WorkGroup :
             return (com,com)
     
     def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
-        c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
-        t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
+        c = PathManager.default_override_dir() + f"/param_compile_{self.id}.json"
+        t = PathManager.default_override_dir() + f"/param_test_{self.id}.json"
         return (c,t)
+    
+    def __getStartCmd(self, wd : str ,shortfname : str) -> str :
+        return f"cd {wd} ;nohup ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname} &"
+    def __getInitDirCmd(self, wd) -> str :
+        return f"cd {wd} ; rm -rf ./cluster_run ; mkdir _cluster_run/"
     
     # start compiler and perftester :
     def start(self) :
@@ -272,16 +283,13 @@ class _WorkGroup :
         
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connectSSH() and self.m_sshToTester.connectSSH() :
-            def getStartCmd(wd : str ,shortfname : str) -> str :
-                return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname}"
-            def getInitDirCmd(wd) -> str :
-                return f"cd {wd} ; rm -rf ./cluster_run ; mkdir _cluster_run/"
-            self.m_sshToCompiler.execute_cmd_on_remote( getInitDirCmd(self.m_compiler.cwd))
-            self.m_sshToTester.execute_cmd_on_remote( getInitDirCmd(self.m_perfTester.cwd))
+            
+            self.m_sshToCompiler.execute_cmd_on_remote( self.__getInitDirCmd(self.m_compiler.cwd))
+            self.m_sshToTester.execute_cmd_on_remote( self.__getInitDirCmd(self.m_perfTester.cwd))
             self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cluster_run")
             self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cluster_run")
-            self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
-            self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
+            self.m_sshToCompiler.execute_cmd_on_remote( self.__getStartCmd(self.m_compiler.cwd, shortname_c))
+            self.m_sshToTester.execute_cmd_on_remote( self.__getStartCmd(self.m_perfTester.cwd, shortname_t))
         
         
 # Wrokgroup 运行管理器，用于读取用户配置的批量信息 建立compile-test任务组 初始化各个机器的分工

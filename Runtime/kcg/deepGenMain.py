@@ -15,7 +15,8 @@ def main_process(
     remoteTesterUsername,
     remoteTesterPwd,
     remoteTesterCWD,
-    tcpPort = DEFAULT_PORT
+    tcpPort = DEFAULT_PORT,
+    start_from = 0
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
@@ -66,7 +67,7 @@ def main_process(
             maxProcess= maxCompilingProcess , # 编译kernel的最大进程数 
             needCompile=need_compile, # 是否执行编译过程
             needPerfTest=need_bencmark, # 是否执行benchmark过程
-            startFrom=0,     # 从空间里编号为x的config开始执行
+            startFrom=start_from,     # 从空间里编号为x的config开始执行
             isAsRemoteTester=isAsRemoteTester
         )
         et = time.time()
@@ -95,15 +96,20 @@ if __name__ == '__main__' :
     # 当前后端类型 & 架构信息
     backendType = EnumBackendType.CUDA  
     arch = "80"
+    # Tester的SSH信息
     remoteTesterIP = "10.18.96.58"
     remoteTesterSSHPort = 2133
     remoteTesterUsername = "xushilong"
     remoteTesterPwd = "xushilong"
+    # 本机运行模式
     runMode = EnumRunMode.CallRemotePerftester
+    # 保留前K的最佳数据
     keepTopNum = 100
     tcp_port = DEFAULT_PORT
     remoteTesterCwd = str(PathManager.project_dir())
-
+    # 从tuning space中第几个config开始测试
+    startFrom = 0
+    
     tuning_param_file_list.append(tuning_param_file)
     perfPathPrefix_list.append(perfPathPrefix)
     cacheTuningSPaceFile_list.append(cacheTuningSPaceFile)
@@ -145,6 +151,7 @@ if __name__ == '__main__' :
         remoteTesterSSHPort = param.remoteTesterSSHPort
         remoteTesterUsername = param.remoteTesterUsername
         remoteTesterPwd = param.remoteTesterPwd
+        startFrom = param.start_from
     
     for i in range(len(tuning_param_file_list)) :
         tuning_param_file = tuning_param_file_list[i]
@@ -154,6 +161,6 @@ if __name__ == '__main__' :
             runMode,
             tuning_param_file,cacheTuningSPaceFile,tuningSpaceGenMode,
             gpu_devices,perfPathPrefix,backendType,keepTopNum,
-            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd,remoteTesterCwd, tcp_port
+            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd,remoteTesterCwd, tcp_port,startFrom
         )
     

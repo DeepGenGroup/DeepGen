@@ -2,8 +2,8 @@
     "workgroups" : [
         {
             "compiler" : {
-                "ip_addr" : "10.18.95.15",
-                "ssh_port" : 22,
+                "ip_addr" : "10.18.95.17",
+                "ssh_port" : 2133,
                 "cwd" : "/home/xushilong/DeepGen",
                 "tuning_config_relative_paths" : [
                     "TuningConfigs/GEMM_configs_64.json",
@@ -29,14 +29,15 @@
                     "tlog_GEMM_configs_1024",
                     "tlog_GEMM_configs_2048"
                 ],
-                "max_process_count" : 120,
+                "max_process_count" : 100,
                 "tuning_space_generate_strategy" : 1,
-                "backendType" : "CUDA",
-                "arch" : "80"
+                "backendType" : "HIP",
+                "arch" : "906",
+                "start_from" : 0
             },
             "perf_tester" : {
-                "ip_addr" : "10.18.96.58",
-                "ssh_port" : 2133,
+                "ip_addr" : "10.18.127.26",
+                "ssh_port" : 34322,
                 "cwd" : "/home/xushilong/DeepGen",
                 "user_name" : "xushilong",
                 "password" : "xushilong",
