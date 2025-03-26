@@ -163,4 +163,6 @@ if __name__ == '__main__' :
             gpu_devices,perfPathPrefix,backendType,keepTopNum,
             remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd,remoteTesterCwd, tcp_port,startFrom
         )
+        # startFrom only take effects in first task 
+        startFrom = 0
     
