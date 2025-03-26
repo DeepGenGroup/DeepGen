@@ -49,7 +49,7 @@ if __name__ == "__main__" :
     if len(sys.argv) > 3 :
         input = sys.argv[1]  # 输入 perflog 文件
         output = sys.argv[2]  # 输出 tuningspace 文件
-        mode = sys.argv[3]
+        mode = int(sys.argv[3])
         convert_and_save(input, output, mode)
     else :
         helpmsg = \
