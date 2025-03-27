@@ -183,10 +183,10 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     // Save GCN ISA binary.
     std::filesystem::path isa_binary(kernel_name + ".o");
     std::string isabin_path;
-    if (!dump_path.empty())
-        isabin_path = (dump_path / isa_binary).string();
-    else
-        isabin_path = (kernel_dir / isa_binary).string();
+    // if (!dump_path.empty())
+    //     isabin_path = (dump_path / isa_binary).string();
+    // else
+    isabin_path = isa_binary.string();
     std::unique_ptr<llvm::raw_fd_ostream> isabin_fs(
         new llvm::raw_fd_ostream(isabin_path, ec, llvm::sys::fs::OF_Text));
     if (ec)
@@ -199,10 +199,10 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     // Write out bitcode
     std::filesystem::path bitcode_filename(kernel_name + ".bc");
     std::string bitcode_path;
-    if (!dump_path.empty())
-        bitcode_path = (dump_path / bitcode_filename).string();
-    else
-        bitcode_path = (kernel_dir / bitcode_filename).string();
+    // if (!dump_path.empty())
+    //     bitcode_path = (dump_path / bitcode_filename).string();
+    // else
+    bitcode_path = bitcode_filename.string();
     std::unique_ptr<llvm::raw_fd_ostream> bitecode_fs(
         new llvm::raw_fd_ostream(bitcode_path, ec, llvm::sys::fs::OF_Text));
     if (ec)
@@ -224,7 +224,7 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
 
     // generate HASCO file
     std::filesystem::path hsaco(kernel_name + ".hsaco");
-    std::string hsaco_path = (kernel_dir / hsaco).string();
+    std::string hsaco_path = hsaco.string();
     std::string error_message;
 
     // Check in triton/third_party/rocm/llvm/bin first.  For whls this will be the
