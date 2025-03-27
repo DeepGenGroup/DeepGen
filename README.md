@@ -298,14 +298,36 @@ scripts/StartBatchTestWithCluster.sh， 指定任务文件后即可运行此脚�
 
 ## 5.常见问题
 
-- 编译DeepGen时提示 Python.h 未找到：*解决：请正确设置CMakeLists.txt 中的Python路径和Python版本号*
-- 编译报错： `error: use of enum ‘FusionMode’ without previous declaration`*解决*：在对应位置加入 affine 名字空间即可
-- Runtime报错：Cannot found nvcc. PLease set PATH env first!*解决：请在运行benchmark前，添加 nvcc所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*
-- GetCudaInfo 报：No such file or directory: 'ptxas'*解决：请在运行benchmark前，添加 ptxas 所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*
-- 中止Benchmark后想继续运行，如何操作？*解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*
-- Runtime执行后，未生成kernel（_pkl目录下没有文件生成）
-  解决：请检查CMakelist.txt中的以下变量是否正确：
-  `USER_LLD_PATH`（ROCM）
-  `USER_PTXAS_PATH`（CUDA）
-  `CUDA_CAP`
-  `PTXAS_VERSION`
+1. 编译DeepGen时提示 Python.h 未找到<br> 
+解决：请正确设置CMakeLists.txt 中的Python路径和Python版本号 <br>
+2. 编译报错： `error: use of enum ‘FusionMode’ without previous declaration`<br>
+解决：在对应位置加入 affine 名字空间即可<br>
+3. Runtime报错：Cannot found nvcc. PLease set PATH env first! <br>
+解决：请在运行benchmark前，添加 nvcc所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*<br>
+4. GetCudaInfo 报：No such file or directory: 'ptxas'<br>
+解决：请在运行benchmark前，添加 ptxas 所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`<br>
+5. 中止Benchmark后想继续运行，如何操作？<br>
+解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*<br>
+6. Runtime执行后，未生成kernel（_pkl目录下没有文件生成）<br>
+  解决：请检查CMakelist.txt中的以下变量是否正确：<br>
+  `USER_LLD_PATH`（ROCM）<br>
+  `USER_PTXAS_PATH`（CUDA）<br>
+  `CUDA_CAP`<br>
+  `PTXAS_VERSION`<br>
+
+7. Hygon多dtk环境下，master使用 scripts/StartBatchTestWithCluster.sh 无法启动tester端进程的问题（报lib错误）<br>
+原因： 多dtk环境下，系统默认dtk可能和conda环境内安装的工具链的dtk版本不同，导致lib错误<br>
+解决方法1：在master完成配置文件推送后，手动杀死tester和compiler端进程 ，之后在tester和compiler端分别手动启动：
+```sh
+# Tester端：
+./scripts/Benchmark.sh /home/xushilong/DeepGen/_cluster_run/param_test_0.json
+# Compiler端:
+./scripts/Benchmark.sh /home/xushilong/DeepGen/_cluster_run/param_compile_0.json
+```
+解决方法2：尝试修复dtk的默认版本指向<br>
+
+8. scripts/StopBenchmark.sh 无法杀死进程<br>
+解决方法：加入clusterRunMode后，StopBenchmark.sh暂无法对由ssh启动的进程进行有效中止。只能强制杀死用户所有进程：
+```sh
+pkill -u $USER
+```
