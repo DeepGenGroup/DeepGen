@@ -27,34 +27,16 @@ def delete_files_in_directory(directory):
 
 
 rr = 'a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,0,1,2,3,4,5,6,7,8,9'.split(',')
-for e in rr:
-    try:
-        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.ptx"
-        print(cmd)
-        # res = subprocess.run(cmd,capture_output=True)
-        # print(res.stdout)
-    except subprocess.CalledProcessError as e:
-        print('err ',e)
-    try:
-        cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.cubin"
-        print(cmd)
-        # res = subprocess.run(cmd,capture_output=True)
-        # print(res.stdout)
-    except subprocess.CalledProcessError as e:
-        print('err ',e)
+count = 0
+for e1 in rr:
+    for e2 in rr:
+        count += 1
+        # cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.ptx"
+        # print(cmd)
+        # cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.cubin"
 
-
-# for i in range(500):
-#     try:
-#         # dirs = glob.glob('/tmp/kcg_kernel-*')
-#         dirs = glob.glob('/tmp/compile-ptx-src-*')
-#         random.shuffle(dirs)
-#         for dir in dirs:
-#             delete_files_in_directory(dir)
-#             os.rmdir(dir)
-#         dirs.reverse()
-#         for dir in dirs:
-#             delete_files_in_directory(dir)
-#             os.rmdir(dir)
-#     except Exception:
-#         pass
+        cmd1 = f"rm -rf /tmp/compile-ptx-log-{e1}{e2}* &"
+        cmd2 = f"rm -rf /tmp/compile-ptx-src-{e1}{e2}* &"
+        print(cmd1)
+        print(cmd2)
+    print("sleep 15s")

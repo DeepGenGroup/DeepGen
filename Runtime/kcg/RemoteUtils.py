@@ -6,6 +6,7 @@ import paramiko
 from scp import SCPClient
 from typing import List
 import shutil
+import os
 
 _local_ip = None
 
@@ -52,7 +53,7 @@ class RemoteSSHConnect :
             print("RemotePerfTester[SSH] connect OK!")
             return True
 
-    def upload_files(self,local_path : List[str], remote_path : List[str]):
+    def upload_files(self,local_path : List[str], remote_path : List[str], del_local = False):
         assert(len(local_path) == len(remote_path))
         try:
             if self._isLocalIP :
@@ -60,27 +61,35 @@ class RemoteSSHConnect :
                     lp = local_path[i]
                     rp = remote_path[i]
                     shutil.copy2(lp,rp)
+                    if del_local :
+                        os.remove(lp)
             else:
                 with SCPClient(self.ssh.get_transport()) as scp:
                     for i in range(0,len(local_path)):
                         lp = local_path[i]
                         rp = remote_path[i]
                         scp.put(lp, rp)
+                        if del_local:
+                            os.remove(lp)
         except Exception as e:
             print("[ScpUploadsError]",e)
             return False
         return True
                 
-    def upload_file(self,local_path : str, remote_path : str):
+    def upload_file(self,local_path : str, remote_path : str, del_local = False):
         try:
             if self._isLocalIP :
                 if local_path != remote_path :
                     shutil.copy2(local_path,remote_path)
+                    if del_local:
+                        os.remove(local_path)
                 else:
                     print(f'[W] SSH Upload: path same at local: {remote_path}, skip copy!')
             else:    
                 with SCPClient(self.ssh.get_transport()) as scp:
                     scp.put(local_path, remote_path)
+                    if del_local :
+                        os.remove(local_path)
         except Exception as e :
             print("[SCP upload error]",e, f"{local_path} -> {remote_path}" )
             return False
@@ -134,9 +143,9 @@ def find_available_port(host='0.0.0.0', port=0):
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)  # 允许重用端口
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1)
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)   # 空闲60秒后开始探测
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)  # 每隔10秒探测一次
-    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)     # 最多探测3次
+    # sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPIDLE, 60)   # 空闲60秒后开始探测
+    # sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPINTVL, 10)  # 每隔10秒探测一次
+    # sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_KEEPCNT, 3)     # 最多探测3次
     try:
         sock.bind((host, port))
         actual_port = sock.getsockname()[1]  # 获取实际分配的端口

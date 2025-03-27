@@ -367,6 +367,7 @@ class PerfTester :
             else : 
                 try:
                     if remoteTester is not None :
+                        # call remote perftester
                         local_pkls = []
                         remote_pkls = []
                         for pkl in pklFiles:
@@ -379,22 +380,23 @@ class PerfTester :
                             # send kernel file to remote
                             for (kpm,inConfig,packedKernel) in infos :
                                 local_kernelpath = packedKernel.m_launcher.m_kernelLib.m_filePath
-                                remoteTester.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")])
+                                remoteTester.upload_file(local_kernelpath,local_kernelpath[0:local_kernelpath.rfind("/")],True)
                         # send pkl files and send OK message to remote tester
-                        remoteTester.upload_files(local_pkls,remote_pkls)
+                        remoteTester.upload_files(local_pkls,remote_pkls,True)
                         
                     else:
+                        # run test at local
                         for pkl in pklFiles:
                             arr = deserialize_from_file(pkl)
                             if arr is not None:
                                 valid_kernels += arr
                         total_kernel_count += len(valid_kernels)
+                        for pkl in pklFiles:
+                            os.remove(pkl)
                     # DEBUG: 模拟进程crashed
                     # if total_kernel_count > 10 :
                     #     raise Exception('A Debug Exception')
                     # print(f"====== Glob .pkl files : {len(pklFiles)}, Valid Kernels : {len(valid_kernels)} ========")
-                    for pkl in pklFiles:
-                        os.remove(pkl)
                         # print(f"deleted: {pkl}")
                 except Exception as e:
                     print(f"exception occur when deal {pkl}: {e}")
