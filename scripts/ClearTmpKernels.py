@@ -37,6 +37,8 @@ for e1 in rr:
 
         cmd1 = f"rm -rf /tmp/compile-ptx-log-{e1}{e2}* &"
         cmd2 = f"rm -rf /tmp/compile-ptx-src-{e1}{e2}* &"
-        print(cmd1)
-        print(cmd2)
-    print("sleep 15s")
+        cmd3 = f"rm -rf /tmp/kcg_kernel-{e1}{e2}* &"
+        # print(cmd1)
+        # print(cmd2)
+        print(cmd3)
+    print("wait")
