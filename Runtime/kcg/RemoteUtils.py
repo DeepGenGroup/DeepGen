@@ -252,7 +252,7 @@ class MyTCPClient :
             try:
                 # 发送心跳包（示例内容为0字节）
                 self.sock.sendall(b'')
-                print("Sent heartbeat")
+                print("Sent heartbeat",flush=True)
             except (BrokenPipeError, ConnectionResetError, OSError):
                 print("[D] Heartbeat failed, triggering reconnect",flush=True)
                 self.connected = False

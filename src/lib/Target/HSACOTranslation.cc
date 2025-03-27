@@ -174,18 +174,9 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
 
     // create unique dir for kernel's binary and hsaco
     std::error_code ec;
-    std::string kernel_name_base = "kcg_kernel";
-    std::filesystem::path tmp = std::filesystem::temp_directory_path();
-    std::filesystem::path kernel_dir_base(kernel_name_base);
-    llvm::SmallString<256> unique_dir;
-    ec = llvm::sys::fs::createUniqueDirectory((tmp / kernel_dir_base).string(),
-                                                unique_dir);
-    if (ec)
-    {
-        std::cerr << "Directory for " << kernel_name_base
-                    << " was not created. error code: " << ec << std::endl;
-    }
-    std::filesystem::path kernel_dir(unique_dir.data());
+    llvm::SmallString<64> fsrc;
+    llvm::sys::fs::createTemporaryFile("kcg_kernel", "", fsrc);
+    std::filesystem::path kernel_dir{fsrc.data()};
 
     std::string kernel_name = kernel_dir.stem();
 
