@@ -174,11 +174,12 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
 
     // create unique dir for kernel's binary and hsaco
     std::error_code ec;
-    llvm::SmallString<64> fsrc;
+    llvm::SmallString<128> fsrc;
     llvm::sys::fs::createTemporaryFile("kcg_kernel", "", fsrc);
+    llvm::FileRemover remover(fsrc);
     std::filesystem::path kernel_dir{fsrc.data()};
 
-    std::string kernel_name = kernel_dir.stem();
+    std::string kernel_name{fsrc};
 
     // Save GCN ISA binary.
     std::filesystem::path isa_binary(kernel_name + ".o");
