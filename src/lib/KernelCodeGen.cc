@@ -46,94 +46,21 @@ std::vector<std::string> KernelCodeGenerator::createModel(mlir::ModuleOp& mod, s
 bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList) {
   // kernel fusing
   for (auto kernels : fkList) {  // kernels
-    // collect fuse kernel before fuse
-    std::vector<mlir::func::FuncOp> fks;
-    for (auto fk : kernels.fuseKernels) {
-      mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
-        if (funcOp.getName().str() == fk) {
-          fks.push_back(funcOp);
-          return;
-        }
-      });
-    }
-    // create new FuncOp
+    auto fks = getKernelFuncOps(mod, kernels.fuseKernels);
     mlir::OpBuilder builder(mod);
     builder.setInsertionPointToStart(mod.getBody());
-    std::vector<mlir::Type> newInputTypes;
-    for (int i=0; i<kernels.newArgsShape.size(); i++) {
-      auto mlirType = tools::getDType(builder, kernels.newArgsDtype[i]);
-      auto shape = kernels.newArgsShape[i];
-      auto memSpaceAttr = static_cast<int>(MemorySpace::global);
-      auto type = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape), mlirType, {}, memSpaceAttr);
-      newInputTypes.push_back(type);
-    }
-    mlir::func::FuncOp newFuncOp = buildFunction(builder, kernels.fkName, kernels.type, newInputTypes, kernels.outputArgNum);
-    auto newArgs = newFuncOp.getArguments();
-
-    // create global var
-    std::vector<mlir::Value> newVars;
-    for (int i=0; i<kernels.newVarsShape.size(); i++) {
-      auto mlirType = tools::getDType(builder, kernels.newVarsDtype[i]);
-      auto shape = kernels.newVarsShape[i];
-      auto memSpaceAttr = static_cast<int>(MemorySpace::global);
-      auto type = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape), mlirType, {}, memSpaceAttr);
-      auto memOp = builder.create<mlir::memref::AllocOp>(builder.getUnknownLoc(), type);
-      newVars.push_back(memOp);
-    }
-    // collect old kernel args
-    std::vector<std::vector<mlir::Value>> argsVec, varsVec;
-    for (int i=0; i<newArgs.size(); i++) {
-      std::vector<mlir::Value> temp;
-      auto itemMap = kernels.newArgsIndex[i];
-      for (auto oldFuncOp : fks) {
-        auto name = oldFuncOp.getName().str();
-        if (itemMap.count(name)) {
-          auto arg = oldFuncOp.getBody().getArgument(itemMap[name]);
-          temp.push_back(arg);
-        }
-      }
-      argsVec.push_back(temp);
-    }
-    // collect old kernel vars
-    for (int i=0; i<newVars.size(); i++) {
-      std::vector<mlir::Value> temp;
-      auto itemMap = kernels.newVarsIndex[i];
-      for (auto oldFuncOp : fks) {
-        auto name = oldFuncOp.getName().str();
-        if (itemMap.count(name)) {
-          auto arg = oldFuncOp.getBody().getArgument(itemMap[name]);
-          temp.push_back(arg);
-        }
-      }
-      varsVec.push_back(temp);
-    }
-    // move funcOp body
-    for (int i=fks.size()-1; i>=0; i--) {
-      fks[i].getBody().front().back().erase();  // remove returnOp
-      spliceHaveBlockOp(newFuncOp, fks[i], newVars.size());
-    }
-    // 替换val
-    for (int i=0; i<newArgs.size(); i++) {
-      auto newBuf = newArgs[i];
-      for (auto oldBuf : argsVec[i]) {
-        replaceLoadAndStoreOpBuf(oldBuf, newBuf);
-      }
-    }
-    for (int i=0; i<newVars.size(); i++) {
-      auto newBuf = newVars[i];
-      for (auto oldBuf : varsVec[i]) {
-        replaceLoadAndStoreOpBuf(oldBuf, newBuf);
-      }
-    }
-
-    // erase origin kernel
-    for (auto it = fks.begin(); it != fks.end(); ) {
-      auto funcOp = *it;
-      funcOp.erase();
-      it = fks.erase(it);
-    }
+    auto [newFuncOp, newArgs, newVars] = createFuseFuncAndMidMems(builder, kernels);
+    auto argsVec = collectOldMems(kernels.newArgsIndex, fks);
+    auto varsVec = collectOldMems(kernels.newVarsIndex, fks);
+    fuseKernels(newFuncOp, fks, newArgs, newVars, argsVec, varsVec);
   }
   return true;
+}
+
+
+bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod) {
+  // 并行化映射
+
 }
 
 bool KernelCodeGenerator::optimize(mlir::ModuleOp &mod, std::map<std::string, int> config) {

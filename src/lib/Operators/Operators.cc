@@ -51,13 +51,13 @@ std::vector<mlir::Value> createBatchNestForOp(mlir::OpBuilder& builder, std::vec
       }
     });
   mlir::Block* block = builder.getInsertionBlock();
-  builder.setInsertionPointToStart(block);
   mlir::Operation* op = block->getParentOp();
   mlir::affine::AffineForOp innerForOp = nullptr;
   op->walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
     forOp->setAttr(std::string("for.desc"), builder.getStringAttr("batch"));
     innerForOp = forOp;
   });
+  builder.setInsertionPointToStart(block);
   if (innerForOp != nullptr){
     builder.setInsertionPointToStart(innerForOp.getBody());
   }

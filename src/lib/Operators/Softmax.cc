@@ -55,22 +55,31 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
       auto newSum = bb.create<mlir::arith::AddFOp>(l, mul, exp2);
       bb.create<mlir::affine::AffineYieldOp>(l, mlir::ValueRange({newMax, newSum}));
     };
-    auto loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({max, sum}), col1LoopBody);
+    auto x1loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({max, sum}), col1LoopBody);
+    x1loop->setAttr(std::string("for.desc"), builder.getStringAttr("x"));
 
     // div forOp
     auto col2LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterArgs) {
       auto index = getShapeOrIndex(batchIvs, {row, col}, isTranspose);
       auto ld = bb.create<mlir::affine::AffineLoadOp>(l, operands[0], mlir::ValueRange(index));
       // exp(elem - m) / d
-      auto sub = bb.create<mlir::arith::SubFOp>(l, ld, loop.getResult(0));
+      auto sub = bb.create<mlir::arith::SubFOp>(l, ld, x1loop.getResult(0));
       auto exp = bb.create<mlir::math::ExpOp>(l, sub);
-      auto div = bb.create<mlir::arith::DivFOp>(l, exp, loop.getResult(1));
+      auto div = bb.create<mlir::arith::DivFOp>(l, exp, x1loop.getResult(1));
       bb.create<mlir::affine::AffineYieldOp>(l);
     };
-    b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({}), col2LoopBody);
+    auto x2loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({}), col2LoopBody);
+    x2loop->setAttr(std::string("for.desc"), builder.getStringAttr("x"));
     b.create<mlir::affine::AffineYieldOp>(loc);
   };
-  builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, shape_[0], 1, mlir::ValueRange({}), rowLoopBody);
+  auto yloop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, shape_[0], 1, mlir::ValueRange({}), rowLoopBody);
+  // add attr
+  yloop->setAttr(std::string("for.desc"), builder.getStringAttr("y"));
+  llvm::SmallVector<mlir::Attribute> strAttrs;
+  mlir::MLIRContext *ctx = funcOp.getContext();
+  strAttrs.push_back(mlir::StringAttr::get(ctx, std::string{"y"}));
+  mlir::ArrayAttr strArrayAttr = mlir::ArrayAttr::get(ctx, strAttrs);
+  funcOp->setAttr(std::string("parallel.dim"), strArrayAttr);
 }
 
 

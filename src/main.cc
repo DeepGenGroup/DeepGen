@@ -70,13 +70,15 @@ int main(){
   auto noSupKernels = generator.createModel(module, kds);
   llvm::outs() << module << "\n";
   if (noSupKernels.size() != 0) {
-    llvm::errs() << "No Support Kernel: ";
+    llvm::errs() << "UnSupport Kernel: ";
     for (auto nsk : noSupKernels) {
       llvm::errs() << nsk << ", ";
     }
     llvm::errs() << "\n";
   } else {
     auto result = generator.fusing(module, fkds);
+    llvm::outs() << module << "\n";
+    result = generator.mapping(module);
   }
 
   
