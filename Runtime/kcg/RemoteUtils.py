@@ -190,7 +190,11 @@ class MyTCPServer :
         if self.server is not None:
             self.conn, address = self.server.accept()
             print(f"tcpserver accept client : {address}",flush=True)
-            self.reply("Server accepted client")
+            try:
+                self.conn.sendall(b"Server accepted client")
+            except (BrokenPipeError, ConnectionResetError):
+                print("[TCPServer Err] Connection closed by peer")
+            # self.reply("Server accepted client")
     
     def recv(self) -> str:
         data: str = self.conn.recv(MSG_LEN).decode("UTF-8")
@@ -200,10 +204,14 @@ class MyTCPServer :
         self.conn.send(data.encode("UTF-8"))
         
     def reply_and_wait(self,send_msg) -> str :
-        self.conn.send(send_msg.encode("UTF-8"))
-        # 接受消息
-        recv_data = self.conn.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
-        return recv_data
+        try:
+            self.conn.send(send_msg.encode("UTF-8"))
+            # 接受消息
+            recv_data = self.conn.recv(MSG_LEN).decode("UTF-8")    # 1024是缓冲区大小，一般就填1024， recv是阻塞式
+            return recv_data
+        except (BrokenPipeError, ConnectionResetError) :
+            print("[tcpserverError] Connection reset by peer")
+        return ""
     
     def stop(self):
         if self.conn is not None:
