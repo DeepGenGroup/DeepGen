@@ -5,7 +5,7 @@ import multiprocessing
 from Operators.matmul import *
 # from CreateCfgAndCompile import CreateMatmulConfig
 from NewCfgTest import CreateMatmulConfig
-
+import random
 
 def _process_cfg(encoder : TuningSpaceEncoder_Matmul, cfgs : List[Dict], check_funcs : List[callable], tempfilename:str ) :
     ret = {'results':[]}
@@ -28,6 +28,7 @@ class TuningSpaceManager :
         self.m_tuningConfigFileName = tuningConfigFilePath
         self.m_encoder = None
         self.m_cmc = None
+        self.m_needshuffle = True
 
     def _read_params(self, userInputJsonPath : str) :
         with open(userInputJsonPath, 'r') as file:
@@ -108,6 +109,8 @@ class TuningSpaceManager :
                 obj['cfgs'] += result['results']
             os.remove(fpath)
         obj['template'] = param_options
+        if self.m_needshuffle :
+            random.shuffle[obj['cfgs']]
         with open(self.m_cacheFileName,'w') as f :
             json.dump(obj,f)
         return len(obj['cfgs'])
@@ -125,6 +128,8 @@ class TuningSpaceManager :
         }
         obj['cfgs'] = spaceEncodedInts
         obj['template'] = param_options
+        if self.m_needshuffle :
+            random.shuffle(obj['cfgs'])
         with open(self.m_cacheFileName,'w') as f :
             json.dump(obj,f)
         return len(obj['cfgs'])
