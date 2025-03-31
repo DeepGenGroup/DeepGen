@@ -259,7 +259,10 @@ class _WorkGroup :
         return (c,t)
     
     def __getStartCmd(self, wd : str ,shortfname : str) -> str :
-        return f"cd {wd} ;nohup ./scripts/Benchmark.sh  {wd}/_cluster_run/{shortfname} &"
+        stem = shortfname.split('.')[0]
+        fullPath = f"{wd}/_cluster_run/{shortfname}"
+        fullLogPath = f"{wd}/_cluster_run/{stem}Log.log"
+        return f"cd {wd} ;nohup ./scripts/Benchmark.sh {fullPath} {fullLogPath} &"
     def __getInitDirCmd(self, wd) -> str :
         return f"cd {wd} ; rm -rf ./cluster_run ; mkdir _cluster_run/"
     
