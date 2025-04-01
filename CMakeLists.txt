@@ -6,12 +6,13 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
-set(USER_LLD_PATH  "${CMAKE_SOURCE_DIR}/third_party/hip/tools/ld.lld") 
-set(USER_PTXAS_PATH "~/anaconda3/bin//ptxas") 
+set(LLVM_INSTALL_DIR "~/llvm-install")
+set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
+set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
+set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas") 
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
-# set(CUDA_INCLUDE_DIR "~/anaconda3/include")
+set(CUDA_INCLUDE_DIR "/home/xushilong/anaconda3/include")
 
 
 find_package(Python COMPONENTS Interpreter Development)
@@ -36,7 +37,7 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
-option(IS_DEBUG_MODE "As Debug Mode" OFF)
+option(ENABLE_DEBUG_LOG "Enable debug log" ON)
 # close some warnings
 add_compile_options(
   -Wno-unused-function
@@ -110,6 +111,11 @@ add_compile_options(-g)
 # include(config)
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
+
+if(ENABLE_DEBUG_LOG)
+  message("==== Enable debug log ====")
+  add_definitions(-DKCG_DEBUG)
+endif()
 
 # add_subdirectory(include)
 add_subdirectory(src/lib)

@@ -220,13 +220,15 @@ struct NVVMMetadata {
 
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
-// #define LOG_DEBUG(message,mod)  \
-// {\
-//   llvm::outs() << message;llvm::outs().flush(); mod.dump();\
-// }
 
+#ifdef KCG_DEBUG
+#define LOG_DEBUG(message,mod)  \
+{\
+  llvm::outs() << message;llvm::outs().flush(); mod.dump();\
+}
+#else
 #define LOG_DEBUG(message,mod)  0
-
+#endif
 /*******************  common tool functions ****************/
 
 namespace tools {
