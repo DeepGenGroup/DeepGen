@@ -365,10 +365,3 @@ class CUDALauncher :
                 enterHookFunc,
                 exitHookFunc,
                 self,*args )
-
-        if wrapper is None :
-            # print("[D] error cwrapper")
-            pass
-        else:
-            # print("[D] success cwrapper")
-            pass

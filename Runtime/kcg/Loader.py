@@ -23,6 +23,7 @@ class CudaLoaderST(object):
         self.fname = "loader_cuda.so"
         self.cache_path = self.cache.get_file(self.fname)
         self.load_binary = None
+        self.unload_binary = None
         # print('cache_path=',self.cache_path)
         if self.cache_path is None:
             tmpdir = PathManager.default_cache_dir()
@@ -41,6 +42,7 @@ class CudaLoaderST(object):
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             self.load_binary = mod.load_binary
+            self.unload_binary = mod.unload_binary
             self.get_device_properties = mod.get_device_properties
         if kernelFile.m_kernelInfo is None:
             binaryPath = kernelFile.m_filePath
@@ -52,7 +54,6 @@ class CudaLoaderST(object):
             kernelFile.m_kernelInfo = info
             
         return kernelFile.m_kernelInfo
-
 
     
 class HIPLoaderST(object):
@@ -79,13 +80,14 @@ class HIPLoaderST(object):
             with open(so, "rb") as f:
                 self.cache_path = self.cache.put(f.read(), self.fname, binary=True)
         
-    def loadBinary(self, kernelFile : KernelLibFile) -> KernelRuntimeInfo :
+    def loadKernel(self, kernelFile : KernelLibFile) -> KernelRuntimeInfo :
         if self.load_binary is None:
             import importlib.util
             spec = importlib.util.spec_from_file_location("loader_hip", self.cache_path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             self.load_binary = mod.load_binary
+            self.unload_binary = mod.unload_binary
             self.get_device_properties = mod.get_device_properties
         if kernelFile.m_kernelInfo is None:
             binaryPath = kernelFile.m_filePath
@@ -97,4 +99,11 @@ class HIPLoaderST(object):
             kernelFile.m_kernelInfo = info
             
         return kernelFile.m_kernelInfo
-
+    
+    def unloadKernel(self,kernelFile : KernelLibFile) -> bool :
+        if kernelFile is not None and kernelFile.m_kernelInfo is not None :
+            try:
+                self.unload_binary(kernelFile.m_kernelInfo.m_module)
+            except Exception as e :
+                return False
+        return True

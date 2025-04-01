@@ -28,9 +28,7 @@ class CompiledKernel:
             assert False, f"Invalid backend value {backend.value}"
         
     def deleteBinary(self):
-        if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
-            os.remove(self.m_launcher.m_kernelLib.m_filePath)
-            # print(f"deleted {self.m_launcher.m_kernelLib.m_filePath}")
+        self.m_launcher.releaseAndDeleteBinary()
 
     def setDevice(self,devId : int) :
         self.m_launcher.m_kernelLib.m_device = devId

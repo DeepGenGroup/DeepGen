@@ -82,6 +82,9 @@ class KernelLibFile :
         for v in self.m_signature.values() :
             ret += str(v)
         return ret
+    
+    
+    
 class KernelArg:
     """Represents an argument to a @jit'ed function.
 

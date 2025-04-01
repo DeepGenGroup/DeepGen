@@ -270,7 +270,16 @@ class HIPLauncher :
     
     def __loadKernel(self):
         loader = HIPLoaderST()
-        loader.loadBinary(self.m_kernelLib)
+        loader.loadKernel(self.m_kernelLib)
+    
+    def __del__(self) :
+        self.releaseAndDeleteBinary()
+    
+    def releaseAndDeleteBinary(self):
+        loader = HIPLoaderST()
+        loader.unloadKernel(self.m_kernelLib)
+        if os.path.exists(self.m_kernelLib.m_filePath) :
+            os.remove(self.m_kernelLib.m_filePath)
     
     def _getWrapper(self) -> Callable:
         try:
@@ -313,10 +322,3 @@ class HIPLauncher :
                 enterHookFunc,
                 exitHookFunc,
                 self,*args )
-
-        if wrapper is None :
-            # print("[D] error cwrapper")
-            pass
-        else:
-            # print("[D] success cwrapper")
-            pass
