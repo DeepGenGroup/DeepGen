@@ -6,15 +6,13 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/llvm-install")
-set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
-set(USER_LLD_PATH "/home/xushilong/DeepGen/third_party/hip/tools/ld.lld") 
-set(USER_PTXAS_PATH "/home/xushilong/DeepGen/third_party/cuda/tools/ptxas") 
-set(CUDA_CAP        70)
-set(PTXAS_VERSION   83)
-set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
-# set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/triton_rocm")
-# set(PYTHON_VERSION "3.8")
+set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
+set(USER_LLD_PATH  "${CMAKE_SOURCE_DIR}/third_party/hip/tools/ld.lld") 
+set(USER_PTXAS_PATH "~/anaconda3/bin//ptxas") 
+set(CUDA_CAP        80)
+set(PTXAS_VERSION   82)
+# set(CUDA_INCLUDE_DIR "~/anaconda3/include")
+
 
 find_package(Python COMPONENTS Interpreter Development)
 
@@ -38,6 +36,7 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
+option(IS_DEBUG_MODE "As Debug Mode" OFF)
 # close some warnings
 add_compile_options(
   -Wno-unused-function
@@ -99,6 +98,9 @@ link_directories(${LLVM_INSTALL_DIR}/lib)
 add_definitions(${LLVM_DEFINITIONS})
 add_definitions()
 message("add-def:${LLVM_DEFINITIONS}")
+if(IS_DEBUG_MODE)
+  add_definitions(-DKCG_DEBUG)
+endif()
 add_compile_options(-g)
 
 

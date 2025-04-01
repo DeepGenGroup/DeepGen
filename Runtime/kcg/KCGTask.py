@@ -241,10 +241,10 @@ class PerfTester :
         for i in range(0,benchmarkCount) : 
             self.matC,eps = self._inner_test_kcg(aUse, self.matB, self.matC, packedKernel, start_event, end_event)
             res.append(eps)
-        print("c=",self.matC)
-
-        if torch.allclose(self.matC, self.matD, atol=self._atol, rtol=self._rtol):
-            print('test correct!')
+        print("c=",self.matC,flush=True)
+        
+        if torch.allclose(self.matC, self.matD, atol=self._atol, rtol=self._rtol,equal_nan=False):
+            print('test correct!',flush=True)
             result.isCorrect = True
             result.torch_elapseTimeMs = self.torch_eps
             result.kcg_elapseTimeMs = np.median(res)
@@ -252,11 +252,12 @@ class PerfTester :
             result.acc = result.torch_elapseTimeMs/result.kcg_elapseTimeMs
             print(f"speed up: {result.acc}")
         else:
+            print("test fail!",flush=True)
             result.isCorrect = False
-            diff,max_error= self._compare_with_error(self.matD, self.matC)
-            result.maxError = max_error
-            result.diffRate = diff/(M*N)
-            print(f'test fail! maxerror={max_error}, diffrate={result.diffRate}')
+            # diff,max_error= self._compare_with_error(self.matD, self.matC)
+            # result.maxError = max_error
+            # result.diffRate = diff/(M*N)
+            # print(f'test fail! maxerror={max_error}, diffrate={result.diffRate}')
         packedKernel.deleteBinary()
         return result
     
