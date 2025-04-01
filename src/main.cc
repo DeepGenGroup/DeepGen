@@ -20,8 +20,10 @@ int main(){
   mlir::OpBuilder builder(&context);
   mlir::ModuleOp module = mlir::ModuleOp::create(builder.getUnknownLoc());
   KernelCodeGenerator generator(Target::CUDA, "");
-
   std::vector<KernelData> kds;
+  std::vector<FuseKernelData> fkds;
+
+  // ======  kernel  ======
   KernelData kd1, kd2, kd3;
   // matmul1
   kd1.name = "matmul1";
@@ -31,7 +33,7 @@ int main(){
   kd1.dtypes = {"float32", "float32", "float32"};
   kd1.isTrans = {true, false};
   kd1.outputArgNum = 1;
-  kds.push_back(kd1);
+  // kds.push_back(kd1);
   //Softmax1
   kd2.name = "softmax1";
   kd2.type = "Softmax";
@@ -49,10 +51,9 @@ int main(){
   kd3.dtypes = {"float32", "float32", "float32"};
   kd3.isTrans = {false, false};
   kd3.outputArgNum = 1;
-  kds.push_back(kd3);
+  // kds.push_back(kd3);
 
-  // fuse kernel list
-  std::vector<FuseKernelData> fkds;
+  // ======  fuse kernel  ======
   FuseKernelData fkd = {
     "attention1",
     "Attention",
@@ -63,36 +64,47 @@ int main(){
     {"float32"},
     {{{"matmul1", 0}}, {{"matmul1", 1}}, {{"matmul2", 1}}, {{"matmul2", 2}}}, 
     {{{"matmul1", 2}, {"softmax1", 0}, {"matmul2", 0}}},
+    {"y"},
     1
   };
-  fkds.push_back(fkd);
+  // fkds.push_back(fkd);
 
+  // ======  tile config  ======
+  std::vector<std::map<std::string, int64_t>> paraCfg = {
+    {{"BLOCK_SIZE_Y", 128}, {"THREAD_SIZE_Y", 16}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 16}},
+    // {{"BLOCK_SIZE_Y", 128}, {"THREAD_SIZE_Y", 16}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 16}},
+    // {{"BLOCK_SIZE_Y", 128}, {"THREAD_SIZE_Y", 16}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 16}}
+  };
+
+  // ======  create module  ======
   auto noSupKernels = generator.createModel(module, kds);
-  llvm::outs() << module << "\n";
-  if (noSupKernels.size() != 0) {
-    llvm::errs() << "UnSupport Kernel: ";
-    for (auto nsk : noSupKernels) {
-      llvm::errs() << nsk << ", ";
-    }
-    llvm::errs() << "\n";
-  } else {
-    auto result = generator.fusing(module, fkds);
-    llvm::outs() << module << "\n";
-    result = generator.mapping(module);
-  }
-
   
-  // matmul
+  // ======  matmul  ======
+  // std::vector<std::map<std::string, int64_t>> paraCfg = {
+  //   {{"BLOCK_SIZE_Y", 128}, {"THREAD_SIZE_Y", 16}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 16}}
+  // };
   // std::vector<int64_t> dims1{bs, hn, sl, sl, hd};
   // std::vector<std::string> dtypes{"float32", "float32", "float32"};
-  // generator.create<Operators::Matmul>(module, dims1, dtypes, "GEMM1", true);
+  // generator.create<Operators::Matmul>(module, dims1, dtypes, "GEMM1", true); 
 
-  // softmax
+  // ======  softmax  ======
+  // std::vector<std::map<std::string, int64_t>> paraCfg = {
+  //   {{"BLOCK_SIZE_Y", 128}, {"THREAD_SIZE_Y", 16}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 16}}
+  // };
   // std::vector<int64_t> dims2{bs, hn, sl, sl};
   // std::string dtype{"float32"};
   // generator.create<Operators::Softmax>(module, dims2, dtype, "Softmax1");
+  // llvm::outs() << module << "\n";
 
-  llvm::outs() << module << "\n";  
+  // fusing
+  auto result = generator.fusing(module, fkds);
+  llvm::outs() << module << "\n";
+  // mpping
+  result = generator.mapping(module, paraCfg);
+  llvm::outs() << module << "\n";
+  // optimize
+  // generator.optimize(module, cfg);
+
   return 0;
 }
 

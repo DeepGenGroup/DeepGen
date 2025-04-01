@@ -23,22 +23,19 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
   auto result = splitShape(shape, 2);
   std::vector<int64_t> batchs = result.first, shape_ = result.second;
   auto type = tools::getDType(builder, dtype);
-
   // create funcOp
   mlir::func::FuncOp funcOp = createFunc(builder, batchs, shape_, dtype, kernelName, isTranspose);
   mlir::ValueRange operands = funcOp.getArguments();
-
   // create bacth nest forOp
   auto batchIvs = createBatchNestForOp(builder, batchs);
 
-  // softmax forop
-  auto rowLoopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value row, mlir::ValueRange iterArgs) {
+  // reduce for
+  auto yLoopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value row, mlir::ValueRange iterArgs) {
     // max = -FLT_MAX, sum = 0.0f
     auto max = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, -std::numeric_limits<float>::infinity()));
     auto sum = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, 0.0f));
-    
     // compute max and sum
-    auto col1LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterMD) {
+    auto x1LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterMD) {
       auto index = getShapeOrIndex(batchIvs, {row, col}, isTranspose);
       auto ld = bb.create<mlir::affine::AffineLoadOp>(l, operands[0], mlir::ValueRange(index));
       // newMax = max(elem, iterMD[0])
@@ -55,11 +52,13 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
       auto newSum = bb.create<mlir::arith::AddFOp>(l, mul, exp2);
       bb.create<mlir::affine::AffineYieldOp>(l, mlir::ValueRange({newMax, newSum}));
     };
-    auto x1loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({max, sum}), col1LoopBody);
-    x1loop->setAttr(std::string("for.desc"), builder.getStringAttr("x"));
+    auto x1loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({max, sum}), x1LoopBody);
+    x1loop->setAttr(FORDESC, builder.getStringAttr("x"));
+    llvm::SmallVector<mlir::Attribute> strAttrs{builder.getStringAttr("Max"), builder.getStringAttr("Sum")};
+    x1loop->setAttr(ITERVARDESC, builder.getArrayAttr(strAttrs));
 
     // div forOp
-    auto col2LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterArgs) {
+    auto x2LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterArgs) {
       auto index = getShapeOrIndex(batchIvs, {row, col}, isTranspose);
       auto ld = bb.create<mlir::affine::AffineLoadOp>(l, operands[0], mlir::ValueRange(index));
       // exp(elem - m) / d
@@ -68,18 +67,12 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
       auto div = bb.create<mlir::arith::DivFOp>(l, exp, x1loop.getResult(1));
       bb.create<mlir::affine::AffineYieldOp>(l);
     };
-    auto x2loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({}), col2LoopBody);
-    x2loop->setAttr(std::string("for.desc"), builder.getStringAttr("x"));
+    auto x2loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape_[1], 1, mlir::ValueRange({}), x2LoopBody);
+    x2loop->setAttr(FORDESC, builder.getStringAttr("x"));
     b.create<mlir::affine::AffineYieldOp>(loc);
   };
-  auto yloop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, shape_[0], 1, mlir::ValueRange({}), rowLoopBody);
-  // add attr
-  yloop->setAttr(std::string("for.desc"), builder.getStringAttr("y"));
-  llvm::SmallVector<mlir::Attribute> strAttrs;
-  mlir::MLIRContext *ctx = funcOp.getContext();
-  strAttrs.push_back(mlir::StringAttr::get(ctx, std::string{"y"}));
-  mlir::ArrayAttr strArrayAttr = mlir::ArrayAttr::get(ctx, strAttrs);
-  funcOp->setAttr(std::string("parallel.dim"), strArrayAttr);
+  auto yloop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, shape_[0], 1, mlir::ValueRange({}), yLoopBody);
+  yloop->setAttr(FORDESC, builder.getStringAttr("y"));
 }
 
 
@@ -116,7 +109,7 @@ mlir::func::FuncOp Softmax::createFunc(
   auto type = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_), mlirType, {}, static_cast<int>(ms));
   Softmax::s_function = kernelName;
 
-  return buildFunction(builder, kernelName, "SoftMax", {type}, 1);
+  return buildFunction(builder, kernelName, "SoftMax", {type}, {"y"}, 1);
 }
 
 }  // Operators

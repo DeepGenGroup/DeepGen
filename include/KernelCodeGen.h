@@ -5,7 +5,8 @@
 #include "Operators/Matmul.h"
 #include "Operators/Softmax.h"
 
-#include "Conversion/FuseMap.h"
+#include "Conversion/Fusing.h"
+#include "Conversion/Mapping.h"
 #include "Conversion/Optimizer.h"
 #include "Conversion/LoweringPasses.h"
 
@@ -43,7 +44,7 @@ namespace KernelCodeGen {
 
     bool fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList);
 
-    bool mapping(mlir::ModuleOp& mod);
+    bool mapping(mlir::ModuleOp& mod, std::vector<std::map<std::string, int64_t>> paraCfg);
 
     bool optimize(mlir::ModuleOp& mod, std::map<std::string, int> config);
 

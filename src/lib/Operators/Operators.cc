@@ -5,8 +5,12 @@
 namespace KernelCodeGen {
 
 
-mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, const std::string& funcName, const std::string& OpName, 
-                                 const std::vector<mlir::Type>& inputsTypes, const int& outputArgNum) {
+mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, 
+                                 const std::string& funcName, 
+                                 const std::string& OpName, 
+                                 const std::vector<mlir::Type>& inputsTypes, 
+                                 const std::vector<std::string>& paraDims,
+                                 const int& outputArgNum) {
   llvm::ArrayRef<mlir::Type> inputsTypesArray(inputsTypes);
   auto functionType = builder.getFunctionType(mlir::TypeRange(inputsTypesArray), mlir::TypeRange({}));
   auto funcOp = builder.create<mlir::func::FuncOp>(builder.getUnknownLoc(), llvm::StringRef(funcName), functionType);
@@ -24,6 +28,12 @@ mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, const std::string& fu
   funcOp->setAttr(std::string(AttrVisibility), builder.getStringAttr("public"));
   auto intType = mlir::IntegerType::get(builder.getContext(), 32);
   funcOp->setAttr(std::string("func.output.arg.num"), builder.getIntegerAttr(intType, outputArgNum));
+
+  llvm::SmallVector<mlir::Attribute> strAttrs;
+  for (auto paraDim : paraDims){
+    strAttrs.push_back(builder.getStringAttr(paraDim));
+  }
+  funcOp->setAttr(PARALLELDIMS, builder.getArrayAttr(strAttrs));
   // funcOp->setAttr(std::string(AttrKernelFunc), builder.getI32IntegerAttr(1));
   
   auto& entryBlock = funcOp.front();
@@ -53,8 +63,11 @@ std::vector<mlir::Value> createBatchNestForOp(mlir::OpBuilder& builder, std::vec
   mlir::Block* block = builder.getInsertionBlock();
   mlir::Operation* op = block->getParentOp();
   mlir::affine::AffineForOp innerForOp = nullptr;
+
+  int64_t batchNum = 0;
   op->walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
-    forOp->setAttr(std::string("for.desc"), builder.getStringAttr("batch"));
+    forOp->setAttr(FORDESC, builder.getStringAttr("batch"));
+    forOp->setAttr(BATCHNUM, builder.getIntegerAttr(builder.getI8Type(), batchNum));
     innerForOp = forOp;
   });
   builder.setInsertionPointToStart(block);

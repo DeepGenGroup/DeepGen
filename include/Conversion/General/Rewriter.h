@@ -11,16 +11,23 @@ namespace KernelCodeGen {
 namespace Rewriter {
 
 
-std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, uint64_t num_output, std::vector<int64_t> &&factors);
+std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, 
+                                              const std::vector<int64_t>& tile, 
+                                              const std::vector<std::string>& forDescs={});
 
-mlir::Value bufferizeLoopCarryVar(mlir::affine::AffineForOp &carryVarLoop, std::vector<mlir::affine::AffineForOp> &loops, std::string bufDesc);
+llvm::SmallVector<mlir::Value> bufferizeLoopCarryVar(mlir::affine::AffineForOp &carryVarLoop, 
+                                               std::vector<mlir::affine::AffineForOp> &loops, 
+                                               MemorySpace ms,
+                                               const std::vector<std::string>& bufDescs);
 
 void reorder(const std::vector<mlir::affine::AffineForOp> &forOp);
 
 // mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp> &forOp);
 mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps, std::string GPUIndexDesc="");
 
-void loopToParallelZ(mlir::affine::AffineForOp loop, mlir::affine::AffineParallelOp &parallelOp);
+void addLoopsToParallel(std::vector<mlir::affine::AffineForOp> loops, 
+                        std::vector<mlir::affine::AffineParallelOp> &parallelOps, 
+                        bool fuse=false);
 
 llvm::SmallVector<mlir::Value> parallelToOneDim(mlir::affine::AffineParallelOp &parallelOp, int* outUpperBound=nullptr);
 

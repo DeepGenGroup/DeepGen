@@ -5,8 +5,12 @@
 
 namespace KernelCodeGen {
 
-mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, const std::string& funcName, const std::string& OpName, 
-                                 const std::vector<mlir::Type>& inputsTypes, const int& outputArgNum);
+mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, 
+                                 const std::string& funcName, 
+                                 const std::string& OpName, 
+                                 const std::vector<mlir::Type>& inputsTypes, 
+                                 const std::vector<std::string>& paraDims,
+                                 const int& outputArgNum);
 
 std::vector<mlir::Value> createBatchNestForOp(mlir::OpBuilder& builder, std::vector<int64_t> batchs);
 

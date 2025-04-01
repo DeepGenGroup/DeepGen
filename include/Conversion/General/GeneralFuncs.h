@@ -13,54 +13,39 @@ mlir::OpBuilder getBuilder(mlir::Operation* op, Position pos);
 
 std::tuple<int64_t, int64_t, int64_t> getLoopBoundAndStep(mlir::affine::AffineForOp loop);
 
-template <typename memrefAllocOp>
-memrefAllocOp createAllocOp(mlir::OpBuilder builder, llvm::SmallVector<int64_t> shape, mlir::Type dtype, MemorySpace space, int alignment, std::string bufDesc) {
-  // 创建allocaOp
-  auto bufferType = mlir::MemRefType::get(shape, dtype, {}, static_cast<int>(space));
-  auto allocOp = builder.create<memrefAllocOp>(builder.getUnknownLoc(), bufferType);
-  allocOp.setAlignment(alignment);
-  allocOp->setAttr(AttrBufDescription, builder.getStringAttr(bufDesc));
-  return allocOp;
-}
+mlir::Value createAllocOp(mlir::OpBuilder builder, llvm::SmallVector<int64_t> shape, mlir::Type dtype, MemorySpace space, int alignment, std::string bufDesc);
+
+std::pair<std::vector<mlir::affine::AffineForOp>, std::vector<mlir::Value>> createNestedLoops(mlir::OpBuilder builder, 
+                                                                                              llvm::SmallVector<int64_t> lowerBounds, 
+                                                                                              llvm::SmallVector<int64_t> upperBounds, 
+                                                                                              llvm::SmallVector<int64_t> steps);
 
 void replaceAndErase(mlir::Operation* newOp, mlir::Operation* oldOp);
 
-void spliceHaveBlockOp(mlir::Operation* newOp, mlir::Operation* oldOp, int index=0);
+void spliceHaveBlockOp(mlir::Operation* newOp, mlir::Operation* oldOp, int insertPos=0, int startOpIndex=0, int endOpIndex=-1);
 
-template <typename memrefAllocOp>
-void eraseForOpIterVar(mlir::OpBuilder builder, mlir::affine::AffineForOp &forOp, memrefAllocOp allocOp, llvm::SmallVector<mlir::Value> bufVars) {
-  // 只是将含有迭代变量的forop转换成不含迭代遍历的for，迭代变量使用storeOp代替
-  // 创建新的forop
-  builder.setInsertionPointAfter(forOp);
-  mlir::Value replaceValue;
-  auto loopBody = [&](mlir::OpBuilder &builder, mlir::Location nestedLoc, mlir::Value iv, mlir::ValueRange iterArgs) {
-    mlir::OpBuilder::InsertionGuard nestedGuard(builder);
-    auto loadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), allocOp.getResult(), bufVars);
-    replaceValue = loadOp.getResult();
-    builder.create<mlir::affine::AffineYieldOp>(builder.getUnknownLoc());
-  };
-  auto loopBAS = getLoopBoundAndStep(forOp);
-  auto newLoop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), std::get<0>(loopBAS), 
-                  std::get<1>(loopBAS), std::get<2>(loopBAS), mlir::ValueRange({}), loopBody);
-  auto& oldYieldOp = forOp.getBody()->getOperations().back();
-
-  // 将旧forop的body转移到新的forop中，且body中使用了迭代变量的使用 loadop 的结果代替
-  spliceHaveBlockOp(newLoop, forOp, /*index*/1);
-  forOp.getInductionVar().replaceAllUsesWith(newLoop.getInductionVar());
-  forOp.getRegionIterArgs()[0].replaceAllUsesWith(replaceValue);
-
-  // 由于上面的操作将oldYieldOp也移动到了新的forop中，所以最后需要删除，且迭代过程使用storeOp代替
-  auto yieldResult = oldYieldOp.getOperand(0);
-  builder.setInsertionPointAfter(&oldYieldOp);
-  builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), yieldResult, allocOp.getResult(), bufVars); 
-  oldYieldOp.erase();
-
-  // 最后将forop之外使用了其迭代变量的地方全部替换成 loadOp 加载的数据
-  builder.setInsertionPointAfter(newLoop);
-  auto loadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), allocOp.getResult(), bufVars);
-  replaceAndErase(loadOp, forOp);
-  forOp = newLoop;
+template<typename AttrType>
+void copyAttr(mlir::Operation* originOp, mlir::Operation* newOp, std::string attrName) {
+  // 复制attr到新的op上
+  if (auto desc = originOp->getAttr(attrName)) {
+    auto descAttr = mlir::dyn_cast<AttrType>(desc);
+    newOp->setAttr(attrName, descAttr);
+  }
 }
+
+void replaceOpsOperands(mlir::Operation* parentOp, const std::vector<mlir::Value>& oldIvs, const std::vector<mlir::Value>& newIvs);
+
+void replaceOpOperands(mlir::Operation* op, mlir::Value oldOperand, mlir::Value newOperand);
+
+std::set<mlir::Operation*> getValueUsers(mlir::Value var);
+
+int getOpIndex(mlir::Operation* haveBlockOp, mlir::Operation* targetOp);
+
+std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(std::vector<mlir::affine::AffineForOp> upLoops, 
+                                                          mlir::affine::AffineForOp lowLoop, 
+                                                          bool carryDesc=true);
+
+void eraseForOpIterVar(mlir::affine::AffineForOp &forOp, llvm::SmallVector<mlir::Value> bufs, llvm::SmallVector<mlir::Value> ivs);
 
 template <typename collectOp>
 std::vector<collectOp> collectInnerOps(mlir::Operation* haveBlockOp) {
@@ -82,12 +67,6 @@ haveBodyOp getInnerMostOp(haveBodyOp imop) {
   }
   return imop;
 }
-
-int getOpIndex(mlir::Operation* haveBlockOp, mlir::Operation* targetOp);
-
-std::set<mlir::Operation*> getValueUsers(mlir::Value var);
-
-void replaceLoadAndStoreOpBuf(mlir::Value oldBuf, mlir::Value newBuf);
 
 mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount);
 
@@ -176,9 +155,9 @@ int countOtherOperandNum(AffineMemoryOp loadOrStoreOp, int newLoopIvsSize) {
 }
 
 template <typename loadOrStoreOp>
-std::tuple<llvm::SmallVector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
+std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
 getPerfetchMapDatas(mlir::OpBuilder builder, loadOrStoreOp lSOp, std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps, 
-                    llvm::SmallVector<mlir::Value> newLoopIvs, mlir::Value mainIv, mlir::AffineExpr addExpr) {
+                    std::vector<mlir::Value> newLoopIvs, mlir::Value mainIv, mlir::AffineExpr addExpr) {
 
   // 这个会对数据转移的load或者store op (也就是forOp中的load和store)进行分析，获取到load或者store op 的map，operands和buf
   // 大类分为两种形式：
@@ -188,7 +167,7 @@ getPerfetchMapDatas(mlir::OpBuilder builder, loadOrStoreOp lSOp, std::map<mlir::
   // 2. registers的double buffer (在一种forOp中完成，shared->reg)
   // (1) 将数据从shared取到reg中：
   // new datas
-  llvm::SmallVector<mlir::Value> newOperands;
+  std::vector<mlir::Value> newOperands;
   mlir::AffineMap newMap;
   mlir::Value newBuf;
 
@@ -287,7 +266,7 @@ getPerfetchMapDatas(mlir::OpBuilder builder, loadOrStoreOp lSOp, std::map<mlir::
 }
 
 template <typename loadOp>
-std::tuple<llvm::SmallVector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
+std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
 getCalculateMapDatas(mlir::OpBuilder builder, loadOp lSOp, std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps,
                      mlir::Value mainIv, mlir::AffineExpr addExpr) {
   // 计算部分修改的全是load op，而且都是修改buf为double buf，且map多一个expr，operands多一个和ForK/BK相关的变量
@@ -298,7 +277,7 @@ getCalculateMapDatas(mlir::OpBuilder builder, loadOp lSOp, std::map<mlir::Value,
   auto operands = lSOp.getMapOperands();
 
   // new datas
-  llvm::SmallVector<mlir::Value> newOperands;
+  std::vector<mlir::Value> newOperands;
   mlir::AffineMap newMap;
   mlir::Value newBuf = nullptr;
 
@@ -332,7 +311,7 @@ getCalculateMapDatas(mlir::OpBuilder builder, loadOp lSOp, std::map<mlir::Value,
 }
 
 template <typename loadOp>
-std::pair<llvm::SmallVector<mlir::Value>, mlir::AffineMap> /*operands, map*/ 
+std::pair<std::vector<mlir::Value>, mlir::AffineMap> /*operands, map*/ 
 getRegPerfetchOuterAdjustDatas(mlir::OpBuilder builder, loadOp lSOp, int nestedNum) {
   // 获取寄存器预取将其调整到forK外所需要的map operands buf
   auto cst0 = builder.getAffineConstantExpr(0);
@@ -347,7 +326,7 @@ getRegPerfetchOuterAdjustDatas(mlir::OpBuilder builder, loadOp lSOp, int nestedN
   }
   auto newMap = mlir::AffineMap::get(map.getNumDims() - 1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
 
-  llvm::SmallVector<mlir::Value> newOperands(operands.begin(), operands.end());
+  std::vector<mlir::Value> newOperands(operands.begin(), operands.end());
   newOperands.erase(newOperands.begin()+1);
   
   return std::make_pair(newOperands, newMap);
@@ -394,10 +373,8 @@ std::vector<mlir::Operation*> collectInnerMostAllOps(haveBodyOp haveBlockOp) {
 
 mlir::Value doubleBuffer(mlir::Value buffer);
 
-std::vector<std::vector<int64_t>> getNestedLoopData(mlir::affine::AffineForOp forOp);
-
-std::pair<llvm::SmallVector<mlir::affine::AffineForOp>, llvm::SmallVector<mlir::Value>> 
-createNestedLoops(mlir::OpBuilder builder, std::vector<std::vector<int64_t>> loopDatas);
+std::tuple<llvm::SmallVector<int64_t>, llvm::SmallVector<int64_t>, llvm::SmallVector<int64_t>> 
+  getNestedLoopData(mlir::affine::AffineForOp forOp);
 
 std::vector<mlir::affine::AffineForOp> createNewDataShiftForOp(mlir::OpBuilder builder, std::vector<mlir::affine::AffineForOp> forOps, 
                              std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps, mlir::Value mainIv=nullptr, mlir::AffineExpr addExpr=nullptr);

@@ -59,21 +59,16 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
       auto Cij = nestedBuilder.create<mlir::affine::AffineForOp>(loc, /*lb*/0, mnk[2], 1, mlir::ValueRange({zero.getResult()}), kLoopBody);
       auto indexC = getShapeOrIndex<mlir::Value>(batchIvs, {row, col}, false);
       nestedBuilder.create<mlir::affine::AffineStoreOp>(loc, Cij.getResult(0), /*C*/operands[2], mlir::ValueRange(indexC));
-    });
-    // add attr 
+  });
+  // add attr 
   int index = 0;
   char dims[] = {'y', 'x'};
-  llvm::SmallVector<mlir::Attribute> strAttrs;
-  mlir::MLIRContext *ctx = funcOp.getContext();
   funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
-    if (!forOp->getAttr("for.desc") && index < 2) {
-      strAttrs.push_back(mlir::StringAttr::get(ctx, std::string{dims[index]}));
-      forOp->setAttr(std::string("for.desc"), builder.getStringAttr(std::string{dims[index]}));
+    if (!forOp->getAttr(FORDESC) && index < 2) {
+      forOp->setAttr(FORDESC, builder.getStringAttr(std::string{dims[index]}));
       index++;
     }
   });
-  mlir::ArrayAttr strArrayAttr = mlir::ArrayAttr::get(ctx, strAttrs);
-  funcOp->setAttr(std::string("parallel.dim"), strArrayAttr);
 }
 
 
@@ -121,7 +116,7 @@ mlir::func::FuncOp Matmul::createFunc(
   auto typeC = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_c), mlirTypeArray[2], {}, static_cast<int>(ms));
   Matmul::s_function = kernelName;
 
-  return buildFunction(builder, kernelName, "Matmul", {typeA, typeB, typeC}, 1);
+  return buildFunction(builder, kernelName, "Matmul", {typeA, typeB, typeC}, {"y", "x"}, 1);
 }
 
 }  // Operators

@@ -20,32 +20,28 @@ void OpSetDesc(mlir::Operation* op, const std::string& attrValue){
   op->setAttr("kcg.desc",b.getStringAttr(attrValue));
 }
 
-std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, uint64_t num_output, std::vector<int64_t>&& factors) {
+std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, 
+                                              const std::vector<int64_t>& tile, 
+                                              const std::vector<std::string>& forDescs) {
   // 创建一个空的切开的嵌套循环
-  std::sort(factors.begin(), factors.end(), std::greater<uint64_t>());
-  auto loopBAS = getLoopBoundAndStep(forOp);
-  factors.insert(factors.begin(), std::get<1>(loopBAS));
-  factors.push_back(1);
-  mlir::SmallVector<int64_t, 16> upperBounds(factors.begin(), --(factors.end()));
-  mlir::SmallVector<int64_t, 16> steps(++(factors.begin()), factors.end());
-  mlir::SmallVector<int64_t, 16> lowerBounds(num_output, /*Value=*/0);
-
-  std::vector<mlir::Value> ivsVector;
-  mlir::OpBuilder builder(forOp.getOperation());
-  mlir::affine::buildAffineLoopNest(builder, builder.getUnknownLoc(), lowerBounds, upperBounds, steps,
-    [&](mlir::OpBuilder &nestedBuilder, mlir::Location loc, mlir::ValueRange ivs) {
-      //empty nested loops.
-      for (auto iv : ivs) { ivsVector.push_back(iv); }
-    }
-  );
+  std::vector<int64_t> ts(tile.begin(), tile.end());
+  std::sort(ts.begin(), ts.end(), std::greater<uint64_t>());
+  auto [lb, ub, step] = getLoopBoundAndStep(forOp);
+  ts.insert(ts.begin(), ub);
+  ts.push_back(1);
+  // create nest loops
+  mlir::OpBuilder builder(forOp);
+  llvm::SmallVector<int64_t> lbs(ts.size()-1, 0), ubs(ts.begin(), --(ts.end())), steps(++(ts.begin()), ts.end());
+  auto [loops, ivsVector] = createNestedLoops(builder, lbs, ubs, steps);
+  // loops add attr
+  for (int i=0; i<forDescs.size(); i++) {
+    loops[i]->setAttr(FORDESC, builder.getStringAttr(forDescs[i]));
+  }
 
   // 将旧的forop内部的op转移到新的嵌套forOp中
-  auto loops = collectInnerOps<mlir::affine::AffineForOp>(forOp->getPrevNode());
-  // erase the yield op, as the forOp will bring the AffineYieldOp
   mlir::affine::AffineForOp innermostForOp = loops.back();
   innermostForOp.getBody()->back().erase();
-  spliceHaveBlockOp(innermostForOp, forOp, -1);
-
+  spliceHaveBlockOp(innermostForOp, forOp);
   // 需要修改affineMap
   auto oldIv = forOp.getInductionVar();
   std::set<mlir::Operation*> users = getValueUsers(oldIv);
@@ -53,26 +49,26 @@ std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, ui
 
   // 替换load/store/apply的map
   for (auto user : users) {
-    mlir::OpBuilder builder(user);
+    mlir::OpBuilder b(user);
     llvm::SmallVector<mlir::AffineExpr> exprs;
     llvm::SmallVector<mlir::Value> operands;
     if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(user)) {
       auto mem = loadOp.getMemref();
       int dimCount = replaceIndexWithExpr(oldIv, ivsVector, loadOp, sumExpr, exprs, operands);
-      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
-      auto newLoadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), mem, map, llvm::ArrayRef<mlir::Value>(operands));
+      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), b.getContext());
+      auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(b.getUnknownLoc(), mem, map, llvm::ArrayRef<mlir::Value>(operands));
       replaceAndErase(newLoadOp, loadOp);
     } else if (auto storeOp = mlir::dyn_cast<mlir::affine::AffineStoreOp>(user)) {
       auto valueToStore = storeOp.getValue();
       auto mem = storeOp.getMemref();
       int dimCount = replaceIndexWithExpr(oldIv, ivsVector, storeOp, sumExpr, exprs, operands);
-      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
-      builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), valueToStore, mem, map, llvm::ArrayRef<mlir::Value>(operands));
+      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), b.getContext());
+      b.create<mlir::affine::AffineStoreOp>(b.getUnknownLoc(), valueToStore, mem, map, llvm::ArrayRef<mlir::Value>(operands));
       storeOp.erase();
     } else if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(user)) {
       int dimCount = replaceIndexWithExpr(oldIv, ivsVector, applyOp, sumExpr, exprs, operands);
-      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
-      auto newApplyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange(operands));
+      mlir::AffineMap map = mlir::AffineMap::get(/*dimCount*/dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), b.getContext());
+      auto newApplyOp = b.create<mlir::affine::AffineApplyOp>(b.getUnknownLoc(), map, mlir::ValueRange(operands));
       replaceAndErase(newApplyOp, applyOp);
     } else {
       assert(false);
@@ -83,90 +79,125 @@ std::vector<mlir::affine::AffineForOp> split(mlir::affine::AffineForOp forOp, ui
   return loops;
 }
 
-mlir::Value bufferizeLoopCarryVar(mlir::affine::AffineForOp &carryVarLoop, std::vector<mlir::affine::AffineForOp> &loops, std::string bufDesc) {
+llvm::SmallVector<mlir::Value> bufferizeLoopCarryVar(mlir::affine::AffineForOp &carryVarLoop, 
+                                                      std::vector<mlir::affine::AffineForOp> &loops, 
+                                                      MemorySpace ms,
+                                                      const std::vector<std::string>& bufDescs) {
   // 将迭代遍历变成buffer，loops为buffer提供索引值
+  // loops就是需要上移到循环，规定loops的第一个循环为上移的最外层循环
   llvm::SmallVector<int64_t> bufferShape;
-  llvm::SmallVector<mlir::Value> bufferAdrressOperand;
+  llvm::SmallVector<mlir::Value> ivs, bufs;
   for (auto loop : loops) {
-    auto loopBAS = getLoopBoundAndStep(loop);
-    bufferShape.push_back((std::get<1>(loopBAS) - std::get<0>(loopBAS)) / std::get<2>(loopBAS));
-    bufferAdrressOperand.push_back(loop.getInductionVar());
+    auto [lb, ub, step] = getLoopBoundAndStep(loop);
+    bufferShape.push_back(ub);
+    ivs.push_back(loop.getInductionVar());
   }
   
   auto builder = getBuilder(loops[0], Position::before);
-  auto carryVar = carryVarLoop.getRegionIterArgs()[0];
-  auto allocOp = createAllocOp<mlir::memref::AllocaOp>(builder, bufferShape, carryVar.getType(), MemorySpace::local, KCG_ALIGNBYTE, bufDesc);
-  // step1: 将buffer初始化值
-  auto initValue = carryVarLoop.getOperands().back();
-  auto defineOp = initValue.getDefiningOp();
-  builder.setInsertionPointAfter(defineOp);
-  builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), initValue, allocOp.getResult(), bufferAdrressOperand);
+  auto carryVars = carryVarLoop.getRegionIterArgs();
+  for (int i=carryVars.size()-1; i>=0; i--) {
+    builder.setInsertionPoint(loops[0]);
+    auto desc = bufDescs[carryVars.size()-i-1];
+    mlir::Value allocVal = createAllocOp(builder, bufferShape, carryVars[i].getType(), ms, KCG_ALIGNBYTE, desc);
+    auto operands = carryVarLoop.getOperands();
+    // step1: 将buffer初始化值
+    auto cst = operands[operands.size()-i-1];
+    builder.setInsertionPointAfter(cst.getDefiningOp());
+    builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), cst, allocVal, ivs);
+    bufs.push_back(allocVal);
+  }
   // step2: 替换含迭代变量的循环
-  eraseForOpIterVar(builder, carryVarLoop, allocOp, bufferAdrressOperand);
-  return allocOp.getResult();
+  eraseForOpIterVar(carryVarLoop, bufs, ivs);
+  // step3: init buffer
+  decoupleNestedLoop(loops, carryVarLoop, false);
+  return bufs;
 }
 
-void loopToParallelZ(mlir::affine::AffineForOp loop, mlir::affine::AffineParallelOp &parallelOp) {
-  // loop add to parallel
-
-  llvm::SmallVector<mlir::AffineMap> lbMaps;
-  llvm::SmallVector<mlir::AffineMap> upMaps;
-  llvm::SmallVector<mlir::Value> lbOperands;
-  llvm::SmallVector<mlir::Value> upOperands;
-  llvm::SmallVector<int64_t> steps;
-
-  // loop operand
-  lbMaps.push_back(loop.getLowerBoundMap());
-  upMaps.push_back(loop.getUpperBoundMap());
-  lbOperands.append(loop.getLowerBoundOperands().begin(), loop.getLowerBoundOperands().end());
-  upOperands.append(loop.getUpperBoundOperands().begin(), loop.getUpperBoundOperands().end());
-  steps.push_back(loop.getStep().getLimitedValue());
-
-  // parallel operands
-  auto ss = parallelOp.getSteps();
-  for (unsigned i=0; i<parallelOp.getNumDims(); i++) {
-    lbMaps.push_back(parallelOp.getLowerBoundMap(i));
-    upMaps.push_back(parallelOp.getUpperBoundMap(i));
-    steps.push_back(ss[i]);
+void addLoopsToParallel(std::vector<mlir::affine::AffineForOp> loops, 
+                        std::vector<mlir::affine::AffineParallelOp> &parallelOps, 
+                        bool fuse) {
+  // 将loops添加到parallel到高维，loops {b1, b2} -> parallel {id, b2, b1}(unfuse) or parallel {newid}(fuse)
+  // loops data
+  llvm::SmallVector<int64_t> steps, forRanges;// loops steps / loops loop num
+  for (int i=0; i<loops.size(); i++) {
+    auto [lb, ub, step] = getLoopBoundAndStep(loops[i]);
+    int64_t range = ub / step;
+    forRanges.push_back(range);  // {b1, b2}
+    steps.push_back(step);  // {b1, b2}
   }
-  lbOperands.append(parallelOp.getLowerBoundsOperands().begin(), parallelOp.getLowerBoundsOperands().end());
-  upOperands.append(parallelOp.getUpperBoundsOperands().begin(), parallelOp.getUpperBoundsOperands().end());
-
-  // create new parallelOp
-  auto gpuidx = parallelOp->getAttr(AttrGPUIndex);
-  mlir::OpBuilder builder = getBuilder(parallelOp, Position::before);
-  mlir::affine::AffineParallelOp newParallelOp = builder.create<mlir::affine::AffineParallelOp>(
-    builder.getUnknownLoc(), mlir::TypeRange(), llvm::ArrayRef<mlir::arith::AtomicRMWKind>(),
-    llvm::ArrayRef<mlir::AffineMap>(lbMaps), lbOperands,
-    llvm::ArrayRef<mlir::AffineMap>(upMaps), upOperands,
-    llvm::ArrayRef<int64_t>(steps));
-  
-  // replace old parallelOp
-  parallelOp.getBody()->back().erase();
-  spliceHaveBlockOp(newParallelOp, parallelOp);
-  auto oldIVs = parallelOp.getIVs();
-  auto newIVs = newParallelOp.getIVs();
-  for (int i=0; i<oldIVs.size(); i++) {
-    oldIVs[i].replaceAllUsesWith(newIVs[i+1]);
+  // all parallel should be add same loops
+  for (auto it = parallelOps.rbegin(); it != parallelOps.rend(); ++it) {
+    mlir::affine::AffineParallelOp parallelOp = *it;
+    llvm::SmallVector<int64_t> ranges(forRanges.rbegin(), forRanges.rend());  // parallel upperbound
+    auto oldRanges = parallelOp.getConstantRanges();  // old parallel upperbound (idx.x)
+    int64_t rg = (*oldRanges)[0];  // upperBounds
+    ranges.insert(ranges.begin(), rg);  // {id, b2, b1}
+    llvm::SmallVector<int64_t> shapes(ranges.rbegin(), ranges.rend());  // {b1, b2, id}
+    // new parallel data
+    if (fuse) {
+      int64_t paraNum = 1;
+      for (int i=ranges.size()-1; i>=0; i--) {
+        paraNum *= ranges[i];
+      }
+      ranges.clear();
+      ranges.push_back(paraNum);
+    }
+    // create new parallel
+    mlir::OpBuilder builder = getBuilder(parallelOp, Position::before);
+    mlir::affine::AffineParallelOp newParallelOp = builder.create<mlir::affine::AffineParallelOp>(
+      builder.getUnknownLoc(), mlir::TypeRange(), llvm::ArrayRef<mlir::arith::AtomicRMWKind>(), llvm::ArrayRef<int64_t>(ranges));
+    // old parallel attr
+    copyAttr<mlir::StringAttr>(parallelOp, newParallelOp, AttrGPUIndex);
+    // replace old parallelOp
+    spliceHaveBlockOp(newParallelOp, parallelOp, 0, 0, -2);
+    auto newIvs = newParallelOp.getIVs();  // {id, b2, b1}  // {newid}
+    // if for step > 1, creating applyop to map the range of foriv
+    mlir::AffineExpr dim = builder.getAffineDimExpr(0);
+    for (int i=0; i<steps.size(); i++) {  // {b1, b2}
+      builder.setInsertionPointToStart(newParallelOp.getBody());
+      if (fuse) {
+        int64_t stride = 1;
+        for (int j=i+1; j<shapes.size(); j++) {
+          stride *= shapes[j];
+        }
+        mlir::AffineExpr expr = dim.floorDiv(stride) * steps[i];
+        auto map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(expr), builder.getContext());
+        auto applyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange({newIvs[0]}));
+        replaceOpsOperands(newParallelOp, {loops[i].getInductionVar()}, {applyOp.getResult()});
+        dim = dim % stride;
+      } else {
+        if (steps[i] > 1) {
+          auto map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim * steps[i]), builder.getContext());
+          auto applyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange({newIvs[newIvs.size()-1-i]}));
+          replaceOpsOperands(newParallelOp, {loops[i].getInductionVar()}, {applyOp.getResult()});
+        }
+        replaceOpsOperands(newParallelOp, {loops[i].getInductionVar()}, {newIvs[newIvs.size()-1-i]});
+      }
+      // operations in fuse forop are move out of forop
+      auto parentOp = loops[i]->getParentOp();
+      int index = getOpIndex(parentOp, loops[i]);
+      spliceHaveBlockOp(parentOp, loops[i], index, 0, -2);
+    }
+    // replace parallel ivs
+    auto oldIvs = parallelOp.getIVs();
+    if (fuse) {
+      builder.setInsertionPointToStart(newParallelOp.getBody());
+      auto map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim), builder.getContext());
+      auto applyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange({newIvs[0]}));
+      oldIvs[0].replaceAllUsesWith(applyOp.getResult());
+    } else {
+      oldIvs[0].replaceAllUsesWith(newIvs[0]);
+    }    
+    parallelOp.erase();
+    parallelOp = newParallelOp;
   }
-  parallelOp.erase();
-
-  // erase loop
-  auto parentOp = loop.getOperation()->getParentOp();
-  int index = getOpIndex(parentOp, loop);
-  loop.getBody()->back().erase();
-  spliceHaveBlockOp(parentOp, loop, index);
-  loop.getInductionVar().replaceAllUsesWith(newIVs[0]);
-  loop.erase();
-
-  parallelOp = newParallelOp;
-  // origin attr
-  if (gpuidx) {
-    auto gpuidxAttr = mlir::dyn_cast<mlir::StringAttr>(gpuidx);
-    parallelOp->setAttr(AttrGPUIndex, gpuidxAttr);
+  // erase forOp which fuse into parallel idx.x
+  for (auto it = loops.rbegin(); it != loops.rend(); ++it) {
+    mlir::affine::AffineForOp forOp = *it;
+    forOp.erase();
   }
 }
- 
+
 // Swap two nested loops.
 // if outer loop contains multiple Operations, clone the outer loop to maintain correctness.
 void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner) {
@@ -230,16 +261,7 @@ void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner) {
         (iter--)->erase();
       }
     }
-
   }
-  // int count = 0;
-  // for (auto& op : ops) {
-  //   if (count != position && count !=  opNumber-1) {
-  //     op.erase();
-  //   }
-  //   count += 1;
-  // }
-
 
   /// step1: move the body of inner to outer
   // erase the yield op
@@ -324,42 +346,39 @@ void reorder(const std::vector<mlir::affine::AffineForOp>& loops) {
 
 mlir::affine::AffineParallelOp parallel(const std::vector<mlir::affine::AffineForOp>& forOps, std::string GPUIndexDesc) {
   // X, Y, Z
-  assert(forOps.size() <= 3);
-  llvm::SmallVector<mlir::AffineMap> lbMaps;
-  llvm::SmallVector<mlir::AffineMap> upMaps;
-  llvm::SmallVector<int64_t> steps;
-  llvm::SmallVector<int64_t> applySteps;
-
-  mlir::OpBuilder builder(forOps[0]);
+  int64_t parallelSize = 1;
+  llvm::SmallVector<int64_t> ranges, steps;
   for (auto forOp : forOps) {
-    int64_t step = forOp.getStep().getLimitedValue();
-    int64_t lowerBound = forOp.getLowerBoundMap().getConstantResults()[0];
-    int64_t upperBound = forOp.getUpperBoundMap().getConstantResults()[0] / step;
-    lbMaps.push_back(mlir::AffineMap::get(0, 0, llvm::ArrayRef<mlir::AffineExpr>(builder.getAffineConstantExpr(lowerBound)), builder.getContext()));
-    upMaps.push_back(mlir::AffineMap::get(0, 0, llvm::ArrayRef<mlir::AffineExpr>(builder.getAffineConstantExpr(upperBound)), builder.getContext()));
-    steps.push_back(1);
-    applySteps.push_back(step);
+    auto [lb, ub, step] = getLoopBoundAndStep(forOp);
+    int64_t range = ub / step;
+    ranges.push_back(range);
+    steps.push_back(step);
+    parallelSize *= range;
   }
 
+  mlir::OpBuilder builder(forOps[0]);
   mlir::affine::AffineParallelOp parallelOp = builder.create<mlir::affine::AffineParallelOp>(
     builder.getUnknownLoc(), mlir::TypeRange(), llvm::ArrayRef<mlir::arith::AtomicRMWKind>(),
-    llvm::ArrayRef<mlir::AffineMap>(lbMaps), mlir::ValueRange({}),
-    llvm::ArrayRef<mlir::AffineMap>(upMaps), mlir::ValueRange({}),
-    llvm::ArrayRef<int64_t>(steps));
+    llvm::ArrayRef<int64_t>({parallelSize}));
 
-  // erase the yield op of innermost loop
   auto innermost = forOps.back();
   innermost.getBody()->back().erase();
   spliceHaveBlockOp(parallelOp, innermost);
 
   llvm::SmallVector<mlir::Value> applyResults;
   mlir::AffineExpr dim = builder.getAffineDimExpr(0);
-  auto ivs = parallelOp.getIVs();
+  auto id = parallelOp.getIVs();
   builder.setInsertionPointToStart(parallelOp.getBody());
-  for (int i=0; i<ivs.size(); i++) {
-    auto map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim * applySteps[i]), builder.getContext());
-    auto applyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange({ivs[i]}));
+  for (int i=0; i<forOps.size(); i++) {
+    int64_t stride = 1;
+    for (int j=i+1; j<forOps.size(); j++) {
+      stride *= ranges[j];
+    }
+    auto expr = dim.floorDiv(stride) * steps[i];
+    auto map = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(expr), builder.getContext());
+    auto applyOp = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), map, mlir::ValueRange({id}));
     applyResults.push_back(applyOp.getResult());
+    dim = dim % stride;
   }
 
   int count = applyResults.size() - 1;
@@ -697,14 +716,7 @@ mlir::Value bufferCombine(std::vector<std::vector<mlir::Value>> buffers, std::st
   auto bufType = buffers[0][0].getType().dyn_cast<mlir::MemRefType>();
   auto memSpace = static_cast<MemorySpace>(bufType.getMemorySpaceAsInt());
   auto elementType = bufType.getElementType();
-  mlir::Value newBuffer;
-  if (memSpace == MemorySpace::shared) {
-    auto sharedAlloc = createAllocOp<mlir::memref::AllocOp>(builder, {maxBufSize}, elementType, memSpace, KCG_ALIGNBYTE, bufDesc);
-    newBuffer = sharedAlloc.getResult();
-  } else {
-    auto localAlloca = createAllocOp<mlir::memref::AllocaOp>(builder, {maxBufSize}, elementType, memSpace, KCG_ALIGNBYTE, bufDesc);
-    newBuffer = localAlloca.getResult();
-  }
+  mlir::Value newBuffer = createAllocOp(builder, {maxBufSize}, elementType, memSpace, KCG_ALIGNBYTE, bufDesc);
 
   for (auto bufAndOffset : bufAndOffsets) {
     auto users = getValueUsers(bufAndOffset.first);
@@ -794,8 +806,8 @@ void unrollAttribute(mlir::ModuleOp module, int32_t unrollNum) {
   // 添加unroll属性
   module.walk<mlir::WalkOrder::PostOrder>([&](mlir::affine::AffineForOp forOp) {
     int32_t noBodyOpNum = getNoBodyOpCount(forOp);
-    auto loopBAS = getLoopBoundAndStep(forOp);
-    int32_t loopNum = (std::get<1>(loopBAS) - std::get<0>(loopBAS)) / std::get<2>(loopBAS);
+    auto [lb, ub, step] = getLoopBoundAndStep(forOp);
+    int32_t loopNum = (ub - lb) / step;
     // llvm::outs() << "Count: " << noBodyOpNum << "\n";
     if (noBodyOpNum <= 128) {
       // if (loopNum > unrollNum) {

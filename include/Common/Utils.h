@@ -175,6 +175,10 @@ struct NVVMMetadata {
 #define BLOCKIDX          "blockIdx"
 #define THREADIDX         "threadIdx"
 /*-------------------------------------------*/
+#define FORDESC         "for.desc"
+#define BATCHNUM        "batch.num"
+#define PARALLELDIMS    "parallel.dim"
+#define ITERVARDESC     "iter.var.desc"
 
 #define SHM_VAR_NAME(i) (std::string("kcg_shm")+std::to_string(i))
 
@@ -220,12 +224,12 @@ struct NVVMMetadata {
 
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
-// #define LOG_DEBUG(message,mod)  \
-// {\
-//   llvm::outs() << message;llvm::outs().flush(); mod.dump();\
-// }
+#define LOG_DEBUG(message,mod)  \
+{\
+  llvm::outs() << message;llvm::outs().flush(); mod.dump();\
+}
 
-#define LOG_DEBUG(message,mod)  0
+// #define LOG_DEBUG(message,mod)  0
 
 /*******************  common tool functions ****************/
 
