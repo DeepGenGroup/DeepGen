@@ -308,7 +308,7 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
 }
 
 static PyObject *unloadBinary(PyObject *self, PyObject *args) {
-  CUmodule_t mod;
+  CUmodule mod;
   PyArg_ParseTuple(args,"K",&mod);
   if(cuModuleUnload(mod) == CUDA_SUCCESS){
     printf("unload cudaModule success\n");
