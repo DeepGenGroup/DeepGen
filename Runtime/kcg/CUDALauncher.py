@@ -319,7 +319,7 @@ class CUDALauncher :
     
     def __loadKernel(self):
         loader = CudaLoaderST()
-        loader.loadBinary(self.m_kernelLib)
+        loader.loadKernel(self.m_kernelLib)
     
     def _getWrapper(self) -> Callable:
         try:
@@ -338,6 +338,15 @@ class CUDALauncher :
         except Exception as e:
             print("CUDALaunchError:",e)
         return None
+    
+    def __del__(self):
+        self.releaseAndDeleteBinary()
+    
+    def releaseAndDeleteBinary(self):
+        loader = CudaLoaderST()
+        loader.unloadKernel(self.m_kernelLib)
+        if os.path.exists(self.m_kernelLib.m_filePath) :
+            os.remove(self.m_kernelLib.m_filePath)
     
     def launchKernel(self,*args):
         wrapper = self._getWrapper()
