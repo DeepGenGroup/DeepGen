@@ -7,8 +7,9 @@ namespace KernelCodeGen {
 
 mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder, 
                                  const std::string& funcName, 
-                                 const std::string& OpName, 
+                                 const std::string& OpType, 
                                  const std::vector<mlir::Type>& inputsTypes, 
+                                 const std::vector<bool>& isTranspose,
                                  const std::vector<std::string>& paraDims,
                                  const int& outputArgNum) {
   llvm::ArrayRef<mlir::Type> inputsTypesArray(inputsTypes);
@@ -24,16 +25,23 @@ mlir::func::FuncOp buildFunction(mlir::OpBuilder& builder,
   body.addArguments(inputsTypes, locs);
   
   funcOp->setAttr(std::string("func.state"), builder.getStringAttr("cpu"));
-  funcOp->setAttr(std::string("func.op.name"), builder.getStringAttr(OpName));
+  funcOp->setAttr(std::string("func.op.type"), builder.getStringAttr(OpType));
   funcOp->setAttr(std::string(AttrVisibility), builder.getStringAttr("public"));
-  auto intType = mlir::IntegerType::get(builder.getContext(), 32);
+  auto intType = builder.getIntegerType(32);
   funcOp->setAttr(std::string("func.output.arg.num"), builder.getIntegerAttr(intType, outputArgNum));
-
+  // parallel attr
   llvm::SmallVector<mlir::Attribute> strAttrs;
   for (auto paraDim : paraDims){
     strAttrs.push_back(builder.getStringAttr(paraDim));
   }
   funcOp->setAttr(PARALLELDIMS, builder.getArrayAttr(strAttrs));
+  // transpose attr
+  llvm::SmallVector<mlir::Attribute> intAttrs;
+  for (auto isTran : isTranspose){
+    auto intType = builder.getIntegerType(1);
+    intAttrs.push_back(builder.getIntegerAttr(intType, isTran));
+  }
+  funcOp->setAttr(ARGTRAN, builder.getArrayAttr(intAttrs));
   // funcOp->setAttr(std::string(AttrKernelFunc), builder.getI32IntegerAttr(1));
   
   auto& entryBlock = funcOp.front();
@@ -64,11 +72,12 @@ std::vector<mlir::Value> createBatchNestForOp(mlir::OpBuilder& builder, std::vec
   mlir::Operation* op = block->getParentOp();
   mlir::affine::AffineForOp innerForOp = nullptr;
 
-  int64_t batchNum = 0;
+  int batchNum = 0;
   op->walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+    forOp->setAttr(BATCHNUM, builder.getIntegerAttr(builder.getI32Type(), batchNum));
     forOp->setAttr(FORDESC, builder.getStringAttr("batch"));
-    forOp->setAttr(BATCHNUM, builder.getIntegerAttr(builder.getI8Type(), batchNum));
     innerForOp = forOp;
+    batchNum++;
   });
   builder.setInsertionPointToStart(block);
   if (innerForOp != nullptr){

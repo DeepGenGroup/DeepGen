@@ -37,9 +37,9 @@ struct BufferCompare {
 namespace Analyzer {
   std::vector<int64_t> getParallelNumber(mlir::affine::AffineParallelOp parallelLevel, int64_t& totalNumber);
   int64_t getThreadPerBlock(mlir::affine::AffineParallelOp parallelLevel);
-  std::vector<mlir::func::FuncOp> collectFunctions(mlir::ModuleOp& module, const std::string& targetFuncName = {""});
   std::vector<mlir::affine::AffineForOp> collectFuncLoops(mlir::func::FuncOp funcOp);
-  std::set<std::string> collectFuncNames(mlir::ModuleOp& module);
+  std::map<std::string, std::string> collectNameTypeMap(mlir::ModuleOp& module);
+  std::set<std::string> collectFuncTypes(mlir::ModuleOp& module);
   int getThreadsPerCTA(mlir::ModuleOp module); 
 
   std::vector<mlir::Value> getParallelIdx(mlir::affine::AffineParallelOp parallelLevel);

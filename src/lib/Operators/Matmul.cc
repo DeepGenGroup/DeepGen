@@ -6,27 +6,31 @@ namespace Operators {
 std::string Matmul::s_function = "Unknown";
 
 void Matmul::buildNaiveExpress(mlir::ModuleOp module, 
-  std::vector<int64_t> shape, 
-  const std::vector<std::string>& dtypes,
-  const std::string& kernelName,
-  bool isTransposeA, 
-  bool isTransposeB
-  ) 
-{
+                              const std::vector<std::vector<int64_t>>& inputShape, 
+                              const std::vector<std::vector<int64_t>>& outputShape, 
+                              const std::vector<std::string>& inputDType,
+                              const std::vector<std::string>& outputDType,
+                              const std::vector<bool>& isTranspose, 
+                              const std::string& kernelName) {
   mlir::OpBuilder builder(module);
   builder.setInsertionPointToEnd(module.getBody());
-  auto ver = verify(builder, shape, dtypes);
+  auto ver = verify(inputShape, outputShape, inputDType, outputDType, isTranspose);
   if (ver.has_value()) {
     llvm::errs() << ver.value() << "\n";
     return ;
   }
   // get base args
-  auto result = splitShape(shape, 3);
-  std::vector<int64_t> batchs = result.first, mnk = result.second;
-  auto typeC = tools::getDType(builder, dtypes[2]);
+  auto [batchs, mn] = splitShape(outputShape[0], 2);
+  auto result = splitShape(inputShape[0], 2);
+  int64_t k = result.second[1];
+  if (isTranspose[0]) {
+    result = splitShape(inputShape[0], 2);
+    k = result.second[0];
+  }
+  auto typeC = tools::getDType(builder, outputDType[0]);
 
   // create funcOp
-  mlir::func::FuncOp funcOp = createFunc(builder, batchs, mnk, dtypes, kernelName, isTransposeA, isTransposeB);
+  mlir::func::FuncOp funcOp = createFunc(builder, inputShape, outputShape, inputDType, outputDType, isTranspose, kernelName);
   mlir::ValueRange operands = funcOp.getArguments();
 
   // create bacth nest forOp
@@ -36,7 +40,7 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
   mlir::Location loc_ = builder.getUnknownLoc();
   mlir::SmallVector<int64_t, 3> lowerBounds = {0, 0};
   mlir::SmallVector<int64_t, 3> steps = {1, 1};
-  mlir::SmallVector<int64_t, 3> upperBounds = {mnk[0], mnk[1]};
+  mlir::SmallVector<int64_t, 3> upperBounds = {mn[0], mn[1]};
   mlir::affine::buildAffineLoopNest(builder, loc_, lowerBounds, upperBounds, steps,
     [&](mlir::OpBuilder &nestedBuilder, mlir::Location loc, mlir::ValueRange ivs) {
       auto row = ivs[0];
@@ -44,11 +48,11 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
 
       auto zero = nestedBuilder.create<mlir::arith::ConstantOp>(loc, nestedBuilder.getFloatAttr(typeC, 0));
 
-      auto kLoopBody = [&](mlir::OpBuilder &builder, mlir::Location nestedLoc, mlir::Value k, mlir::ValueRange iterArgs) {
+      auto kLoopBody = [&](mlir::OpBuilder &builder, mlir::Location nestedLoc, mlir::Value kiv, mlir::ValueRange iterArgs) {
         mlir::OpBuilder::InsertionGuard nestedGuard(builder);
 
-        auto indexA = getShapeOrIndex<mlir::Value>(batchIvs, {row, k}, isTransposeA);
-        auto indexB = getShapeOrIndex<mlir::Value>(batchIvs, {k, col}, isTransposeB);
+        auto indexA = getShapeOrIndex<mlir::Value>(batchIvs, {row, kiv}, isTranspose[0]);
+        auto indexB = getShapeOrIndex<mlir::Value>(batchIvs, {kiv, col}, isTranspose[1]);
 
         auto ld_a = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*A*/operands[0], mlir::ValueRange(indexA));
         auto ld_b = builder.create<mlir::affine::AffineLoadOp>(nestedLoc, /*B*/operands[1], mlir::ValueRange(indexB));
@@ -56,9 +60,10 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
         auto add = builder.create<mlir::arith::AddFOp>(nestedLoc, mul, iterArgs[0]);
         builder.create<mlir::affine::AffineYieldOp>(nestedLoc, add.getResult());
       };
-      auto Cij = nestedBuilder.create<mlir::affine::AffineForOp>(loc, /*lb*/0, mnk[2], 1, mlir::ValueRange({zero.getResult()}), kLoopBody);
+      auto forK = nestedBuilder.create<mlir::affine::AffineForOp>(loc, /*lb*/0, k, 1, mlir::ValueRange({zero.getResult()}), kLoopBody);
+      forK->setAttr(FORDESC, builder.getStringAttr(std::string{"k"}));
       auto indexC = getShapeOrIndex<mlir::Value>(batchIvs, {row, col}, false);
-      nestedBuilder.create<mlir::affine::AffineStoreOp>(loc, Cij.getResult(0), /*C*/operands[2], mlir::ValueRange(indexC));
+      nestedBuilder.create<mlir::affine::AffineStoreOp>(loc, forK.getResult(0), /*C*/operands[2], mlir::ValueRange(indexC));
   });
   // add attr 
   int index = 0;
@@ -72,51 +77,65 @@ void Matmul::buildNaiveExpress(mlir::ModuleOp module,
 }
 
 
-std::optional<std::string> Matmul::verify(
-  mlir::OpBuilder builder, std::vector<int64_t> shape, const std::vector<std::string>& dtypes) {
-  if (shape.size() < 3 || shape.size() > 5) {
-    std::string err{"Shape size must is 3, 4 or 5."};
+std::optional<std::string> Matmul::verify(const std::vector<std::vector<int64_t>>& inputShape, 
+                                          const std::vector<std::vector<int64_t>>& outputShape, 
+                                          const std::vector<std::string>& inputDType,
+                                          const std::vector<std::string>& outputDType,
+                                          const std::vector<bool>& isTranspose) {
+  if (inputShape.size() != 2 || outputShape.size() != 1) {
+    std::string err{"The number of tensors does not meet the requirements."};
     return err;
   }
-  if(dtypes.size() != 3) {
-    std::string err{"dtypes size must is 3."};
+  if (inputShape.size() != inputDType.size() || outputShape.size() != outputDType.size()) {
+    std::string err{"The dimensions of shape and dtype are not equal."};
     return err;
   }
-  for(auto dtype : dtypes){
-    auto type = tools::getDType(builder, dtype);
-    if (type == nullptr) {
-      std::string err{"No exist this data type."};
+  // transpose
+  if (isTranspose[0] == false && isTranspose[1] == false) {
+    if (inputShape[0][inputShape[0].size()-1] != inputShape[1][inputShape[1].size()-2]) {
+      std::string err{"The k dimensions are not equal"};
+      return err;
+    }
+  } else if (isTranspose[0] == true && isTranspose[1] == true) {
+    if (inputShape[0][inputShape[0].size()-2] != inputShape[1][inputShape[1].size()-1]) {
+      std::string err{"The k dimensions are not equal"};
+      return err;
+    }
+  } else if (isTranspose[0] == false && isTranspose[1] == true) {
+    if (inputShape[0][inputShape[0].size()-1] != inputShape[1][inputShape[1].size()-1]) {
+      std::string err{"The k dimensions are not equal"};
+      return err;
+    }
+  } else {
+    if (inputShape[0][inputShape[0].size()-2] != inputShape[1][inputShape[1].size()-2]) {
+      std::string err{"The k dimensions are not equal"};
       return err;
     }
   }
   return std::nullopt;
 }
 
-mlir::func::FuncOp Matmul::createFunc(
-  mlir::OpBuilder& builder, 
-  std::vector<int64_t> batchs, 
-  std::vector<int64_t> shape, 
-  const std::vector<std::string>& dtypes, 
-  const std::string& kernelName,
-  bool isTransposeA,
-  bool isTransposeB
-  )
-{
-  std::vector<mlir::Type> mlirTypeArray;
-  for(auto type : dtypes) {
-    auto mlirType = tools::getDType(builder, type);
-    mlirTypeArray.push_back(mlirType);
+mlir::func::FuncOp Matmul::createFunc(mlir::OpBuilder& builder, 
+                                      const std::vector<std::vector<int64_t>>& inputShape, 
+                                      const std::vector<std::vector<int64_t>>& outputShape, 
+                                      const std::vector<std::string>& inputDType,
+                                      const std::vector<std::string>& outputDType,
+                                      const std::vector<bool>& isTranspose, 
+                                      const std::string& kernelName) {
+  std::vector<mlir::Type> inTypeArray;
+  for(std::string type : inputDType) {
+    mlir::Type mlirType = tools::getDType(builder, type);
+    inTypeArray.push_back(mlirType);
   }
-  auto shape_a = getShapeOrIndex(batchs, {shape[0], shape[2]}, isTransposeA);
-  auto shape_b = getShapeOrIndex(batchs, {shape[2], shape[1]}, isTransposeB);
-  auto shape_c = getShapeOrIndex(batchs, {shape[0], shape[1]}, false);
+  mlir::Type outType = tools::getDType(builder, outputDType[0]);
+
   auto ms = MemorySpace::global;
-  auto typeA = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_a), mlirTypeArray[0], {}, static_cast<int>(ms));
-  auto typeB = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_b), mlirTypeArray[1], {}, static_cast<int>(ms));
-  auto typeC = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape_c), mlirTypeArray[2], {}, static_cast<int>(ms));
+  auto typeA = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(inputShape[0]), inTypeArray[0], {}, static_cast<int>(ms));
+  auto typeB = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(inputShape[1]), inTypeArray[1], {}, static_cast<int>(ms));
+  auto typeC = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(outputShape[0]), outType, {}, static_cast<int>(ms));
   Matmul::s_function = kernelName;
 
-  return buildFunction(builder, kernelName, "Matmul", {typeA, typeB, typeC}, {"y", "x"}, 1);
+  return buildFunction(builder, kernelName, "Matmul", {typeA, typeB, typeC}, isTranspose, {"y", "x"}, 1);
 }
 
 }  // Operators

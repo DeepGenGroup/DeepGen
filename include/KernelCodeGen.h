@@ -7,7 +7,7 @@
 
 #include "Conversion/Fusing.h"
 #include "Conversion/Mapping.h"
-#include "Conversion/Optimizer.h"
+#include "Conversion/Optimize.h"
 #include "Conversion/LoweringPasses.h"
 
 #include "Target/LLVMIRTranslation.h"
@@ -18,37 +18,48 @@
 namespace KernelCodeGen {
 
   class KernelCodeGenerator {
-    using Config = std::map<std::string, std::vector<std::map<std::string, int>>>;
   public:
-    KernelCodeGenerator(Target target_, const std::string& arch_) : target(target_), arch(arch_) {}
+    KernelCodeGenerator(Target target, const std::string& arch) : target(target), arch(arch) {
+      // mlir::MLIRContext context;
+      context.getOrLoadDialect<mlir::affine::AffineDialect>();
+      context.getOrLoadDialect<mlir::memref::MemRefDialect>();
+      context.getOrLoadDialect<mlir::func::FuncDialect>();
+      context.getOrLoadDialect<mlir::arith::ArithDialect>();
+      context.getOrLoadDialect<mlir::gpu::GPUDialect>();
+      context.getOrLoadDialect<mlir::vector::VectorDialect>();
+      context.getOrLoadDialect<mlir::scf::SCFDialect>();
+      context.getOrLoadDialect<mlir::math::MathDialect>();
+      context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
+      context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
+      // this->conetxt = conetxt;
+    }
 
     KernelCodeGenerator(const KernelCodeGenerator& other);
     
     template <typename OperatorType, typename... Args> 
-    void create(mlir::ModuleOp mod, Args &&...args) {
-      mlir::MLIRContext* context = mod.getContext();
-      context->getOrLoadDialect<mlir::affine::AffineDialect>();
-      context->getOrLoadDialect<mlir::memref::MemRefDialect>();
-      context->getOrLoadDialect<mlir::func::FuncDialect>();
-      context->getOrLoadDialect<mlir::arith::ArithDialect>();
-      context->getOrLoadDialect<mlir::gpu::GPUDialect>();
-      context->getOrLoadDialect<mlir::vector::VectorDialect>();
-      context->getOrLoadDialect<mlir::scf::SCFDialect>();
-      context->getOrLoadDialect<mlir::math::MathDialect>();
-      context->getOrLoadDialect<mlir::cf::ControlFlowDialect>();
-      context->getOrLoadDialect<mlir::LLVM::LLVMDialect>();
-      OperatorType::buildNaiveExpress(mod, std::forward<Args>(args)...);
+    void create(mlir::ModuleOp mod,
+                const std::vector<std::vector<int64_t>>& intputShape,
+                const std::vector<std::vector<int64_t>>& outputShape,
+                const std::vector<std::string>& inputDType,
+                const std::vector<std::string>& outputDType,
+                const std::vector<bool>& isTranspose, 
+                Args &&...args) {
+      OperatorType::buildNaiveExpress(mod, intputShape, outputShape, inputDType, outputDType, isTranspose, std::forward<Args>(args)...);
     }
 
-    std::vector<std::string> createModel(mlir::ModuleOp& mod, std::vector<KernelData> kernelList);
+    mlir::ModuleOp createModule();
+
+    std::vector<std::string> createKernels(mlir::ModuleOp& mod, std::vector<KernelData> kernelList);
 
     bool fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList);
 
-    bool mapping(mlir::ModuleOp& mod, std::vector<std::map<std::string, int64_t>> paraCfg);
+    std::vector<mlir::ModuleOp> splitModule(mlir::ModuleOp& mod);
 
-    bool optimize(mlir::ModuleOp& mod, std::map<std::string, int> config);
+    bool mapping(mlir::ModuleOp& mod, std::map<std::string, std::vector<std::map<std::string, int64_t>>> tileConfig);
 
-    bool lowering(mlir::ModuleOp& mod, std::vector<int>& griddims, std::vector<int>& blockdims, int& shmbytes);
+    bool optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig);
+
+    bool lowering(mlir::ModuleOp& mod/*, std::vector<int>& griddims, std::vector<int>& blockdims, int& shmbytes*/);
 
     std::string translate(mlir::ModuleOp& mod);
     
@@ -60,6 +71,7 @@ namespace KernelCodeGen {
   private:
     Target target;
     const std::string arch;
+    mlir::MLIRContext context;
   };
 
 }

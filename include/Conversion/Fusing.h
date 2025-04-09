@@ -29,21 +29,21 @@ struct FuseKernelData {
   std::vector<std::vector<int64_t>> midVarShapes;
   std::vector<std::string> funcArgDtypes;
   std::vector<std::string> midVarDtypes;
-  std::vector<std::map<std::string, int64_t>> funcArgIndex;
-  std::vector<std::map<std::string, int64_t>> midVarIndex;
+  std::vector<std::map<std::string, std::vector<int64_t>>> funcArgIndex;
+  std::vector<std::map<std::string, std::vector<int64_t>>> midVarIndex;
+  std::vector<bool> isTranspose;
   std::vector<std::string> paraDims;
   int outputArgNum;
 };
 
-std::vector<mlir::func::FuncOp> getKernelFuncOps(mlir::ModuleOp mod, 
-                                                 const std::vector<std::string>& kernelNames);
-
 std::vector<std::vector<mlir::affine::AffineForOp>> getBatchFors(const std::vector<mlir::func::FuncOp>& fks); 
 
-std::tuple<mlir::func::FuncOp, std::vector<mlir::Value>, std::vector<mlir::Value>> createFuseFuncAndMidMems(mlir::OpBuilder& builder, 
-                                                                                                            FuseKernelData fkd);
+std::tuple<mlir::func::FuncOp, 
+std::vector<mlir::Value>, 
+std::vector<mlir::Value>> createFuseFuncAndMidMems(mlir::OpBuilder& builder, 
+                                                   FuseKernelData fkd);
 
-std::vector<std::vector<mlir::Value>> collectOldMems(const std::vector<std::map<std::string, int64_t>>& newMemsIndex, 
+std::vector<std::vector<mlir::Value>> collectOldMems(const std::vector<std::map<std::string, std::vector<int64_t>>>& newMemsIndex, 
                                                      const std::vector<mlir::func::FuncOp>& fks);
 
 void moveOperation(mlir::func::FuncOp funcOp, 

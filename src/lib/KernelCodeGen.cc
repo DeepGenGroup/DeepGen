@@ -9,32 +9,31 @@
 
 namespace KernelCodeGen {
 
-std::unique_ptr<Optimizer> createOptimizer(const std::string& opName) {
-  if (opName == "Matmul") {
-    return std::make_unique<MatmulOptimizer>();
-  }
-  return nullptr;
-}
-
 KernelCodeGenerator::KernelCodeGenerator(const KernelCodeGenerator& other):
   KernelCodeGenerator(other.target,other.arch)
 {;}
 
 
-std::vector<std::string> KernelCodeGenerator::createModel(mlir::ModuleOp& mod, std::vector<KernelData> kernelList) {
+mlir::ModuleOp KernelCodeGenerator::createModule() {
+  // 在同一个context下生成moduleop
+  mlir::OpBuilder builder(&context);
+  mlir::ModuleOp module = mlir::ModuleOp::create(builder.getUnknownLoc());
+  return module;
+}
+
+
+std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod, std::vector<KernelData> kernelList) {
   // create all kernels
   std::vector<std::string> noSupKernels;
   for (auto kernel : kernelList) {
+    std::vector<std::vector<int64_t>> inputShape(kernel.shapes.begin(), kernel.shapes.end()-kernel.outputArgNum);
+    std::vector<std::vector<int64_t>> outputShape(kernel.shapes.end()-kernel.outputArgNum, kernel.shapes.end());
+    std::vector<std::string> inputDType(kernel.dtypes.begin(), kernel.dtypes.end()-kernel.outputArgNum);
+    std::vector<std::string> outputDType(kernel.dtypes.end()-kernel.outputArgNum, kernel.dtypes.end());
     if (kernel.type == "Matmul") {
-      std::vector<int64_t> dims{kernel.shapes[2].begin(), kernel.shapes[2].end()};
-      int64_t k = kernel.shapes[0][kernel.shapes[0].size()-1];
-      if (kernel.isTrans[0]) {
-        k = kernel.shapes[0][kernel.shapes[0].size()-2];
-      }
-      dims.push_back(k);
-      create<Operators::Matmul>(mod, dims, kernel.dtypes, kernel.name, kernel.isTrans[0], kernel.isTrans[1]);
+      create<Operators::Matmul>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
     } else if (kernel.type == "Softmax") {
-      create<Operators::Softmax>(mod, kernel.shapes[0], kernel.dtypes[0], kernel.name, kernel.isTrans[0]);
+      create<Operators::Softmax>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
     } else {
       noSupKernels.push_back(kernel.type);
     }
@@ -46,7 +45,7 @@ std::vector<std::string> KernelCodeGenerator::createModel(mlir::ModuleOp& mod, s
 bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList) {
   // kernel fusing
   for (auto kernels : fkList) {  // kernels
-    auto fks = getKernelFuncOps(mod, kernels.fuseKernels);
+    auto fks = getSpecifiedKernels(mod, kernels.fuseKernels);
     // get batch kernels
     auto funcBatchs = getBatchFors(fks);
     // create new func and get new func args and mid vars
@@ -69,10 +68,26 @@ bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData
 }
 
 
-bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::vector<std::map<std::string, int64_t>> paraCfg) {
-  // 并行化映射
-  auto kernels = getKernels(mod);
+std::vector<mlir::ModuleOp> KernelCodeGenerator::splitModule(mlir::ModuleOp& mod) {
+  // split module 
+  std::vector<mlir::ModuleOp> mods;
+  auto kernels = getAllKernels(mod);
   for (auto kernel : kernels) {
+    auto newMod = createModule();
+    mlir::Block& moduleBlock = newMod.getBodyRegion().front();
+    kernel->moveBefore(&moduleBlock, moduleBlock.end());
+    mods.push_back(newMod);
+  }
+  return mods;
+}
+
+
+bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::map<std::string, std::vector<std::map<std::string, int64_t>>> tileConfig) {
+  // 并行化映射
+  auto kernels = getAllKernels(mod);
+  for (auto kernel : kernels) {
+    auto name = kernel.getName().str();
+    auto paraCfg = tileConfig[name];
     // collect datas
     auto paraDims = getArrayStringAttr(kernel, PARALLELDIMS);
     auto yloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
@@ -89,6 +104,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::vector<std::map<std:
     LOG_DEBUG("===== X bufferize =====\n", mod);
 
     // decouple 将y中含有两个的循环进行拆分，规范化所有的并行循环，保证fory下就是forx
+    // 针对softmax这个算子
     normalizeParaForOp(yloops, paraCfg);
     LOG_DEBUG("===== decouple =====\n", mod);
 
@@ -98,17 +114,18 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::vector<std::map<std:
       // split tile for
       std::vector<int64_t> tiley{paraCfg[i]["BLOCK_SIZE_Y"], paraCfg[i]["THREAD_SIZE_Y"]};
       std::vector<int64_t> tilex{paraCfg[i]["BLOCK_SIZE_X"], paraCfg[i]["THREAD_SIZE_X"]};
-      auto bytyfory = Rewriter::split(yloops[i], tiley, {"block.y", "thread.y"});
-      auto bxtxforx = Rewriter::split(xloops[i], tilex, {"block.x", "thread.x"});
+      auto bytyfory = Rewriter::split(yloops[i], tiley, {"blocky", "thready", "ttiley"});
+      auto bxtxforx = Rewriter::split(xloops[i], tilex, {"blockx", "threadx", "ttilex"});
       // reorder tile for
       Rewriter::reorder({bytyfory[0], bxtxforx[0], bytyfory[1], bxtxforx[1], bytyfory[2], bxtxforx[2]});
+      LOG_DEBUG("===== split & reorder =====\n", mod);
       // parallel tile for
       std::vector<mlir::affine::AffineForOp> blockForOps;
       for (auto paraDim : paraDims) {
         if (paraDim == "y") blockForOps.push_back(bytyfory[0]);
         if (paraDim == "x") blockForOps.push_back(bxtxforx[0]);
       }
-      auto blockIdx = Rewriter::parallel(blockForOps, BLOCKIDX);
+      auto blockIdx = Rewriter::parallel(blockForOps, BLOCKIDX, true);
       auto threadIdx = Rewriter::parallel({bytyfory[1], bxtxforx[1]}, THREADIDX);
       blockIdxs.push_back(blockIdx);
     }
@@ -122,7 +139,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::vector<std::map<std:
     }
 
     // 若block.x的循环还存在的话，就应该将这个循环下移到parallel内部
-    auto bxloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"block.x"});
+    auto bxloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"blockx"});
     if (bxloops.size()){
       blockForOpShiftDown(bxloops);
       LOG_DEBUG("===== blockForOpShiftDown =====\n", mod);
@@ -132,31 +149,45 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::vector<std::map<std:
     mlir::OpBuilder builder(kernel);
     // fuse blockidx
     auto blockParaOps = collectOps<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, BLOCKIDX);
-    if (blockParaOps.size()) {
+    if (blockParaOps.size() > 1) {
       builder.setInsertionPointAfter(blockParaOps.back());
       auto blockIdx = fuseParallelOp(builder, blockParaOps);
     }
     // fuse threadidx
     auto threadParaOps = collectOps<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, THREADIDX);
-    if (threadParaOps.size()) {
+    if (threadParaOps.size() > 1) {
       builder.setInsertionPointAfter(threadParaOps.back());
       auto threadIdx = fuseParallelOp(builder, threadParaOps);
     }
     LOG_DEBUG("===== fuseParallelOp blockIdx & threadIdx =====\n", mod);
+    kernel->setAttr(std::string("func.state"), builder.getStringAttr("gpu"));
   }
   return true;
 }
 
-bool KernelCodeGenerator::optimize(mlir::ModuleOp &mod, std::map<std::string, int> config) {
-  auto opNames = Analyzer::collectFuncNames(mod);
-  for (auto opName : opNames) {
-    auto opt = createOptimizer(opName);
-    if (opt == nullptr) {
+
+bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig) {
+  // optimize
+  // create opt tool pools
+  auto KernelTypes = Analyzer::collectFuncTypes(mod);
+  std::map<std::string, std::unique_ptr<Optimizer>> opts;
+  for (auto KernelType : KernelTypes) {
+    if (KernelType == "Matmul") {
+      opts[KernelType] = std::make_unique<MatmulOptimizer>();
+    } else if (KernelType == "FlashAttn") {
+
+    } else {
       llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
       return false;
     }
-    if (!opt->applicable(mod)) return false;   // collect matmul datas
-    opt->applyOptimzer(mod, config);
+  }
+  // optimize all kernel
+  auto ntMap = Analyzer::collectNameTypeMap(mod);
+  for (auto nt : ntMap) {  // {matmul1 : Matmul}
+    auto opt = std::move(opts[nt.second]);
+    auto funcOps = getSpecifiedKernels(mod, {nt.first});
+    if (!opt->applicable(funcOps[0], tuneConfig.at(nt.first))) return false;   // collect matmul datas
+    opt->applyOptimzer(funcOps[0]);
   }
   return true;
 }
@@ -189,7 +220,6 @@ bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target, 
     return false;
   return true;  
 }
-
 
 
 bool firstLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context) {
@@ -260,9 +290,9 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target targ
 }
 
 
-bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims, OUT int& shmBytes) {
+bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod/*, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims, OUT int& shmBytes*/) {
   // mod.dump();
-  mlir::MLIRContext* context = mod.getContext();
+  mlir::MLIRContext* context = &(this->context);
   LOG_DEBUG(" === start mlir =====\n",mod) ;
 
   transforms(mod, context, target, arch);
@@ -271,8 +301,8 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
   firstLowering(mod, context);
   LOG_DEBUG(" === after firstLowering =====\n",mod) ;
 
+  /*
   bool findKernel = false;
-  
   auto op = mod.getOperation();
   int shmElements = 0;
   int elementBytes = 0;
@@ -298,7 +328,7 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
       blockdims = tools::getIntArrayAttr(f,AttrBlockDim);
     }
   });
-
+*/
   secondLowering(mod, context, target);
   LOG_DEBUG(" === after secondLowering =====\n",mod) ;
   

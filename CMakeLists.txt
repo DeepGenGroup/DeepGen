@@ -17,7 +17,10 @@ set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
 # set(PYTHON_VERSION "3.8")
 
 find_package(Python COMPONENTS Interpreter Development)
-
+find_package(pybind11 REQUIRED)
+if(pybind11_FOUND)
+  message("==== Found pybind11 : ${pybind11_INCLUDE_DIRS}")
+endif()
 if(Python_FOUND)
     message(STATUS "=== Found Python: ${Python_EXECUTABLE}")
     message(STATUS "=== Python Include: ${Python_INCLUDE_DIRS}")

@@ -162,7 +162,7 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
     std::ifstream _log(_flog);
     std::string log(std::istreambuf_iterator<char>(_log), {});
     if (err == 255) {
-      throw std::runtime_error("Internal Triton PTX codegen error: \n" + log);
+      throw std::runtime_error("Internal DeepGen PTX codegen error: \n" + log);
     } else if (err == 128 + SIGSEGV) {
       throw std::runtime_error("Please run `ptxas " + ptxPath + "` to confirm that this is a bug in `ptxas`\n" + log);
     } else {

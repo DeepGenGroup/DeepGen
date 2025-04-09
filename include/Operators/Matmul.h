@@ -7,23 +7,26 @@ namespace Operators {
   
 struct Matmul : Operator<Matmul> {
   static void buildNaiveExpress(mlir::ModuleOp module, 
-    std::vector<int64_t> shape, 
-    const std::vector<std::string>& dtypes,
-    const std::string& kernelName,
-    bool isTransposeA = false,
-    bool isTransposeB = false
-    );
+                                const std::vector<std::vector<int64_t>>& inputShape, 
+                                const std::vector<std::vector<int64_t>>& outputShape, 
+                                const std::vector<std::string>& inputDType,
+                                const std::vector<std::string>& outputDType,
+                                const std::vector<bool>& isTranspose, 
+                                const std::string& kernelName);
 
-  static std::optional<std::string> verify(mlir::OpBuilder builder, std::vector<int64_t> shape, const std::vector<std::string>& dtype);
+  static std::optional<std::string> verify(const std::vector<std::vector<int64_t>>& inputShape, 
+                                           const std::vector<std::vector<int64_t>>& outputShape, 
+                                           const std::vector<std::string>& inputDType,
+                                           const std::vector<std::string>& outputDType,
+                                           const std::vector<bool>& isTranspose);
   
   static mlir::func::FuncOp createFunc(mlir::OpBuilder& builder, 
-    std::vector<int64_t> batchs, 
-    std::vector<int64_t> shape, 
-    const std::vector<std::string>& dtypes,
-    const std::string& kernelName,
-    bool isTransposeA = false, 
-    bool isTransposeB = false
-    );
+                                      const std::vector<std::vector<int64_t>>& inputShape, 
+                                      const std::vector<std::vector<int64_t>>& outputShape, 
+                                      const std::vector<std::string>& inputDType,
+                                      const std::vector<std::string>& outputDType,
+                                      const std::vector<bool>& isTranspose, 
+                                      const std::string& kernelName);
 
   static std::string s_function;
 

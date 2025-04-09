@@ -9,8 +9,6 @@
 
 namespace KernelCodeGen {
 
-std::vector<mlir::func::FuncOp> getKernels(mlir::ModuleOp mod);
-
 template<typename operation>
 std::vector<operation> collectOps(mlir::func::FuncOp funcOp, 
                                   const std::string& attrName, 

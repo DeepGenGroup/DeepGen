@@ -2,21 +2,6 @@
 
 namespace KernelCodeGen {
 
-std::vector<mlir::func::FuncOp> getKernelFuncOps(mlir::ModuleOp mod, 
-                                                 const std::vector<std::string>& kernelNames) {
-  // 从 module 中获取需要进行融合的kernel 的funcop
-  std::vector<mlir::func::FuncOp> fks;
-  for (auto fk : kernelNames) {
-    mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
-      if (funcOp.getName().str() == fk) {
-        fks.push_back(funcOp);
-        return;
-      }
-    });
-  }
-  return fks;
-}
-
 std::vector<std::vector<mlir::affine::AffineForOp>> getBatchFors(const std::vector<mlir::func::FuncOp>& fks) {
   // 获取fuse kernel中的所有batch for
   std::vector<std::vector<mlir::affine::AffineForOp>> funcBatchs;
@@ -35,8 +20,10 @@ std::vector<std::vector<mlir::affine::AffineForOp>> getBatchFors(const std::vect
   return funcBatchs;
 }
 
-std::tuple<mlir::func::FuncOp, std::vector<mlir::Value>, std::vector<mlir::Value>> createFuseFuncAndMidMems(mlir::OpBuilder& builder, 
-                                                                                                            FuseKernelData fkd) {
+std::tuple<mlir::func::FuncOp, 
+std::vector<mlir::Value>, 
+std::vector<mlir::Value>> createFuseFuncAndMidMems(mlir::OpBuilder& builder, 
+                                                   FuseKernelData fkd) {
   // 创建一个新的融合 funcop ，并且生成fuse kernel之间的中间变量
   // create new FuncOp
   std::vector<mlir::Type> newInputTypes;
@@ -47,7 +34,7 @@ std::tuple<mlir::func::FuncOp, std::vector<mlir::Value>, std::vector<mlir::Value
     auto type = mlir::MemRefType::get(llvm::ArrayRef<int64_t>(shape), mlirType, {}, memSpaceAttr);
     newInputTypes.push_back(type);
   }
-  mlir::func::FuncOp newFuncOp = buildFunction(builder, fkd.name, fkd.type, newInputTypes, fkd.paraDims, fkd.outputArgNum);
+  mlir::func::FuncOp newFuncOp = buildFunction(builder, fkd.name, fkd.type, newInputTypes, fkd.isTranspose, fkd.paraDims, fkd.outputArgNum);
   auto funcArgs_ = newFuncOp.getArguments();
   // create global var
   std::vector<mlir::Value> midVars, funcArgs{funcArgs_.begin(), funcArgs_.end()};
@@ -62,7 +49,7 @@ std::tuple<mlir::func::FuncOp, std::vector<mlir::Value>, std::vector<mlir::Value
   return {newFuncOp, funcArgs, midVars};
 }
 
-std::vector<std::vector<mlir::Value>> collectOldMems(const std::vector<std::map<std::string, int64_t>>& newMemsIndex, 
+std::vector<std::vector<mlir::Value>> collectOldMems(const std::vector<std::map<std::string, std::vector<int64_t>>>& newMemsIndex, 
                                                      const std::vector<mlir::func::FuncOp>& fks) {
   // newMemsIndex 每一个item对应一个新的函数签名变量，新的变量需要替换掉旧的函数签名变量，采用新变量索引->func(旧索引)的方式获取旧的 memroy value
   std::vector<std::vector<mlir::Value>> memsVec;
@@ -72,8 +59,10 @@ std::vector<std::vector<mlir::Value>> collectOldMems(const std::vector<std::map<
     for (auto oldFuncOp : fks) {
       auto name = oldFuncOp.getName().str();
       if (itemMap.count(name)) {
-        auto arg = oldFuncOp.getBody().getArgument(itemMap[name]);
-        temp.push_back(arg);
+        for (auto idx : itemMap[name]) {
+          auto arg = oldFuncOp.getBody().getArgument(idx);
+          temp.push_back(arg);         
+        }
       }
     }
     memsVec.push_back(temp);

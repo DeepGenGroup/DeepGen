@@ -4,27 +4,12 @@
 namespace KernelCodeGen {
 namespace Analyzer {
 
-std::vector<mlir::func::FuncOp> collectFunctions(mlir::ModuleOp& module, const std::string& targetFuncName) {
-  std::vector<mlir::func::FuncOp> result;
-  module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
-    auto state = funcOp->getAttr(std::string("func.state"));
-    auto stateAttr = state.dyn_cast<mlir::StringAttr>();
-
-    if (stateAttr.getValue().str() == "cpu") {
-      auto opName = funcOp->getAttr(std::string("func.op.name"));
-      auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
-
-      if (opNameAttr.getValue().str() == targetFuncName) 
-        result.push_back(funcOp);
-    }   
-  });
-  return result;
-}
 
 int64_t getThreadPerBlock(mlir::affine::AffineParallelOp parallelLevel) {
   // 获取block的线程数量
   int64_t threadSum = 1;
-  for (auto i : parallelLevel.getUpperBoundsMap().getConstantResults()) {
+  auto oldRanges = parallelLevel.getConstantRanges();
+  for (auto i : *oldRanges) {
     threadSum *= i;
   }
   return threadSum;
@@ -54,17 +39,22 @@ std::vector<mlir::affine::AffineForOp> collectFuncLoops(mlir::func::FuncOp funcO
   return res;
 }
 
-std::set<std::string> collectFuncNames(mlir::ModuleOp& module) {
+std::map<std::string, std::string> collectNameTypeMap(mlir::ModuleOp& module) {
+  std::map<std::string, std::string> ntMap;
+  module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
+    auto type = funcOp->getAttr(std::string("func.op.type"));
+    auto typeAttr = type.dyn_cast<mlir::StringAttr>();
+    ntMap[funcOp.getName().str()] = typeAttr.getValue().str();
+  });
+  return ntMap;
+}
+
+std::set<std::string> collectFuncTypes(mlir::ModuleOp& module) {
   std::set<std::string> result;
   module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
-    auto state = funcOp->getAttr(std::string("func.state"));
-    auto stateAttr = state.dyn_cast<mlir::StringAttr>();
-
-    if (stateAttr.getValue().str() == "cpu") {
-      auto opName = funcOp->getAttr(std::string("func.op.name"));
-      auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
-      result.insert(opNameAttr.getValue().str());
-    } 
+    auto type = funcOp->getAttr(std::string("func.op.type"));
+    auto typeAttr = type.dyn_cast<mlir::StringAttr>();
+    result.insert(typeAttr.getValue().str()); 
   });
   return result;
 }
@@ -73,7 +63,7 @@ int getThreadsPerCTA(mlir::ModuleOp module) {
   int threadNum = 1;
   for (auto &op : module.getBody()->getOperations()) {
     if (auto funcOp = llvm::dyn_cast<mlir::LLVM::LLVMFuncOp>(op)) {
-      if (!funcOp->hasAttr("func.op.name")) continue;
+      if (!funcOp->hasAttr("func.op.type")) continue;
       auto blockDims = funcOp->getAttrOfType<mlir::DenseI32ArrayAttr>("func.block.dim");
       for (size_t i=0; i<blockDims.size(); i++) {
         threadNum *= blockDims[i];
@@ -89,9 +79,8 @@ std::vector<mlir::Value> getParallelIdx(mlir::affine::AffineParallelOp parallelL
   // auto dim = parallelLevel.getNumDims();
   std::vector<mlir::Value> idxes;
   auto ivs = parallelLevel.getIVs();
-  for (auto iv : ivs)
-  {
-    idxes.push_back(iv);
+  for (int i=ivs.size()-1; i>=0; i--) {
+    idxes.push_back(ivs[i]);
   }
   return idxes;
 }

@@ -126,7 +126,7 @@ enum class KcgKernelType : int {
   // other operators ...
 };
 
-using Config = std::map<std::string, int>;
+using Config = std::map<std::string, int64_t>;
 
 struct KernelInfo {
   std::string m_binaryPath;
@@ -179,6 +179,8 @@ struct NVVMMetadata {
 #define BATCHNUM        "batch.num"
 #define PARALLELDIMS    "parallel.dim"
 #define ITERVARDESC     "iter.var.desc"
+#define ARGTRAN         "arg.tran"
+#define APPLYDESC       "apply.desc"
 
 #define SHM_VAR_NAME(i) (std::string("kcg_shm")+std::to_string(i))
 
@@ -253,18 +255,11 @@ namespace tools {
 namespace mapUtils {
   
   // map utils functions
-  mlir::AffineExpr waprId(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr wapr_x(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr wapr_y(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr laneId(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr lane_x(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr lane_y(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid_y(mlir::AffineExpr bid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid_x(mlir::AffineExpr bid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid(mlir::AffineExpr bx,mlir::AffineExpr by, const std::map<std::string, int>& config);
-  mlir::AffineExpr tid(mlir::AffineExpr tx,mlir::AffineExpr ty, const std::map<std::string, int>& config);
-
-  llvm::SmallVector<mlir::AffineExpr> reshapeBlock(mlir::AffineExpr tid, const std::vector<int> shape);
+  mlir::AffineExpr wapr_x(mlir::AffineExpr tid, int warpSize, int blockLayoutX);
+  mlir::AffineExpr wapr_y(mlir::AffineExpr tid, int warpSize, int blockLayoutX);
+  mlir::AffineExpr lane_x(mlir::AffineExpr tid, int warpSize, int warpLayoutX);
+  mlir::AffineExpr lane_y(mlir::AffineExpr tid, int warpSize, int warpLayoutX);
+  llvm::SmallVector<mlir::AffineExpr> reshapeThreadBlock(mlir::AffineExpr tid, const std::vector<int64_t> shape);
 
 }
 
