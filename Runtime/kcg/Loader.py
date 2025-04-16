@@ -35,7 +35,7 @@ class CudaLoaderST(object):
             with open(so, "rb") as f:
                 self.cache_path = self.cache.put(f.read(), self.fname, binary=True)
         
-    def loadBinary(self, kernelFile : KernelLibFile) -> KernelRuntimeInfo :
+    def loadKernel(self, kernelFile : KernelLibFile) -> KernelRuntimeInfo :
         if self.load_binary is None:
             import importlib.util
             spec = importlib.util.spec_from_file_location("loader_cuda", self.cache_path)
@@ -54,6 +54,14 @@ class CudaLoaderST(object):
             kernelFile.m_kernelInfo = info
             
         return kernelFile.m_kernelInfo
+    
+    def unloadKernel(self,kernelFile : KernelLibFile) -> bool :
+        if kernelFile is not None and kernelFile.m_kernelInfo is not None :
+            try:
+                self.unload_binary(kernelFile.m_kernelInfo.m_module)
+            except Exception as e :
+                return False
+        return True
 
     
 class HIPLoaderST(object):
