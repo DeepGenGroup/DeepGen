@@ -104,8 +104,12 @@ initialize_module(llvm::Module *module, const std::string &triple,
     llvm::legacy::PassManager pm;
     pm.add(llvm::createVerifierPass());
     pm.run(*module);
-
-    module->setTargetTriple(triple);
+    llvm::Triple tr;
+    tr.setArch(llvm::Triple::ArchType::amdgcn);
+    tr.setVendor(llvm::Triple::VendorType::AMD);
+    tr.setOS(llvm::Triple::OSType::AMDHSA);
+    tr.setEnvironment(llvm::Triple::EnvironmentType::UnknownEnvironment);
+    module->setTargetTriple(tr);
 
     std::string error;
     auto target =

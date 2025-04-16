@@ -335,8 +335,8 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     int64_t blockThreads = Analyzer::getThreadPerBlock(blockLevel);
     auto glob_load_total_width_a = config["BLOCK_SIZE_K"] * config["BLOCK_SIZE_M"] / blockThreads;
     auto glob_load_total_width_b = config["BLOCK_SIZE_K"] * config["BLOCK_SIZE_N"] / blockThreads;
-    auto elementA = A.getType().dyn_cast<mlir::MemRefType>().getElementType();
-    auto elementB = B.getType().dyn_cast<mlir::MemRefType>().getElementType();
+    auto elementA = mlir::dyn_cast<mlir::MemRefType>(A.getType()).getElementType();
+    auto elementB = mlir::dyn_cast<mlir::MemRefType>(B.getType()).getElementType();
 
     auto regB = Rewriter::alloc_buffer(blockLevel, MemorySpace::local, {config["THREAD_SIZE_N"]}, elementB, "regB");
     auto regA = Rewriter::alloc_buffer(blockLevel, MemorySpace::local, {config["THREAD_SIZE_M"]}, elementA, "regA");
@@ -405,7 +405,7 @@ void MatmulOptimizer::applyOptimzer(mlir::ModuleOp& module, std::map<std::string
     mlir::Value smC, regC_;
     if (config["LOCAL_SPLIT_U"] > 1) {
       auto LSUBarrier = Rewriter::barrier(m_inner_0, Position::before);
-      auto elementC = C.getType().dyn_cast<mlir::MemRefType>().getElementType();
+      auto elementC = mlir::dyn_cast<mlir::MemRefType>(C.getType()).getElementType();
       regC_ = Rewriter::alloc_buffer(/*parallelLevel*/blockLevel, MemorySpace::local, {config["THREAD_SIZE_M"] * config["THREAD_SIZE_N"]}, elementC, "regC");
       smC = Rewriter::alloc_buffer(/*parallelLevel*/gridLevel, MemorySpace::shared, {config["LOCAL_SPLIT_U"], config["BLOCK_SIZE_M"], config["BLOCK_SIZE_N"]}, elementC, "smC");
 

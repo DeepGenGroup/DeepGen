@@ -86,7 +86,12 @@ std::string translateLLVMIRToPTX(llvm::Module &module, int cc, int version) {
   // module.print(llvm::outs(), nullptr);
 
   // create machine
-  module.setTargetTriple(triple);
+  llvm::Triple tr;
+  tr.setArch(llvm::Triple::ArchType::nvptx);
+  tr.setVendor(llvm::Triple::VendorType::NVIDIA);
+  tr.setOS(llvm::Triple::OSType::CUDA);
+  tr.setEnvironment(llvm::Triple::EnvironmentType::GNU);
+  module.setTargetTriple(tr);
   std::string error;
   auto target = llvm::TargetRegistry::lookupTarget(module.getTargetTriple(), error);
   llvm::TargetOptions opt;

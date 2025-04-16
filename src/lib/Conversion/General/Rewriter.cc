@@ -442,7 +442,8 @@ mlir::affine::AffineForOp read(mlir::Value src, mlir::Value dst, mlir::AffineMap
                               std::vector<int64_t> widths, mlir::affine::AffineForOp compute_at, Position pos) {
   auto dimsNum = map.getNumDims();
   auto builder = getBuilder(compute_at, pos);
-  auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
+  auto dstType = mlir::dyn_cast<mlir::MemRefType>(dst.getType());
+  // auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
   int64_t totalWidth = dstType.getShape()[0];
 
   std::vector<int> times;
@@ -471,7 +472,8 @@ mlir::affine::AffineForOp write(mlir::Value src, mlir::Value dst, mlir::AffineMa
                                 std::vector<int64_t> widths, mlir::affine::AffineForOp compute_at, Position pos) {
   auto dimsNum = map.getNumDims();
   auto builder = getBuilder(compute_at, pos);
-  auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
+  auto srcType = mlir::dyn_cast<mlir::MemRefType>(src.getType());
+  // auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
   int64_t totalWidth = srcType.getShape()[0];
 
   std::vector<int> times;
@@ -505,7 +507,8 @@ mlir::affine::AffineForOp write(mlir::OpBuilder& builder, mlir::Value src, mlir:
   auto srcMap = !twoLoop ? 
                 mlir::AffineMap::get(/*dimCount*/1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * width), builder.getContext()) :
                 mlir::AffineMap::get(/*dimCount*/2, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * width + dim1), builder.getContext());
-  auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
+  auto srcType = mlir::dyn_cast<mlir::MemRefType>(src.getType());
+  // auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
   // registers is always 1 dim.
   auto storeTimes = srcType.getShape()[0] / width;
   auto storeBody = [&](mlir::OpBuilder &builder, mlir::Location nestedLoc, mlir::Value iv,
@@ -597,7 +600,8 @@ mlir::affine::AffineForOp vectorize(mlir::affine::AffineForOp readOrWrite, int64
   readOrWrite.setStep(width);
   readOrWrite.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineLoadOp load) {
     mlir::OpBuilder builder(load);
-    auto type = load.getMemRef().getType().dyn_cast<mlir::MemRefType>();
+    auto type = mlir::dyn_cast<mlir::MemRefType>(load.getMemRef().getType());
+    // auto type = load.getMemRef().getType().dyn_cast<mlir::MemRefType>();
     auto vectorType = mlir::VectorType::get(width, type.getElementType());
     auto vectorLoad = builder.create<mlir::affine::AffineVectorLoadOp>(builder.getUnknownLoc(), vectorType, load.getMemRef(), load.getAffineMap(), load.getMapOperands());
     load.getResult().replaceAllUsesWith(vectorLoad.getResult());
@@ -605,7 +609,8 @@ mlir::affine::AffineForOp vectorize(mlir::affine::AffineForOp readOrWrite, int64
   });
   readOrWrite.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineStoreOp store) {
     mlir::OpBuilder builder(store);
-     auto type = store.getMemRef().getType().dyn_cast<mlir::MemRefType>();
+     auto type = mlir::dyn_cast<mlir::MemRefType>(store.getMemRef().getType());
+    //  auto type = store.getMemRef().getType().dyn_cast<mlir::MemRefType>();
     auto vectorType = mlir::VectorType::get(width, type.getElementType());
     auto vectorStore = builder.create<mlir::affine::AffineVectorStoreOp>(builder.getUnknownLoc(), store.getValue(), store.getMemRef(), store.getAffineMap(), store.getMapOperands());
     store.erase();
@@ -618,7 +623,8 @@ splitUReduce(mlir::Value src, mlir::Value dst, mlir::AffineMap map, llvm::SmallV
                int localSplitU, int64_t globStoreWidth, mlir::affine::AffineForOp compute_at, Position pos) {
   // splitU!=1时，插入将多层结果进行累加求和的结构
   auto builder = getBuilder(compute_at, pos);
-  auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
+  auto dstType = mlir::dyn_cast<mlir::MemRefType>(dst.getType());
+  // auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
   int64_t regCTotalWidth = dstType.getShape()[0];   // 16
   int64_t globStoreTotalWidth = regCTotalWidth / localSplitU;  // 8
   int64_t globStoreNum = globStoreTotalWidth / globStoreWidth;  // 4
@@ -667,7 +673,8 @@ mlir::affine::AffineForOp splitUWrite(mlir::Value src, mlir::Value dst, mlir::Af
   // 将结果累加完成后，再将结果写回到C矩阵
   auto builder = getBuilder(compute_at, pos);
   auto dim0 = builder.getAffineDimExpr(0);
-  auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
+  auto srcType = mlir::dyn_cast<mlir::MemRefType>(src.getType());
+  // auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
   int64_t regTotalWidth = srcType.getShape()[0];
   int globStoreNum = regTotalWidth / localSplitU / globStoreWidth;
   mlir::AffineMap srcMap = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * globStoreWidth), builder.getContext());
@@ -684,7 +691,8 @@ mlir::Value bufferCombine(std::vector<std::vector<mlir::Value>> buffers, std::st
   for (auto buffer : buffers) {
     int64_t bufSize = 0;
     for (auto buf : buffer) {
-      auto bufType = buf.getType().dyn_cast<mlir::MemRefType>();
+      auto bufType = mlir::dyn_cast<mlir::MemRefType>(buf.getType());
+      // auto bufType = buf.getType().dyn_cast<mlir::MemRefType>();
       int64_t size = 1;
       for (auto shape : bufType.getShape()) { size *= shape; }
       bufSize += size;
@@ -694,7 +702,7 @@ mlir::Value bufferCombine(std::vector<std::vector<mlir::Value>> buffers, std::st
   }
 
   mlir::OpBuilder builder = getBuilder(buffers[0][0].getDefiningOp(), Position::before);
-  auto bufType = buffers[0][0].getType().dyn_cast<mlir::MemRefType>();
+  auto bufType = mlir::dyn_cast<mlir::MemRefType>(buffers[0][0].getType());
   auto memSpace = static_cast<MemorySpace>(bufType.getMemorySpaceAsInt());
   auto elementType = bufType.getElementType();
   mlir::Value newBuffer;

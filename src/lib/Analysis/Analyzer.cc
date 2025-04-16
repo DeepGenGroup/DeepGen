@@ -8,11 +8,12 @@ std::vector<mlir::func::FuncOp> collectFunctions(mlir::ModuleOp& module, const s
   std::vector<mlir::func::FuncOp> result;
   module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto state = funcOp->getAttr(std::string("func.state"));
-    auto stateAttr = state.dyn_cast<mlir::StringAttr>();
-
+    // auto stateAttr = state.dyn_cast<mlir::StringAttr>();
+    auto stateAttr = mlir::dyn_cast<mlir::StringAttr>(state);
     if (stateAttr.getValue().str() == "cpu") {
       auto opName = funcOp->getAttr(std::string("func.op.name"));
-      auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
+      auto opNameAttr = mlir::dyn_cast<mlir::StringAttr>(opName);
+      // auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
 
       if (opNameAttr.getValue().str() == targetFuncName) 
         result.push_back(funcOp);
@@ -38,7 +39,8 @@ std::vector<int64_t> getParallelNumber(mlir::affine::AffineParallelOp parallelLe
     auto map = parallelLevel.getUpperBoundMap(i);
     auto exprs = map.getResults();
     assert(exprs.size() == 1);
-    auto constExpr = exprs[0].dyn_cast<mlir::AffineConstantExpr>();
+    // auto constExpr = exprs[0].dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(exprs[0]);
     assert(constExpr);
     totalNumber *= constExpr.getValue();
     result.push_back(constExpr.getValue());
@@ -58,11 +60,13 @@ std::set<std::string> collectFuncNames(mlir::ModuleOp& module) {
   std::set<std::string> result;
   module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto state = funcOp->getAttr(std::string("func.state"));
-    auto stateAttr = state.dyn_cast<mlir::StringAttr>();
+    auto stateAttr = mlir::dyn_cast<mlir::StringAttr>(state);
+    // auto stateAttr = state.dyn_cast<mlir::StringAttr>();
 
     if (stateAttr.getValue().str() == "cpu") {
       auto opName = funcOp->getAttr(std::string("func.op.name"));
-      auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
+      auto opNameAttr = mlir::dyn_cast<mlir::StringAttr>(opName);
+      // auto opNameAttr = opName.dyn_cast<mlir::StringAttr>();
       result.insert(opNameAttr.getValue().str());
     } 
   });

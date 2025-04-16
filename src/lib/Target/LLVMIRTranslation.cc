@@ -225,8 +225,8 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
 
   for (auto &func : funcs) {
     if (func.getOperation()->hasAttr("libname")) {
-      auto name = func.getOperation()->getAttr("libname").dyn_cast<mlir::StringAttr>();
-      auto path = func.getOperation()->getAttr("libpath").dyn_cast<mlir::StringAttr>();
+      auto name = mlir::dyn_cast<mlir::StringAttr>(func.getOperation()->getAttr("libname"));
+      auto path = mlir::dyn_cast<mlir::StringAttr>(func.getOperation()->getAttr("libpath"));
         if (name) {
             std::string libName = name.str();
             externLibs[libName] = path.str();
@@ -235,9 +235,9 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
     }
 
   if (module.getOperation()->hasAttr(AttrExternLib)) {
-    auto dict = module.getOperation()->getAttr(AttrExternLib).dyn_cast<mlir::DictionaryAttr>();
+    auto dict = mlir::dyn_cast<mlir::DictionaryAttr>(module.getOperation()->getAttr(AttrExternLib));
     for (auto &attr : dict) {
-      externLibs[attr.getName().strref().trim().str()] = attr.getValue().dyn_cast<mlir::StringAttr>().strref().trim().str();
+      externLibs[attr.getName().strref().trim().str()] = mlir::dyn_cast<mlir::StringAttr>(attr.getValue()).strref().trim().str();
     }
   }
 

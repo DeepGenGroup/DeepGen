@@ -848,7 +848,7 @@ struct SCFParallelToGPULowering : public OpRewritePattern<scf::ParallelOp> {
       blockIds.push_back(blockId);
 
       auto constOp = outerUpperBounds[i].getDefiningOp<arith::ConstantOp>();
-      auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>();
+      auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
       blockUpperBounds.push_back(intAttr.getInt());
     }
 
@@ -860,7 +860,7 @@ struct SCFParallelToGPULowering : public OpRewritePattern<scf::ParallelOp> {
       threadIds.push_back(threadId);
 
       auto constOp = innerUpperBounds[i].getDefiningOp<arith::ConstantOp>();
-      auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>();
+      auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
       threadUpperBounds.push_back(intAttr.getInt());
     }
 
@@ -1001,7 +1001,7 @@ struct ConvertArithIndexToI64Pass : public PassWrapper<ConvertArithIndexToI64Pas
       if (auto constantOp = dyn_cast<arith::ConstantOp>(op)) {
         Type constantType = constantOp.getValue().getType();
         if (constantType.isIndex()) {
-          auto indexValue = constantOp.getValue().cast<IntegerAttr>().getInt();
+          auto indexValue = ::llvm::cast<IntegerAttr>(constantOp.getValue()).getInt();
           OpBuilder builder(op);
           auto i64Op = builder.create<arith::ConstantOp>(constantOp.getLoc(), builder.getI64IntegerAttr(indexValue));
           auto indexVal = builder.create<arith::IndexCastOp>(i64Op.getLoc(), builder.getIndexType(), i64Op);
@@ -1020,7 +1020,7 @@ struct ConvertArithConstantIndexToI64 : public OpRewritePattern<arith::ConstantO
   LogicalResult matchAndRewrite(arith::ConstantOp constOp, PatternRewriter &rewriter) const final {
     Type constType = constOp.getValue().getType();
     if (constType.isIndex()) {
-      auto indexValue = constOp.getValue().cast<IntegerAttr>().getInt();
+      auto indexValue = ::llvm::cast<IntegerAttr>(constOp.getValue()).getInt();
       auto i64Op = rewriter.create<arith::ConstantOp>(constOp.getLoc(), rewriter.getI64IntegerAttr(indexValue));
       auto indexVal = rewriter.create<arith::IndexCastOp>(i64Op.getLoc(), rewriter.getIndexType(), i64Op);
       rewriter.replaceOp(constOp, indexVal);

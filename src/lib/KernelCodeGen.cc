@@ -86,7 +86,7 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
   mlir::PassManager pm(&context);
   // pm.addPass(createROCDLIdOpModifyPass());                      // 自定义 rocdl idop加attr (弃用)
   pm.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
-  pm.addPass(mlir::createConvertSCFToCFPass());                    // scf -> cf
+  pm.addPass(mlir::createSCFToControlFlowPass());                    // scf -> cf
 
   ConvertControlFlowToLLVMPassOptions cfOptions;
   cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
