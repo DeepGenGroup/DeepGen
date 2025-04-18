@@ -1,0 +1,4 @@
+[submodule "externals/rocm-stablehlo"]
+	path = externals/rocm-stablehlo
+	url = https://github.com/DeepGenGroup/rocm-stablehlo.git
+	branch = deepgen-dev

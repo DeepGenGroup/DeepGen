@@ -8,10 +8,9 @@ namespace KernelCodeGen {
 
 class ModelManager{
 public :
-    explicit ModelManager(mlir::ModuleOp& mod);
     bool process();
+    bool importModelFromIR(const std::string& filepath);
 private:
-
     // 将module中的func根据attr 拆分进多个module。每个module对应一个kernel，存入 m_kernels
     bool seperateKernelFuncIntoModules();
     // 图优化

@@ -15,8 +15,9 @@ set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas")
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
 set(CUDA_INCLUDE_DIR "/home/xushilong/anaconda3/include")
+option(USE_STABLEHLO_EMBEDDED "Use embedded stableHLO(ON) or external stableHLO(OFF)" ON)
 
-
+#############################################################
 find_package(Python COMPONENTS Interpreter Development)
 
 if(Python_FOUND)
@@ -64,7 +65,7 @@ set(CUDA_BITCODE_PATH ${CMAKE_SOURCE_DIR}/third_party/cuda/lib)
 # generate config.h with user-config variables
 configure_file(config.h.in ${CMAKE_SOURCE_DIR}/include/config.h)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  find_package(MLIR REQUIRED CONFIG PATHS ${LLVM_INSTALL_DIR}/lib/cmake)
+  find_package(MLIR REQUIRED CONFIG HINTS ${LLVM_INSTALL_DIR}/lib/cmake)
 
   message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
   message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")
@@ -94,6 +95,7 @@ include_directories(${LLVM_INCLUDE_DIRS})
 include_directories(${MLIR_INCLUDE_DIRS})
 include_directories(${KernelCodeGen_SOURCE_DIR}/include)
 include_directories(${KernelCodeGen_BINARY_DIR}/include)
+include_directories(${KernelCodeGen_BINARY_DIR})
 include_directories(${KernelCodeGen_SOURCE_DIR}/build/include)
 
 # link_directories(${LLVM_BUILD_LIBRARY_DIR})
@@ -106,11 +108,25 @@ if(IS_DEBUG_MODE)
 endif()
 add_compile_options(-g)
 
+# Configure CMake.
+list(APPEND CMAKE_MODULE_PATH ${MLIR_MAIN_SRC_DIR}/cmake/modules)
+list(APPEND CMAKE_MODULE_PATH ${LLVM_MAIN_SRC_DIR}/cmake)
+list(APPEND CMAKE_MODULE_PATH ${CMAKE_CURRENT_SOURCE_DIR}/build_tools/cmake)
+include(TableGen)
+include(AddLLVM)
+include(AddMLIR)
+include(AddMLIRPython)
 
-# optional config
-###################################################################
-# list(APPEND CMAKE_MODULE_PATH ${PROJECT_SOURCE_DIR}/cmake)
-# include(config)
+# Use embedded stablehlo
+if (USE_STABLEHLO_EMBEDDED)
+  set(STABLEHLO_BUILD_EMBEDDED ON)
+  set(STABLEHLO_ENABLE_BINDINGS_PYTHON ON)
+  add_subdirectory(${KernelCodeGen_SOURCE_DIR}/externals/rocm-stablehlo
+    ${KernelCodeGen_BINARY_DIR}/rocm-stablehlo
+    EXCLUDE_FROM_ALL)
+  include_directories(${CMAKE_CURRENT_SOURCE_DIR}/externals/rocm-stablehlo)
+endif()
+
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
@@ -122,3 +138,4 @@ endif()
 # add_subdirectory(include)
 add_subdirectory(src/lib)
 add_subdirectory(src)
+add_subdirectory(src/model_manager)
