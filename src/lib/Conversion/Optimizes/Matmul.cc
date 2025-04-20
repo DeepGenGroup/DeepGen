@@ -2,13 +2,6 @@
 
 namespace KernelCodeGen {
 
-llvm::SmallVector<mlir::AffineExpr> getExprs(mlir::OpBuilder builder, int dimCount) {
-  llvm::SmallVector<mlir::AffineExpr> dims;
-  for (int i=0; i<dimCount; i++) {
-    dims.push_back(builder.getAffineDimExpr(i));
-  }
-  return dims;
-}
 
 // ======================================= global to sm =========================================
 std::array<int64_t, 6> MatmulOptimizer::getCfgDatas(const std::string& bufType) {
@@ -58,20 +51,19 @@ mlir::AffineMap MatmulOptimizer::getGlobToTempMap(mlir::OpBuilder& builder, cons
   int dimCount = 5 + this->batchs.size();
   auto dims = getExprs(builder, dimCount);  // {b1, b2, by, bx, tid, k, iter}
   auto args = getCfgDatas(bufType);
-  auto [blockTileY, blockTileX, isTran, globLoadWidth, globLoadAllWidth, globLoadRowWidth] = args;
   // block level
   mlir::AffineExpr row, col;
   if (bufType == "A") {
     row = dims[dimCount-5];                     // blockIdx.y
     col = dims[dimCount-2];                     // k * BK
-    if (isTran) {
+    if (args[2]) {
       row = dims[dimCount-2];                   // k * BK
       col = dims[dimCount-5];                   // blockIdx.y
     }
   } else {
     row = dims[dimCount-2];
     col = dims[dimCount-4];  
-    if (isTran) {
+    if (args[2]) {
       row = dims[dimCount-4];
       col = dims[dimCount-2];
     }
@@ -94,9 +86,8 @@ mlir::AffineMap MatmulOptimizer::getTempToSmMap(mlir::OpBuilder& builder, const 
   auto dims = getExprs(builder, dimCount); // {tid, iter}
   // init datas
   auto args = getCfgDatas(bufType);
-  auto [blockTileY, blockTileX, isTran, globLoadWidth, globLoadAllWidth, globLoadRowWidth] = args;
   auto [tyIdx, txIdx] = getGlobToSmExprs(dims, args);
-  if ((bufType == "A" && !isTran) || (bufType == "B" && isTran)) {
+  if ((bufType == "A" && !args[2]) || (bufType == "B" && args[2])) {
     auto temp = tyIdx;
     tyIdx = txIdx + builder.getAffineDimExpr(dimCount);
     txIdx = temp;
@@ -294,35 +285,30 @@ bool MatmulOptimizer::applicable(mlir::func::FuncOp& funcOp, const std::map<std:
   A = operands[0]; B = operands[1]; C = operands[2];
   funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* op) {
     if (auto parallelOp = mlir::dyn_cast<mlir::affine::AffineParallelOp>(op)) {
-      if (auto gpuIdx = parallelOp->getAttr(AttrGPUIndex)) {
-        auto gpuIdxAttr = mlir::dyn_cast<mlir::StringAttr>(gpuIdx);
-        std::string gidx = gpuIdxAttr.getValue().str();
-        if (gidx == BLOCKIDX) blockIdx = parallelOp;
-        else this->threadIdx = parallelOp;
+      auto gpuIdx = getStrAttr(parallelOp, AttrGPUIndex);
+      if (gpuIdx == BLOCKIDX) {
+        this->blockIdx = parallelOp;
+      } else if (gpuIdx == THREADIDX) {
+        this->threadIdx = parallelOp;
       }
     } else if (auto forOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op)) {
-      if (auto forOp_ = forOp->getAttr(FORDESC)) {
-        auto forOpAttr = mlir::dyn_cast<mlir::StringAttr>(forOp_);
-        std::string loop = forOpAttr.getValue().str();
-        if (loop == "ttiley") yTileForOp = forOp;
-        else if (loop == "ttilex") xTileForOp = forOp;
-        else kForOp = forOp;
+      auto forDesc = getStrAttr(forOp, FORDESC);
+      if (forDesc == "ttiley") {
+        this->yTileForOp = forOp;
+      } else if (forDesc == "ttilex") {
+        this->xTileForOp = forOp;
+      } else if (forDesc == "k") {
+        this->kForOp = forOp;
+      }
+    } else if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(op)) {
+      auto applyDesc = getStrAttr(applyOp, APPLYDESC);
+      if (applyDesc == "blocky") {
+        this->byIdx = applyOp.getResult();
+      } else if (applyDesc == "blockx") {
+        this->bxIdx = applyOp.getResult();
       }
     }
   });
-  // get blockIdx
-  for (auto &op : blockIdx.getBody()->getOperations()) {
-    if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(op)) {
-      if (auto desc = applyOp->getAttr(APPLYDESC)) {
-        auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
-        if (descAttr == "blocky") {
-          this->byIdx = applyOp.getResult();
-        } else if (descAttr == "blockx") {
-          this->bxIdx = applyOp.getResult();
-        }
-      }
-    }
-  }
   parseFuncArgs(funcOp);  // parseFuncArgs
   computeTuneArgs();  // compute config args
   return true;
@@ -369,7 +355,7 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
   auto k_axes = Rewriter::split(kForOp, {cfg.at("LOCAL_SPLIT_U"), cfg.at("BLOCK_SIZE_K")});
   auto k_outer = k_axes[0], k_mider = k_axes[1], k_inner = k_axes[2];
-  LOG_DEBUG("===== after split =======\n",funcOp);
+  LOG_DEBUG("===== after split =======\n",module);
 
   std::vector<mlir::affine::AffineParallelOp> blockLevel{this->threadIdx};
   Rewriter::addLoopsToParallel({k_inner}, blockLevel, true);
@@ -469,7 +455,7 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       rtgOperands.push_back(m_inner_axes[i].getInductionVar());
       rtgOperands.push_back(n_inner_axes[i].getInductionVar());
     }
-    Rewriter::cache_write(m_inner_0, C, C, regCToGlobMap, rtgOperands);
+    Rewriter::cache_write(m_inner_0, C, C, regCToGlobMap, rtgOperands);  // 只是改了一下map
     LOG_DEBUG("===== load cache_write regC to C =======\n",module);
   }
   Rewriter::vectorize(n_inner_2, cfg["WARP_SCATTER_WIDTH_N"]);

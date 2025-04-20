@@ -260,13 +260,11 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
     }
     return std::filesystem::path(fileinfo.dli_fname);
     }();
-        // static const auto runtime_path =
-        //     this_library_path.parent_path() / "third_party" / "cuda" /
-        //     "lib" / "libdevice.10.bc";
-    const std::string runtime_path = "~/DeepGen/third_party/cuda/lib/libdevice.10.bc" ;
+    static const auto runtime_path = this_library_path.parent_path().parent_path()
+                                     / "third_party" / "cuda" / "lib" / "libdevice.10.bc";
     if (fs::exists(runtime_path)) {
       // externLibs.try_emplace(libdevice, runtime_path.string());
-      externLibs.try_emplace(libdevice, runtime_path);
+      externLibs.try_emplace(libdevice, runtime_path.string());
     } else {
       // When using the Math Dialect, it is possible that some ops (e.g., log)
       // are lowered to a function call. In this case, we need to link libdevice
@@ -274,17 +272,13 @@ static std::map<std::string, std::string> getExternLibs(mlir::ModuleOp module) {
       // [triton root dir]/python/triton/language/libdevice.10.bc
       // TODO(Keren): handle external linkage other than libdevice?
       static const auto this_file_path = std::filesystem::path(__FILE__);
-      // static const auto compiletime_path = this_file_path.parent_path()
-      //                                          .parent_path()
-      //                                          .parent_path()
-      //                                      / "third_party" /
-      //                                      "cuda" / "lib" / "libdevice.10.bc";
-      static std::string compiletime_path = "~/DeepGen/third_party/cuda/lib/libdevice.10.bc";
+      static const auto compiletime_path = this_file_path.parent_path().parent_path().parent_path().parent_path()
+                                           / "third_party" / "cuda" / "lib" / "libdevice.10.bc";
       if (!fs::exists(compiletime_path)) {
-        std::string error_msg = "Can't find libdevice at neither " + runtime_path + " nor " + compiletime_path;
+        std::string error_msg = "Can't find libdevice at neither " + runtime_path.string() + " nor " + compiletime_path.string();
         llvm::report_fatal_error(error_msg.c_str());
       }
-      externLibs.try_emplace(libdevice, compiletime_path);
+      externLibs.try_emplace(libdevice, compiletime_path.string());
     }
   }
   return externLibs;

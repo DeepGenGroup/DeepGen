@@ -6,7 +6,8 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/llvm-install")
+set(LLVM_INSTALL_DIR "~/software/rocm-llvm-install")
+set(PYBIND11_INSTALL_DIR "~/software/pybind11-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 set(USER_LLD_PATH "/opt/dtk/llvm/bin/ld.lld") 
 set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas") 
@@ -17,6 +18,7 @@ set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")
 # set(PYTHON_VERSION "3.8")
 
 find_package(Python COMPONENTS Interpreter Development)
+set(pybind11_DIR ${PYBIND11_INSTALL_DIR}/share/cmake/pybind11)
 find_package(pybind11 REQUIRED)
 if(pybind11_FOUND)
   message("==== Found pybind11 : ${pybind11_INCLUDE_DIRS}")
@@ -65,7 +67,8 @@ set(CUDA_BITCODE_PATH ${CMAKE_SOURCE_DIR}/third_party/cuda/lib)
 # generate config.h with user-config variables
 configure_file(config.h.in ${CMAKE_SOURCE_DIR}/include/config.h)
 if(CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
-  find_package(MLIR REQUIRED CONFIG PATHS ${LLVM_INSTALL_DIR}/lib/cmake)
+  set(MLIR_DIR ${LLVM_INSTALL_DIR}/lib/cmake/mlir)
+  find_package(MLIR REQUIRED)
 
   message(STATUS "Using MLIRConfig.cmake in: ${MLIR_DIR}")
   message(STATUS "Using LLVMConfig.cmake in: ${LLVM_DIR}")

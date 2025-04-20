@@ -43,6 +43,16 @@ std::tuple<int64_t, int64_t, int64_t> getLoopBoundAndStep(mlir::affine::AffineFo
   return {lb, ub, step};
 }
 
+bool isForOpArgsEqual(mlir::affine::AffineForOp forOp1, mlir::affine::AffineForOp forOp2) {
+  // 比较俩for的参数是否相同
+  auto [lb1, ub1, step1] = getLoopBoundAndStep(forOp1);
+  auto [lb2, ub2, step2] = getLoopBoundAndStep(forOp2);
+  if (lb1 != lb2) return false;
+  if (ub1 != ub2) return false;
+  if (step1 != step2) return false;
+  return true;
+}
+
 std::vector<mlir::func::FuncOp> getAllKernels(mlir::ModuleOp mod) {
   // get all kernel in module
   std::vector<mlir::func::FuncOp> allFunOps;
@@ -54,12 +64,20 @@ std::vector<mlir::func::FuncOp> getAllKernels(mlir::ModuleOp mod) {
 
 std::vector<mlir::func::FuncOp> getSpecifiedKernels(mlir::ModuleOp mod, 
                                                     const std::vector<std::string>& kernelNames) {
-  // get specified kernel in module
+  // get specified kernel in module and adding attr funcName to x/y forOp
   std::vector<mlir::func::FuncOp> funOps;
+  mlir::OpBuilder builder(mod);
   mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto name = funcOp.getName().str();
     auto it = std::find(kernelNames.begin(), kernelNames.end(), name);
     if (it != kernelNames.end()) {
+      // 给xyfor加上所属的funcname
+      funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+        auto forDesc = getStrAttr(forOp, FORDESC);
+        if (forDesc == "x" || forDesc == "y") {
+          forOp->setAttr(FORINCFUNC, builder.getStringAttr(name));
+        }
+      });
       funOps.push_back(funcOp);
     }
     if (funOps.size() >= kernelNames.size()) {
@@ -77,8 +95,9 @@ void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner) {
   auto opNumber = ops.size();
   int innerIdx = getOpIndex(outer, inner);
   mlir::OpBuilder builder(outer);
+  std::string outerForDesc = getStrAttr(outer, FORDESC);
   // outer与inner之间夹了其他操作，需要上移或下移多余op的func
-  auto upOrDownFunc = [&](int startIdx, int endIdx) {
+  auto upOrDownFunc = [&](int startIdx, int endIdx, std::string desc) {
     mlir::Value newIV;
     auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
       newIV = iv;
@@ -87,17 +106,20 @@ void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner) {
     auto loop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), lb, ub, step, mlir::ValueRange({}), loopBody);
     spliceHaveBlockOp(loop, outer, /*insertPos*/0, startIdx, endIdx);
     replaceOpsOperands(loop, {oldIV}, {newIV});
+    if (!outerForDesc.empty()) {
+      loop->setAttr(FORDESC, builder.getStringAttr(outerForDesc + desc));
+    }
   };
   // 上移或下移
   if (innerIdx != 0) {
     int startIdx = 0, endIdx = innerIdx;
     builder.setInsertionPoint(outer);
-    upOrDownFunc(startIdx, endIdx);
+    upOrDownFunc(startIdx, endIdx, "Up");
   }
   if (innerIdx+2 < opNumber) {
     int startIdx = innerIdx+1, endIdx = opNumber-1;
     builder.setInsertionPointAfter(outer);
-    upOrDownFunc(startIdx, endIdx);
+    upOrDownFunc(startIdx, endIdx, "Down");
   }
   // 交换真正的outer与inner
   spliceHaveBlockOp(outer, inner, /*insertPos*/0, 0, -2);
@@ -108,7 +130,7 @@ void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner) {
 }
 
 mlir::Value createAllocOp(mlir::OpBuilder builder, 
-                          std::vector<int64_t> shape, 
+                          const std::vector<int64_t>& shape, 
                           mlir::Type dtype, 
                           MemorySpace space, 
                           int alignment, 
@@ -118,12 +140,16 @@ mlir::Value createAllocOp(mlir::OpBuilder builder,
   auto bufferType = mlir::MemRefType::get(shape, dtype, {}, static_cast<int>(space));
   if (space == MemorySpace::local) {
     auto reg = builder.create<mlir::memref::AllocaOp>(builder.getUnknownLoc(), bufferType);
-    reg.setAlignment(alignment);
+    if (alignment != 0) {
+      reg.setAlignment(alignment);
+    }
     reg->setAttr(AttrBufDescription, builder.getStringAttr(bufDesc));
     allocVal = reg.getResult();
   } else {
     auto sm = builder.create<mlir::memref::AllocOp>(builder.getUnknownLoc(), bufferType);
-    sm.setAlignment(alignment);
+    if (alignment != 0) {
+      sm.setAlignment(alignment);
+    }
     sm->setAttr(AttrBufDescription, builder.getStringAttr(bufDesc));
     allocVal = sm.getResult();
   }
@@ -135,7 +161,8 @@ std::vector<mlir::Value>>
   createNestedLoops(mlir::OpBuilder builder, 
                     llvm::SmallVector<int64_t> lowerBounds, 
                     llvm::SmallVector<int64_t> upperBounds, 
-                    llvm::SmallVector<int64_t> steps) {
+                    llvm::SmallVector<int64_t> steps, 
+                    const std::vector<std::string>& forDescs) {
   // 根据loop的信息创建嵌套的loops
   llvm::SmallVector<int64_t> outer{lowerBounds[0], upperBounds[0], steps[0]};
   lowerBounds.erase(lowerBounds.begin());
@@ -154,10 +181,50 @@ std::vector<mlir::Value>>
   };
   auto outerLoop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), outer[0], outer[1], outer[2], 
                                                              mlir::ValueRange({}), loopBody);
+  int index = 0;
   outerLoop.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp fop) {
+    if (!forDescs.empty()) {
+      fop->setAttr(FORDESC, builder.getStringAttr(forDescs[index++]));
+    }
     mostLoops.push_back(fop);
   });
   return {mostLoops, allIvs};
+}
+
+std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::affine::AffineForOp>> forOps,
+                                                  std::pair<int, int> idxs, 
+                                                  Position insertPos,
+                                                  const std::pair<std::string, std::string>& setAttr) {
+  // fuse all forOps，属性不仅保留原来的，而且可添加新的
+  mlir::OpBuilder builder = getBuilder(forOps[idxs.first][idxs.second], insertPos);
+  llvm::SmallVector<int64_t> lbs, ubs, steps;
+  for (auto loop : forOps[0]) {
+    auto [lb, ub, step] = getLoopBoundAndStep(loop);
+    lbs.push_back(lb);
+    ubs.push_back(ub);
+    steps.push_back(step);
+  }
+  // create new loops
+  auto [newForOps, newIvs] = createNestedLoops(builder, lbs, ubs, steps);
+  for (int i=0; i<newForOps.size(); i++) {
+    copyAttrs(forOps[0][i], newForOps[i]);
+  }
+  if (!setAttr.first.empty()) {
+    newForOps[0]->setAttr(setAttr.first, builder.getStringAttr(setAttr.second));
+  }
+  // move ops
+  for (int i=forOps.size()-1; i>=0; i--) {
+    std::vector<mlir::Value> oldIvs;
+    for (auto loop : forOps[i]) {
+      oldIvs.push_back(loop.getInductionVar());
+    }
+    // move op
+    spliceHaveBlockOp(newForOps.back(), forOps[i].back(), 0, 0, -2);
+    // replace operands
+    replaceOpsOperands(newForOps.back(), oldIvs, newIvs);
+    forOps[i][0].erase();
+  }
+  return newForOps;
 }
 
 void replaceAndErase(mlir::Operation* newOp, mlir::Operation* oldOp) {
@@ -203,6 +270,58 @@ void spliceHaveBlockOp(mlir::Operation* newOp,
   newOps.splice(insertIt, oldOps, opStart, opEnd);
 }
 
+std::string getStrAttr(mlir::Operation* op, std::string attrName) {
+  // 获取string attr的属性值
+  std::string descStr{""};
+  if (auto desc = op->getAttr(attrName)) {
+    auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
+    descStr = descAttr.getValue().str();
+  }
+  return descStr;
+}
+
+std::vector<std::string> getArrayStrAttr(mlir::Operation* op, 
+                                            std::string attrName) {
+  // get array string attrs(parallelDims/IterVar)
+  std::vector<std::string> arrayStrAttr;
+  auto descArr = op->getAttr(attrName);
+  auto descArrAttr = mlir::dyn_cast<mlir::ArrayAttr>(descArr);
+  for (auto desc : descArrAttr) {
+    auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
+    auto descStr = descAttr.getValue().str();
+    arrayStrAttr.push_back(descStr);
+  }
+  return arrayStrAttr;
+}
+
+void copyAttr(mlir::Operation* originOp, 
+              mlir::Operation* newOp, 
+              const std::string& attrName) {
+  // 复制attr到新的op上
+  if (auto desc = originOp->getAttr(attrName)) {
+    if (!newOp->hasAttr(attrName)) {
+      newOp->setAttr(attrName, desc);
+    }
+  }
+}
+
+void copyAttrs(mlir::Operation* originOp, 
+               mlir::Operation* newOp, 
+               const std::vector<std::string>& excludeAttrs) {
+  // 复制attr到新的op上====加了s
+  auto descs = originOp->getAttrs();
+  for (const auto& desc : descs) {
+    bool isInner = false;
+    for (auto eattr : excludeAttrs) {
+      if (desc.getName().str() == eattr) 
+        isInner = true;
+    }
+    if (!newOp->hasAttr(desc.getName()) && !isInner) {
+      newOp->setAttr(desc.getName(), desc.getValue());
+    }
+  }
+}
+
 void replaceOpsOperands(mlir::Operation* parentOp, 
                         const std::vector<mlir::Value>& oldIvs, 
                         const std::vector<mlir::Value>& newIvs) {
@@ -239,6 +358,21 @@ void replaceOpOperands(mlir::Operation* op,
   op->setOperand(index, newOperand);
 }
 
+void sortOps(std::vector<mlir::Operation*>& ops) {
+  // 按照op在parentop内部的位置次序，由小到大排序
+  for (int i=0; i<ops.size(); i++) {
+    for (int j=i+1; j<ops.size(); j++) {
+      auto iidx = getOpIndex(ops[i]->getParentOp(), ops[i]);
+      auto jidx = getOpIndex(ops[j]->getParentOp(), ops[j]);
+      if (iidx > jidx) {
+        auto temp = ops[i];
+        ops[i] = ops[j];
+        ops[j] = temp;
+      }
+    }
+  }
+}
+
 std::set<mlir::Operation*> getValueUsers(mlir::Value var, mlir::Operation* rangeOp) {
   // 获取value的使用者，划定范围
   std::set<mlir::Operation*> users;
@@ -271,20 +405,20 @@ int getOpIndex(mlir::Operation* haveBlockOp, mlir::Operation* targetOp) {
   return -1;
 }
 
-std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(std::vector<mlir::affine::AffineForOp> upLoops, 
+std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(mlir::OpBuilder& builder,
+                                                          std::vector<mlir::affine::AffineForOp> upLoops, 
                                                           mlir::affine::AffineForOp lowLoop, 
-                                                          bool carryDesc) {
-  /*
-  for (i to n){             for (i to n){        |     for (j to m) {              for (j to m) {
-    ...                       ...                |       for (j to m) {              for (j to m) {
-    for (j to m) {    =>    }                    |         ...             =>          ...
-      ...                   for (i to n){        |       }                           }
-    }                         for (j to m) {     |       ...                       }
-  }                             ...              |     }                           for (j to m) {
-                              }                  |                                   ...
-                            }                    |                                 }
-  */
-  // collect loops data
+                                                          bool copyDesc, 
+                                                          const std::string setDesc) {
+/*|  for (i to n){             for (i to n){        |
+  |    ...                       ...                |
+  |    for (j to m) {    =>    }                    |
+  |      ...                   for (i to n){        |
+  |    }                         for (j to m) {     |
+  |  }                             ...              |
+  |                              }                  |
+  |                            }                    |*/
+  // collect loops data，属性要经过判断才知道用不用原来的，不用原来的可以添加新的
   std::vector<mlir::Value> oldIvs;
   llvm::SmallVector<int64_t> lowerBounds, upperBounds, steps;
   for (auto loop : upLoops) {
@@ -295,13 +429,14 @@ std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(std::vector<mlir::affi
     steps.push_back(step);
   }
   // create new loops
-  mlir::OpBuilder builder(upLoops[0]);
   auto [newLoops, newIvs] = createNestedLoops(builder, lowerBounds, upperBounds, steps);
   // set attr
-  if (carryDesc) {
+  if (copyDesc) {  // 直接cpoy之前的desc
     for (int i=0; i<upLoops.size(); i++) {
-      copyAttr<mlir::StringAttr>(upLoops[i], newLoops[i], FORDESC);
+      copyAttrs(upLoops[i], newLoops[i], {ITERVARDESC});
     }
+  } else if (setDesc != "") {
+    newLoops[0]->setAttr(FORDESC, builder.getStringAttr(setDesc));
   }
   // move ops
   int index = getOpIndex(upLoops.back(), lowLoop);
@@ -331,7 +466,7 @@ void eraseForOpIterVar(mlir::affine::AffineForOp &forOp,
   auto [lb, ub, step] = getLoopBoundAndStep(forOp);
   auto newLoop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), lb, ub, step, mlir::ValueRange({}), loopBody);
   // set attr
-  copyAttr<mlir::StringAttr>(forOp, newLoop, FORDESC);
+  copyAttrs(forOp, newLoop, {ITERVARDESC});
   auto& oldYieldOp = forOp.getBody()->getOperations().back();
 
   // 将旧forop的body转移到新的forop中，且body中使用了迭代变量的使用 loadop 的结果代替
@@ -346,14 +481,221 @@ void eraseForOpIterVar(mlir::affine::AffineForOp &forOp,
     // 最后将forop之外使用了其迭代变量的地方全部替换成 loadOp 加载的数据
     auto iter = forOp.getResult(i);
     auto users = getValueUsers(iter);
-    for (auto user : users) {
-      builder.setInsertionPoint(user);
-      auto loadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), bufs[i], ivs);
+    std::vector<mlir::Operation*> users_(users.begin(), users.end());
+    sortOps(users_);
+    builder.setInsertionPoint(users_.front());
+    auto loadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), bufs[i], ivs);
+    for (auto user : users_) {
       replaceOpOperands(user, iter, loadOp.getResult());
     }
   }
   forOp.erase();
   forOp = newLoop;
+}
+
+bool isPrevOp(mlir::Operation* prevOp, mlir::Operation* backOp) {
+  // 判断prevOp是否在backOp的前面
+  auto parentOp = prevOp->getParentOp();
+  auto pidx = getOpIndex(parentOp, prevOp);
+  auto bidx = getOpIndex(parentOp, backOp);
+  if (pidx < bidx) {
+    return true;
+  }
+  return false;
+}
+
+void eraseSingleIterForOp(mlir::affine::AffineForOp forOp) {
+  // 删除循环次数为1的循环，并且修改其他op的map
+  auto parentOp = forOp->getParentOp();
+  auto iv = forOp.getInductionVar();
+  std::vector<mlir::Value> replaceIvs;
+  for (auto user : getValueUsers(iv)) {
+    mlir::OpBuilder b(user);
+    if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(user)) {
+      auto [newMap, newOperands] = replaceIndexWithExpr(b, loadOp, b.getAffineConstantExpr(0), iv, replaceIvs);
+      auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(b.getUnknownLoc(), loadOp.getMemRef(), newMap, newOperands);
+      replaceAndErase(newLoadOp, loadOp);
+    } else if (auto storeOp = mlir::dyn_cast<mlir::affine::AffineStoreOp>(user)) {
+      auto [newMap, newOperands] = replaceIndexWithExpr(b, storeOp, b.getAffineConstantExpr(0), iv, replaceIvs);
+      b.create<mlir::affine::AffineStoreOp>(b.getUnknownLoc(), storeOp.getValue(), storeOp.getMemRef(), newMap, newOperands);
+      storeOp.erase();
+    } else if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(user)) {
+      auto [newMap, newOperands] = replaceIndexWithExpr(b, applyOp, b.getAffineConstantExpr(0), iv, replaceIvs);
+      auto newApplyOp = b.create<mlir::affine::AffineApplyOp>(b.getUnknownLoc(), newMap, newOperands);
+      replaceAndErase(newApplyOp, applyOp);
+    }
+  }
+  int index = getOpIndex(parentOp, forOp);
+  spliceHaveBlockOp(parentOp, forOp, index, 0, -2);
+  forOp.erase();
+}
+
+// ======================================== 分离无依赖的OP链 =========================================
+
+void insertRelyChain(mlir::Operation* parentOp, std::vector<mlir::Operation*>& chain, mlir::Operation* op) {
+  // 按照在parent的body下op的次序，将op插入到chain中
+  int index = chain.size();
+  int idx1 = getOpIndex(parentOp, op);
+  for (int i=0; i<chain.size(); i++) {
+    int idx2 = getOpIndex(parentOp, chain[i]);
+    if (idx1 < idx2) {
+      index = i;
+      break; 
+    } else if (idx1 == idx2) {
+      return;
+    }
+  }
+  chain.insert(chain.begin()+index, op);
+}
+
+void getOpRelyChain(mlir::Operation* parentOp, mlir::Value val, std::vector<mlir::Operation*>& chain) {
+  // 获取一个含有body的op中有几条数据依赖链
+  auto defOp = val.getDefiningOp();
+  if (getOpIndex(parentOp, defOp) != -1) {  // inner op
+    insertRelyChain(parentOp, chain, defOp);
+    if (!mlir::dyn_cast<mlir::affine::AffineLoadOp>(defOp)) {  // no load op
+      auto operands = defOp->getOperands();
+      for (auto operand : operands) {
+        getOpRelyChain(parentOp, operand, chain);
+      }
+    }
+    return;  // is load op
+  }
+  return;  // outer op
+}
+
+bool judgeChainCombine(std::vector<mlir::Operation*> chain1, std::vector<mlir::Operation*>chain2) {
+  // 判断这两个链可以不可以合并为一个
+  for (auto op : chain1) {
+    if (!mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
+      auto it = std::find(chain2.begin(), chain2.end(), op);
+      if (it != chain2.end()) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+std::vector<std::vector<mlir::Operation*>> getOpRelyChains(mlir::affine::AffineForOp forOp) {
+  // 获取forop下所有的计算路线
+  std::vector<std::vector<mlir::Operation*>> chains;
+  forOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineStoreOp storeOp) {
+    mlir::Operation* parentOp = storeOp->getParentOp();
+    std::vector<mlir::Operation*> chain{storeOp};
+    mlir::Value val = storeOp.getValue();
+    getOpRelyChain(parentOp, val, chain);
+    chains.push_back(chain);
+  });
+  // 将有calculateop重叠的依赖链进行合并
+  std::vector<std::vector<std::vector<mlir::Operation*>>> groups;
+  while (!chains.empty()) {
+    std::vector<std::vector<mlir::Operation*>> group{chains.back()};
+    chains.erase(chains.end());
+    for (int i=chains.size()-1; i>=0; i--) {
+      for (auto chain : group) {
+        if (judgeChainCombine(chains[i], chain)) {
+          group.push_back(chains[i]);
+          chains.erase(chains.begin()+i);
+          break;
+        }
+      }
+    }
+    groups.push_back(group);
+  }
+  // 合并可以合并的chain链
+  std::vector<std::vector<mlir::Operation*>> newChains;
+  for (auto group : groups) {
+    for (int i=0; i<group.size()-1; i++) {
+      mlir::Operation* parentOp = group[0][0]->getParentOp();
+      for (auto op : group[1]) {
+        insertRelyChain(parentOp, group[0], op);
+      }
+      group.erase(group.begin()+1);
+    }
+    newChains.push_back(group[0]);
+  }
+  return newChains;
+}
+
+// ======================================== redece ================================================
+mlir::affine::AffineForOp warpReduce(mlir::OpBuilder &builder,
+                                     int64_t ydim, 
+                                     int64_t width, 
+                                     const std::vector<mlir::Value>& bufs, 
+                                     reduceFunc calculateFunc) {
+  // 进行warp的reduce操作，具体的计算需要自己输入
+  auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
+    auto width_ = b.create<mlir::arith::ConstantOp>(loc, builder.getI32IntegerAttr(width));
+    for (int i=1; i<width; i*=2) {
+      std::vector<mlir::Value> lds, downLds;
+      auto idx = b.create<mlir::arith::ConstantOp>(loc, builder.getI32IntegerAttr(i));
+      for (auto buf: bufs) {
+        auto elem = b.create<mlir::affine::AffineLoadOp>(loc, buf, iv);
+        auto downElem = b.create<mlir::gpu::ShuffleOp>(loc, elem.getResult(), idx, width_, mlir::gpu::ShuffleMode::DOWN);
+        lds.push_back(elem.getResult());
+        downLds.push_back(downElem.getResult(0));
+      }
+      // 将shlf得到的数据，与当前的数据进行计算后再存储
+      auto calResults = calculateFunc(b, lds, downLds);
+      for (int i=0; i<bufs.size(); i++) {
+        b.create<mlir::affine::AffineStoreOp>(loc, calResults[i], bufs[i], iv);
+      }
+    }
+    b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
+  };
+  auto loop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange({}), loopBody);
+  return loop;
+}
+
+mlir::affine::AffineForOp blockReduce(mlir::OpBuilder &builder,
+                                     int64_t ydim, 
+                                     int64_t width, 
+                                     mlir::Value tid,
+                                     const std::vector<mlir::Value>& regBufs, 
+                                     const std::vector<mlir::Value>& smBufs, 
+                                     reduceFunc calculateFunc) {
+  // 进行block的reduce操作，具体的计算需要自己输入
+  mlir::AffineExpr expr = builder.getAffineDimExpr(0) % width;
+  auto zero = mlir::IntegerSet::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), llvm::ArrayRef<bool>({true}));
+  auto ifOp = builder.create<mlir::affine::AffineIfOp>(builder.getUnknownLoc(), zero, mlir::ValueRange{tid}, false);
+  auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
+    std::vector<mlir::Value> lds, oldLds;
+    for (int i=0; i<regBufs.size(); i++) {
+      auto oldLd = b.create<mlir::affine::AffineLoadOp>(loc, smBufs[i], iv);
+      auto ld = b.create<mlir::affine::AffineLoadOp>(loc, regBufs[i], iv);
+      oldLds.push_back(oldLd.getResult());
+      lds.push_back(ld.getResult());
+    }
+    auto calResults = calculateFunc(b, lds, oldLds);
+    for (int i=0; i<calResults.size(); i++) {
+      b.create<mlir::affine::AffineStoreOp>(loc, calResults[i], smBufs[i], iv);
+    }
+    b.create<mlir::affine::AffineStoreOp>(loc, calResults[0], regBufs[0], iv);
+    b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
+  };
+  builder.setInsertionPointToStart(ifOp.getThenBlock());
+  auto loop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange({}), loopBody);
+  builder.setInsertionPointAfter(ifOp);
+  return loop;
+}
+
+mlir::affine::AffineForOp warpBroadcast(mlir::OpBuilder &builder, 
+                                        int64_t ydim, 
+                                        int64_t width,
+                                        const std::vector<mlir::Value>& bufs, 
+                                        int64_t index) {
+  // 将index位置的buf元素广播到wrap上width的位置上
+  auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
+    for (auto buf: bufs) {
+      auto elem = b.create<mlir::affine::AffineLoadOp>(loc, buf, iv);
+      auto downElem = b.create<mlir::gpu::ShuffleOp>(loc, elem.getResult(), index, width, mlir::gpu::ShuffleMode::DOWN);
+      b.create<mlir::affine::AffineStoreOp>(loc, downElem.getResult(0), buf, iv);
+    }
+    b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
+  };
+  auto loop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange({}), loopBody);
+  return loop;
 }
 
 // ============================================= affineExpr ===================================================
@@ -625,8 +967,7 @@ std::vector<mlir::Value> collectNestedIvs(mlir::affine::AffineForOp forOp) {
 mlir::Value doubleBuffer(mlir::Value buffer) {
   // 在buffer下创建一个new buffer，size是两倍
   mlir::Operation* op = buffer.getDefiningOp();
-  auto attr = mlir::dyn_cast<mlir::StringAttr>(op->getAttr(AttrBufDescription));
-  auto bufDesc = attr.getValue().str();
+  auto bufDesc = getStrAttr(op, AttrBufDescription);
   // 否则创建新的buf
   mlir::OpBuilder builder(op);
   std::vector<int64_t> shape{2};
@@ -652,6 +993,26 @@ llvm::SmallVector<int64_t>>
   return {lowerBounds, upperBounds, steps};
 }
 
+std::tuple<llvm::SmallVector<int64_t>, 
+llvm::SmallVector<int64_t>, 
+llvm::SmallVector<int64_t>,
+std::vector<mlir::Value>,
+std::vector<std::string>>
+  getNestedLoopDetailDatas(mlir::affine::AffineForOp forOp) {
+  // 获取嵌套循环的循环详细信息，前提是完美循环
+  std::vector<mlir::Value> ivs;
+  std::vector<std::string> forDescs;
+  llvm::SmallVector<int64_t> lowerBounds, upperBounds, steps;
+  forOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp fop) {
+    auto [lb, up, step] = getLoopBoundAndStep(fop);
+    forDescs.push_back(getStrAttr(fop, FORDESC));
+    ivs.push_back(fop.getInductionVar());
+    lowerBounds.push_back(lb);
+    upperBounds.push_back(up);
+    steps.push_back(step);
+  });
+  return {lowerBounds, upperBounds, steps, ivs, forDescs};
+}
 // =========================================== about double buffer ============================================
 
 std::vector<mlir::affine::AffineForOp> createNewDataShiftForOp(mlir::OpBuilder builder, 

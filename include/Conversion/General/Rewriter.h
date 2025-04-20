@@ -97,6 +97,15 @@ void cache_write(mlir::affine::AffineForOp scope,
                  mlir::AffineMap map, 
                  llvm::SmallVector<mlir::Value> operands);
 
+void separateNoOpRelyForOp(std::vector<mlir::affine::AffineForOp> forOps);
+
+std::pair<std::vector<mlir::Value>, 
+std::vector<mlir::Value>> createSMAndRegInitBuf(mlir::affine::AffineForOp initForOp, 
+                                                mlir::Operation* blockIdx, 
+                                                mlir::Operation* threadIdx, 
+                                                const std::vector<int64_t>& smShape, 
+                                                const std::vector<int64_t>& regShape);
+
 std::vector<std::vector<mlir::affine::AffineForOp>> get_write(mlir::affine::AffineParallelOp parallelLevel, 
                                                               mlir::Value dst);
 

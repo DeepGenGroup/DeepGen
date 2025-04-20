@@ -9,9 +9,9 @@
 #include "Common/ThreadPool.h"
 
 #include <Python.h>
+#include <pybind11/pybind11.h>
 #include <pybind11/buffer_info.h>
 #include <pybind11/functional.h>
-#include <pybind11/pybind11.h>
 #include <pybind11/stl.h>
 #include <pybind11/stl_bind.h>
 
@@ -23,10 +23,10 @@ PYBIND11_MODULE(deepGen, m) {
 
   py::enum_<Target>(m, "Target")
     .value("CUDA", Target::CUDA)
-    .value("ROCM", Target::ROCM)
+    .value("ROCm", Target::ROCm)
     .export_values();
 
-  py::class_<KernelCodeGenerator>(m, "KernelCodeGenerator")
+  py::class_<KernelCodeGenerator, std::shared_ptr<KernelCodeGenerator>>(m, "KernelCodeGenerator")
   .def(py::init<Target, const std::string&>())
   .def("createModule", &KernelCodeGenerator::createModule)
   .def("createKernels", &KernelCodeGenerator::createKernels)
@@ -35,5 +35,5 @@ PYBIND11_MODULE(deepGen, m) {
   .def("mapping", &KernelCodeGenerator::mapping)
   .def("optimize", &KernelCodeGenerator::optimize)
   .def("lowering", &KernelCodeGenerator::lowering)
-  .def("translate", &KernelCodeGenerator::translate)
+  .def("translate", &KernelCodeGenerator::translate);
 }

@@ -55,7 +55,7 @@ namespace KernelCodeGen {
 
     std::vector<mlir::ModuleOp> splitModule(mlir::ModuleOp& mod);
 
-    bool mapping(mlir::ModuleOp& mod, std::map<std::string, std::vector<std::map<std::string, int64_t>>> tileConfig);
+    bool mapping(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tileConfig);
 
     bool optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig);
 

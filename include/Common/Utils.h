@@ -176,6 +176,7 @@ struct NVVMMetadata {
 #define THREADIDX         "threadIdx"
 /*-------------------------------------------*/
 #define FORDESC         "for.desc"
+#define FORINCFUNC      "for.inc.func"
 #define BATCHNUM        "batch.num"
 #define PARALLELDIMS    "parallel.dim"
 #define ITERVARDESC     "iter.var.desc"

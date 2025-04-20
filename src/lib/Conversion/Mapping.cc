@@ -2,47 +2,6 @@
 
 namespace KernelCodeGen {
 
-std::vector<std::string> getArrayStringAttr(mlir::Operation* op, std::string attrName) {
-  // get array string attrs(parallelDims/IterVar)
-  std::vector<std::string> arrayStrAttr;
-  auto descArr = op->getAttr(attrName);
-  auto descArrAttr = mlir::dyn_cast<mlir::ArrayAttr>(descArr);
-  for (auto desc : descArrAttr) {
-    auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
-    auto descStr = descAttr.getValue().str();
-    arrayStrAttr.push_back(descStr);
-  }
-  return arrayStrAttr;
-}
-
-void normalizeParaForOp(std::vector<mlir::affine::AffineForOp> &yloops, std::vector<std::map<std::string, int64_t>> &paraCfg) {
-  // 规范化所有的并行循环，保证fory下就是forx
-  std::vector<int> idxs;
-  std::vector<mlir::affine::AffineForOp> newLoops;
-  std::vector<std::map<std::string, int64_t>> newCfg;
-  for (int i=0; i<yloops.size(); i++) {
-    int index = 0;
-    yloops[i].walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
-      if (auto desc = forOp->getAttr(FORDESC)){
-        auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
-        if (descAttr.getValue().str() == "x") {
-          if (index > 0) {
-            auto newY = decoupleNestedLoop({yloops[i]}, forOp);
-            newCfg.push_back(paraCfg[i]);
-            newLoops.push_back(newY[0]);
-            idxs.push_back(i);
-          }
-          index++;
-        }
-      }
-    });
-  }
-  // update yloops and paraCfg
-  for (int i=0; i<idxs.size(); i++) {
-    yloops.insert(yloops.begin() + idxs[idxs.size()-1-i], newLoops[newLoops.size()-1-i]);
-    paraCfg.insert(paraCfg.begin() + idxs[idxs.size()-1-i], newCfg[newLoops.size()-1-i]);
-  }
-}
 
 void blockForOpShiftDown(std::vector<mlir::affine::AffineForOp>& blockForOps) {
   // 将代表blockx的for循环下移到thread的parallel下
@@ -71,7 +30,7 @@ mlir::affine::AffineParallelOp fuseParallelOp(mlir::OpBuilder builder,
                                                                       mlir::TypeRange(), 
                                                                       llvm::ArrayRef<mlir::arith::AtomicRMWKind>(), 
                                                                       llvm::ArrayRef<int64_t>(ranges));
-  copyAttr<mlir::StringAttr>(parallelOps[0], newParallelOp, AttrGPUIndex);
+  copyAttr(parallelOps[0], newParallelOp, AttrGPUIndex);
   auto newIvs = newParallelOp.getIVs();
   std::vector<mlir::Value> newIvsVec(newIvs.begin(), newIvs.end());
   // move ops in parallel
@@ -88,41 +47,47 @@ mlir::affine::AffineParallelOp fuseParallelOp(mlir::OpBuilder builder,
     paraOp.erase();
   }
   // if fuse blockidx
-  if (auto desc = newParallelOp->getAttr(AttrGPUIndex)){
-    auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
-    if (descAttr.getValue().str() == BLOCKIDX) {    // parallelOp have blockIdx attr
-      // collect old applyOp and affineMap of old applyOp
-      std::vector<mlir::affine::AffineApplyOp> applyOps;
-      std::map<std::string, mlir::AffineMap> applyMap;
-      for (auto &op : newParallelOp.getBody()->getOperations()) {
-        if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(op)) {
-          applyOps.push_back(applyOp);
-          if (auto desc_ = applyOp->getAttr(APPLYDESC)) {
-            auto descAttr_ = mlir::dyn_cast<mlir::StringAttr>(desc_);
-            applyMap.emplace(descAttr_.getValue().str(), applyOp.getAffineMap());
-          }
+  auto gpuIdx = getStrAttr(newParallelOp, AttrGPUIndex);
+  if (gpuIdx == BLOCKIDX) {    // parallelOp have blockIdx attr
+    // collect old applyOp and affineMap of old applyOp
+    std::vector<mlir::affine::AffineApplyOp> applyOps;
+    std::map<std::string, mlir::AffineMap> applyMap;
+    for (auto &op : newParallelOp.getBody()->getOperations()) {
+      if (auto applyOp = mlir::dyn_cast<mlir::affine::AffineApplyOp>(op)) {
+        applyOps.push_back(applyOp);
+        auto applyDesc = getStrAttr(applyOp, APPLYDESC);
+        if (!applyDesc.empty()) {
+          applyMap.emplace(applyDesc, applyOp.getAffineMap());
         }
       }
-      // create new applyop
-      for (auto& [applyDesc, amap] : applyMap) {
-        builder.setInsertionPointToStart(newParallelOp.getBody());
-        auto op = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), amap, mlir::ValueRange({newIvs[0]}));
-        op->setAttr(APPLYDESC, builder.getStringAttr(applyDesc));
-        // replace old applyop
-        for (auto it = applyOps.rbegin(); it != applyOps.rend(); ++it) {
-          mlir::affine::AffineApplyOp apOp = *it;
-          if (auto desc = apOp->getAttr(APPLYDESC)) {
-            auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
-            if (descAttr.getValue().str() == applyDesc) {
-              apOp.getResult().replaceAllUsesWith(op.getResult());
-              apOp.erase();
-            }
-          }
+    }
+    // create new applyop
+    for (auto& [applyDesc, amap] : applyMap) {
+      builder.setInsertionPointToStart(newParallelOp.getBody());
+      auto op = builder.create<mlir::affine::AffineApplyOp>(builder.getUnknownLoc(), amap, mlir::ValueRange({newIvs[0]}));
+      op->setAttr(APPLYDESC, builder.getStringAttr(applyDesc));
+      // replace old applyop
+      for (auto it = applyOps.rbegin(); it != applyOps.rend(); ++it) {
+        mlir::affine::AffineApplyOp apOp = *it;
+        auto applyDesc_ = getStrAttr(apOp, APPLYDESC);
+        if (applyDesc_ == applyDesc) {
+          apOp.getResult().replaceAllUsesWith(op.getResult());
+          apOp.erase();
         }
       }
     }
   }
   return newParallelOp;
+}
+
+void eraseSingleIterForOps(mlir::func::FuncOp funcOp) {
+  // 遍历funcop中所有的forop，找到为循环次数为1的循环，将其删除，map也修改
+  funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+    auto [lb, ub, step] = getLoopBoundAndStep(forOp);
+    if ((ub - lb) / step == 1) {
+      eraseSingleIterForOp(forOp);
+    }
+  });
 }
 
 }

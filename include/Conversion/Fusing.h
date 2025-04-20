@@ -53,8 +53,11 @@ void moveOperation(mlir::func::FuncOp funcOp,
                    const std::vector<std::vector<mlir::Value>>& argToArgs, 
                    const std::vector<std::vector<mlir::Value>>& midToArgs);
 
-std::vector<mlir::affine::AffineForOp> fuseBatchForOps(mlir::OpBuilder builder, 
-                                                       std::vector<std::vector<mlir::affine::AffineForOp>> batchs);
+void normalizeParaForOp(std::vector<mlir::affine::AffineForOp>& yloops);
+
+void separateParaForOps(mlir::func::FuncOp funcOp);
+
+void fuseParaForOps(mlir::func::FuncOp funcOp);
 
 }
 

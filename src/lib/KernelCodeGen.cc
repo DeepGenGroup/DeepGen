@@ -22,6 +22,20 @@ mlir::ModuleOp KernelCodeGenerator::createModule() {
 }
 
 
+std::vector<mlir::ModuleOp> KernelCodeGenerator::splitModule(mlir::ModuleOp& mod) {
+  // split module 
+  std::vector<mlir::ModuleOp> mods;
+  auto kernels = getAllKernels(mod);
+  for (auto kernel : kernels) {
+    auto newMod = createModule();
+    mlir::Block& moduleBlock = newMod.getBodyRegion().front();
+    kernel->moveBefore(&moduleBlock, moduleBlock.end());
+    mods.push_back(newMod);
+  }
+  return mods;
+}
+
+
 std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod, std::vector<KernelData> kernelList) {
   // create all kernels
   std::vector<std::string> noSupKernels;
@@ -61,64 +75,54 @@ bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData
     // move ops in old func and fuse kernel
     moveOperation(newFuncOp, fks, funcArgs, midVars, argToArgs, midToArgs);
     // fuse batch forops
-    builder.setInsertionPoint(funcBatchs[0][0]);
-    fuseBatchForOps(builder, funcBatchs);
-  }
-  return true;
-}
+    fuseForOps(funcBatchs);
+    LOG_DEBUG("===== batch fuse =====\n", mod);
 
-
-std::vector<mlir::ModuleOp> KernelCodeGenerator::splitModule(mlir::ModuleOp& mod) {
-  // split module 
-  std::vector<mlir::ModuleOp> mods;
-  auto kernels = getAllKernels(mod);
-  for (auto kernel : kernels) {
-    auto newMod = createModule();
-    mlir::Block& moduleBlock = newMod.getBodyRegion().front();
-    kernel->moveBefore(&moduleBlock, moduleBlock.end());
-    mods.push_back(newMod);
-  }
-  return mods;
-}
-
-
-bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::map<std::string, std::vector<std::map<std::string, int64_t>>> tileConfig) {
-  // 并行化映射
-  auto kernels = getAllKernels(mod);
-  for (auto kernel : kernels) {
-    auto name = kernel.getName().str();
-    auto paraCfg = tileConfig[name];
-    // collect datas
-    auto paraDims = getArrayStringAttr(kernel, PARALLELDIMS);
-    auto yloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
-    auto xloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
-
-    // x bufferize 这一步需要将所有fory和forx都变成完美嵌套
+    auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(newFuncOp, FORDESC, std::string{"y"});
+    auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(newFuncOp, FORDESC, std::string{"x"});
+    // x bufferize 将含有迭代变量的forx循环进行bufferize，形成foryx完美嵌套
     for (int i=0; i<xloops.size(); i++) {
       if (xloops[i].getNumIterOperands() > 0) {
-        auto iterDescs = getArrayStringAttr(xloops[i], ITERVARDESC);  // 获取含有迭代变量的for循环的属性
+        auto iterDescs = getArrayStrAttr(xloops[i], ITERVARDESC);  // 获取含有迭代变量的for循环的属性
         std::vector<mlir::affine::AffineForOp> upperLoops{yloops[i]};
         Rewriter::bufferizeLoopCarryVar(xloops[i], upperLoops, MemorySpace::global, iterDescs);
       }
     }
     LOG_DEBUG("===== X bufferize =====\n", mod);
-
-    // decouple 将y中含有两个的循环进行拆分，规范化所有的并行循环，保证fory下就是forx
-    // 针对softmax这个算子
-    normalizeParaForOp(yloops, paraCfg);
+    // 针对softmax这个算子，decouple 将y中含有两个x循环进行拆分，保证所有的fory下含有一个forx
+    normalizeParaForOp(yloops);
     LOG_DEBUG("===== decouple =====\n", mod);
+    // 先将算子进行更加小粒度的切分，变成一些reduce、elem-wise、binary、matmul级别的算子
+    separateParaForOps(newFuncOp);   // ！！！！=== 重点设计 === ！！！！
+    LOG_DEBUG("===== splitParaForOps =====\n", mod);
+    // 将kernel内部可以进行融合的循环操作进行融合
+    // 这个函数将用于将在for层面进行分析，将可以进行融合的for进行深度的融合（可行/未实现）
+    fuseParaForOps(newFuncOp);   // ！！！！=== 重点设计 === ！！！！
+    LOG_DEBUG("===== fuseParaForOps =====\n", mod);
+  }
+  return true;
+}
 
+
+bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tileConfig) {
+  // 并行化映射
+  auto kernels = getAllKernels(mod);
+  for (auto kernel : kernels) {
+    // collect datas
+    auto paraDims = getArrayStrAttr(kernel, PARALLELDIMS);
+    auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
+    auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
     // split & reorder & parallel 上一步做完必然会有fory和forx一一对应，大小相等
     std::vector<mlir::affine::AffineParallelOp> blockIdxs;  // collect all block parallel ops
     for (int i=0; i<yloops.size(); i++) {
       // split tile for
-      std::vector<int64_t> tiley{paraCfg[i]["BLOCK_SIZE_Y"], paraCfg[i]["THREAD_SIZE_Y"]};
-      std::vector<int64_t> tilex{paraCfg[i]["BLOCK_SIZE_X"], paraCfg[i]["THREAD_SIZE_X"]};
+      auto funcName = getStrAttr(yloops[i], FORINCFUNC);
+      std::vector<int64_t> tiley{tileConfig.at(funcName).at("BLOCK_SIZE_Y"), tileConfig.at(funcName).at("THREAD_SIZE_Y")};
+      std::vector<int64_t> tilex{tileConfig.at(funcName).at("BLOCK_SIZE_X"), tileConfig.at(funcName).at("THREAD_SIZE_X")};
       auto bytyfory = Rewriter::split(yloops[i], tiley, {"blocky", "thready", "ttiley"});
       auto bxtxforx = Rewriter::split(xloops[i], tilex, {"blockx", "threadx", "ttilex"});
       // reorder tile for
       Rewriter::reorder({bytyfory[0], bxtxforx[0], bytyfory[1], bxtxforx[1], bytyfory[2], bxtxforx[2]});
-      LOG_DEBUG("===== split & reorder =====\n", mod);
       // parallel tile for
       std::vector<mlir::affine::AffineForOp> blockForOps;
       for (auto paraDim : paraDims) {
@@ -132,14 +136,14 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::map<std::string, std
     LOG_DEBUG("===== split & reorder & parallel block/thread tile =====\n", mod);
 
     // addLoopsToParallel 将batch添加进入parallel
-    auto batchloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"batch"});
+    auto batchloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"batch"});
     if (batchloops.size()) {
       Rewriter::addLoopsToParallel(batchloops, blockIdxs);
       LOG_DEBUG("===== addLoopsToParallel =====\n", mod);
     }
 
     // 若block.x的循环还存在的话，就应该将这个循环下移到parallel内部
-    auto bxloops = collectOps<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"blockx"});
+    auto bxloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"blockx"});
     if (bxloops.size()){
       blockForOpShiftDown(bxloops);
       LOG_DEBUG("===== blockForOpShiftDown =====\n", mod);
@@ -148,18 +152,21 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, std::map<std::string, std
     // 将多个parallel合成一个
     mlir::OpBuilder builder(kernel);
     // fuse blockidx
-    auto blockParaOps = collectOps<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, BLOCKIDX);
+    auto blockParaOps = collectOpsInfuncOp<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, BLOCKIDX);
     if (blockParaOps.size() > 1) {
       builder.setInsertionPointAfter(blockParaOps.back());
       auto blockIdx = fuseParallelOp(builder, blockParaOps);
     }
     // fuse threadidx
-    auto threadParaOps = collectOps<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, THREADIDX);
+    auto threadParaOps = collectOpsInfuncOp<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, THREADIDX);
     if (threadParaOps.size() > 1) {
       builder.setInsertionPointAfter(threadParaOps.back());
       auto threadIdx = fuseParallelOp(builder, threadParaOps);
     }
     LOG_DEBUG("===== fuseParallelOp blockIdx & threadIdx =====\n", mod);
+    // erase single iteration forop and amend map of loadop or storeop
+    eraseSingleIterForOps(kernel);
+    LOG_DEBUG("===== eraseSingleIterForOps =====\n", mod);
     kernel->setAttr(std::string("func.state"), builder.getStringAttr("gpu"));
   }
   return true;
@@ -175,7 +182,7 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
     if (KernelType == "Matmul") {
       opts[KernelType] = std::make_unique<MatmulOptimizer>();
     } else if (KernelType == "FlashAttn") {
-
+      opts[KernelType] = std::make_unique<FlashAttnOptimizer>();
     } else {
       llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
       return false;
@@ -330,7 +337,7 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod/*, OUT std::vector<int>& 
   });
 */
   secondLowering(mod, context, target);
-  LOG_DEBUG(" === after secondLowering =====\n",mod) ;
+  LOG_DEBUG(" === after secondLowering =====\n",mod);
   
   return true;
 }
@@ -342,13 +349,15 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
   if (target == Target::ROCm) {
     const int wavesPerEU = 0;
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
-
+    llvm::outs() << " =========== after LLVM IR ============\n";
+    llvm::outs() << llvmIR << "\n";
     const std::string gfx_triple{"amdgcn-amd-amdhsa"};
     const std::string gfx_features{""};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
-
+    llvm::outs() << " =========== after LLVM IR ============\n";
+    llvm::outs() << llvmIR << "\n";
     const int capability = CUDA_CAP;
     const int version = PTXAS_VERSION;
     auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);

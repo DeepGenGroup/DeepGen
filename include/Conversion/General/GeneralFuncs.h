@@ -13,6 +13,8 @@ mlir::OpBuilder getBuilder(mlir::Operation* op, Position pos);
 
 std::tuple<int64_t, int64_t, int64_t> getLoopBoundAndStep(mlir::affine::AffineForOp loop);
 
+bool isForOpArgsEqual(mlir::affine::AffineForOp forOp1, mlir::affine::AffineForOp forOp2);
+
 std::vector<mlir::func::FuncOp> getAllKernels(mlir::ModuleOp mod);
 
 std::vector<mlir::func::FuncOp> getSpecifiedKernels(mlir::ModuleOp mod, 
@@ -21,7 +23,7 @@ std::vector<mlir::func::FuncOp> getSpecifiedKernels(mlir::ModuleOp mod,
 void swap(mlir::affine::AffineForOp outer, mlir::affine::AffineForOp inner);
 
 mlir::Value createAllocOp(mlir::OpBuilder builder, 
-                          std::vector<int64_t> shape, 
+                          const std::vector<int64_t>& shape, 
                           mlir::Type dtype, 
                           MemorySpace space, 
                           int alignment, 
@@ -32,7 +34,13 @@ std::vector<mlir::Value>>
   createNestedLoops(mlir::OpBuilder builder, 
                     llvm::SmallVector<int64_t> lowerBounds, 
                     llvm::SmallVector<int64_t> upperBounds, 
-                    llvm::SmallVector<int64_t> steps);
+                    llvm::SmallVector<int64_t> steps, 
+                    const std::vector<std::string>& forDescs={});
+
+std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::affine::AffineForOp>> forOps, 
+                                                  std::pair<int, int> idxs={0, 0},
+                                                  Position insertPos=Position::before,
+                                                  const std::pair<std::string, std::string>& setAttr={});
 
 void replaceAndErase(mlir::Operation* newOp, mlir::Operation* oldOp);
 
@@ -42,15 +50,35 @@ void spliceHaveBlockOp(mlir::Operation* newOp,
                        int startOpIndex=0, 
                        int endOpIndex=-1);
 
-template<typename AttrType>
+std::string getStrAttr(mlir::Operation* op, std::string attrName);
+
+std::vector<std::string> getArrayStrAttr(mlir::Operation* op, 
+                                         std::string attrName);
+
 void copyAttr(mlir::Operation* originOp, 
               mlir::Operation* newOp, 
-              std::string attrName) {
-  // 复制attr到新的op上
-  if (auto desc = originOp->getAttr(attrName)) {
-    auto descAttr = mlir::dyn_cast<AttrType>(desc);
-    newOp->setAttr(attrName, descAttr);
-  }
+              const std::string& attrName);
+
+void copyAttrs(mlir::Operation* originOp, 
+               mlir::Operation* newOp, 
+               const std::vector<std::string>& excludeAttrs={});
+
+template<typename operation>
+std::vector<operation> collectOpsInfuncOp(mlir::func::FuncOp funcOp, 
+                                          const std::string& attrName, 
+                                          const std::string& forDesc) {
+  // 获取func中任意operation
+  std::vector<operation> ops;
+  funcOp.walk<mlir::WalkOrder::PreOrder>([&](operation op) {
+    if (auto desc = op->getAttr(attrName)) {
+      auto descAttr = mlir::dyn_cast<mlir::StringAttr>(desc);
+      auto descStr = descAttr.getValue().str();
+      if (descStr == forDesc) {
+        ops.push_back(op);
+      }
+    }
+  });
+  return ops;
 }
 
 void replaceOpsOperands(mlir::Operation* parentOp, 
@@ -61,13 +89,46 @@ void replaceOpOperands(mlir::Operation* op,
                       mlir::Value oldOperand, 
                       mlir::Value newOperand);
 
+void sortOps(std::vector<mlir::Operation*>& ops);
+
 std::set<mlir::Operation*> getValueUsers(mlir::Value var, mlir::Operation* rangeOp=nullptr);
 
 int getOpIndex(mlir::Operation* haveBlockOp, mlir::Operation* targetOp);
 
-std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(std::vector<mlir::affine::AffineForOp> upLoops, 
+std::vector<mlir::affine::AffineForOp> decoupleNestedLoop(mlir::OpBuilder& builder,
+                                                          std::vector<mlir::affine::AffineForOp> upLoops, 
                                                           mlir::affine::AffineForOp lowLoop, 
-                                                          bool carryDesc=true);
+                                                          bool copyDesc=true, 
+                                                          const std::string setDesc="");
+
+bool isPrevOp(mlir::Operation* prevOp, mlir::Operation* backOp);
+
+void eraseSingleIterForOp(mlir::affine::AffineForOp forOp);
+
+std::vector<std::vector<mlir::Operation*>> getOpRelyChains(mlir::affine::AffineForOp forOp);
+
+// ======================================== redece ================================================
+using reduceFunc = llvm::function_ref<std::vector<mlir::Value>(mlir::OpBuilder &, std::vector<mlir::Value>, std::vector<mlir::Value>)>;
+
+mlir::affine::AffineForOp warpReduce(mlir::OpBuilder &builder,
+                                     int64_t ydim, 
+                                     int64_t width, 
+                                     const std::vector<mlir::Value>& bufs, 
+                                     reduceFunc calculateFunc);
+
+mlir::affine::AffineForOp blockReduce(mlir::OpBuilder &builder,
+                                     int64_t ydim, 
+                                     int64_t width, 
+                                     mlir::Value tid,
+                                     const std::vector<mlir::Value>& regBufs, 
+                                     const std::vector<mlir::Value>& smBufs, 
+                                     reduceFunc calculateFunc);
+
+mlir::affine::AffineForOp warpBroadcast(mlir::OpBuilder &builder, 
+                                        int64_t ydim, 
+                                        int64_t width,
+                                        const std::vector<mlir::Value>& bufs, 
+                                        int64_t index);
 
 // =================================== AffineMap ====================================
 
@@ -473,6 +534,13 @@ std::tuple<llvm::SmallVector<int64_t>,
 llvm::SmallVector<int64_t>, 
 llvm::SmallVector<int64_t>> 
   getNestedLoopData(mlir::affine::AffineForOp forOp);
+
+std::tuple<llvm::SmallVector<int64_t>, 
+llvm::SmallVector<int64_t>, 
+llvm::SmallVector<int64_t>,
+std::vector<mlir::Value>,
+std::vector<std::string>>
+  getNestedLoopDetailDatas(mlir::affine::AffineForOp forOp);
 
 std::vector<mlir::affine::AffineForOp> createNewDataShiftForOp(mlir::OpBuilder builder, 
                                                                std::vector<mlir::affine::AffineForOp> forOps, 

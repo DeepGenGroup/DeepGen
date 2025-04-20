@@ -1,39 +1,6 @@
 #include "Conversion/LoweringPasses.h"
 #include <dlfcn.h>
 #include <filesystem>
-#include "mlir/Conversion/LLVMCommon/Pattern.h"
-
-#include "mlir/Conversion/AffineToStandard/AffineToStandard.h"
-#include "mlir/Conversion/GPUCommon/GPUCommonPass.h"
-#include "mlir/Conversion/GPUToNVVM/GPUToNVVMPass.h"
-#include "mlir/Conversion/SCFToGPU/SCFToGPUPass.h"
-
-#include "mlir/Transforms/Passes.h"
-#include "mlir/Pass/PassRegistry.h"
-#include "mlir/Parser/Parser.h"
-#include "mlir/Pass/PassManager.h"
-
-// lowering
-#include "mlir/Conversion/ArithToLLVM/ArithToLLVM.h"
-#include "mlir/Conversion/ControlFlowToLLVM/ControlFlowToLLVM.h"
-#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVM.h"
-#include "mlir/Conversion/FuncToLLVM/ConvertFuncToLLVMPass.h"
-#include "mlir/Conversion/LLVMCommon/ConversionTarget.h"
-#include "mlir/Conversion/LLVMCommon/TypeConverter.h"
-#include "mlir/Conversion/MemRefToLLVM/MemRefToLLVM.h"
-#include "mlir/Conversion/VectorToLLVM/ConvertVectorToLLVM.h"
-#include "mlir/Dialect/Arith/IR/Arith.h"
-#include "mlir/Dialect/ControlFlow/IR/ControlFlowOps.h"
-#include "mlir/IR/BuiltinDialect.h"
-#include "llvm/ADT/Sequence.h"
-#include "llvm/ADT/SmallVector.h"
-#include "mlir/Conversion/Passes.h.inc"
-#include "config.h"
-#include "mlir/Dialect/NVGPU/IR/NVGPUDialect.h"
-
-// conversion
-#include "mlir/Conversion/ReconcileUnrealizedCasts/ReconcileUnrealizedCasts.h"
-#include "mlir/Transforms/GreedyPatternRewriteDriver.h"
 
 using namespace mlir;
 namespace KernelCodeGen {
@@ -241,6 +208,120 @@ public:
   }
 };
 
+struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
+  using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+    // TODO: Add support for non 32-bit shuffle values.
+    if (adaptor.getValue().getType().getIntOrFloatBitWidth() != 32)
+      return failure();
+    const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
+    auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value minus1 = rewriter.create<arith::ConstantIntOp>(loc, -1, 32);
+    Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type, ValueRange{minus1, zero});
+    Value srcLaneId = rewriter.create<ROCDL::MbcntHiOp>(loc, int32Type, ValueRange{minus1, mbcntLo});
+
+    Value width = adaptor.getWidth();
+    Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
+    Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
+    Value widthOrZeroIfOutside = rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);
+    Value dstLane;
+    // TODO: Add support for gpu::ShuffleMode::UP and gpu::ShuffleMode::DOWN.
+    // TODO: Use ds_swizzle for XOR when step/offsets are constants for better
+    // perf.
+    switch (op.getMode()) {
+    case gpu::ShuffleMode::XOR:
+      dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId, adaptor.getOffset());
+      break;
+    case gpu::ShuffleMode::IDX:
+      dstLane = adaptor.getOffset();
+      break;
+    default:
+      return failure();
+    }
+    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
+    Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane, dstLane, srcLaneId);
+    Value two = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 2);
+    Value dwordAlignedDstLane = rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);
+    Value initShflValue = adaptor.getValue();
+    if (adaptor.getValue().getType().isF32()) {
+      initShflValue = rewriter.create<LLVM::BitcastOp>(loc, int32Type, initShflValue);
+    }
+    Value shflValue = rewriter.create<ROCDL::DsBpermuteOp>(loc, int32Type, dwordAlignedDstLane, initShflValue);
+    if (adaptor.getValue().getType().isF32()) {
+      shflValue = rewriter.create<LLVM::BitcastOp>(loc, adaptor.getValue().getType(), shflValue);
+    }
+    rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
+    return success();
+  }
+};
+
+struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
+  using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
+    Location loc = op->getLoc();
+
+    auto valueTy = adaptor.getValue().getType();
+    auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+    auto predTy = IntegerType::get(rewriter.getContext(), 1);
+
+    Value one = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 1);
+    Value minusOne = rewriter.create<LLVM::ConstantOp>(loc, int32Type, -1);
+    Value thirtyTwo = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 32);
+    Value numLeadInactiveLane = rewriter.create<LLVM::SubOp>(loc, int32Type, thirtyTwo, adaptor.getWidth());
+    // Bit mask of active lanes: `(-1) >> (32 - activeWidth)`.
+    Value activeMask = rewriter.create<LLVM::LShrOp>(loc, int32Type, minusOne, numLeadInactiveLane);
+    Value maskAndClamp;
+    if (op.getMode() == gpu::ShuffleMode::UP) {
+      // Clamp lane: `32 - activeWidth`
+      maskAndClamp = numLeadInactiveLane;
+    } else {
+      // Clamp lane: `activeWidth - 1`
+      maskAndClamp = rewriter.create<LLVM::SubOp>(loc, int32Type, adaptor.getWidth(), one);
+    }
+
+    bool predIsUsed = !op->getResult(1).use_empty();
+    UnitAttr returnValueAndIsValidAttr = nullptr;
+    Type resultTy = valueTy;
+    if (predIsUsed) {
+      returnValueAndIsValidAttr = rewriter.getUnitAttr();
+      resultTy = LLVM::LLVMStructType::getLiteral(rewriter.getContext(), {valueTy, predTy});
+    }
+    NVVM::ShflKind nvvmMode;
+    switch (op.getMode()) {
+      case gpu::ShuffleMode::XOR:
+        nvvmMode = NVVM::ShflKind::bfly;
+        break;
+      case gpu::ShuffleMode::UP:
+        nvvmMode =  NVVM::ShflKind::up;
+        break;
+      case gpu::ShuffleMode::DOWN:
+        nvvmMode =  NVVM::ShflKind::down;
+        break;
+      case gpu::ShuffleMode::IDX:
+        nvvmMode =  NVVM::ShflKind::idx;
+        break;
+      default:
+        return failure();
+    }
+    Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, activeMask, adaptor.getValue(), adaptor.getOffset(),
+        maskAndClamp, nvvmMode, returnValueAndIsValidAttr);
+    if (predIsUsed) {
+      Value shflValue = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 0);
+      Value isActiveSrcLane = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 1);
+      rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
+    } else {
+      rewriter.replaceOp(op, {shfl, nullptr});
+    }
+    return success();
+  }
+};
+
 // 将gpu barrier转成rocdl的barrier
 struct GPUBarrierToROCDLLowering : public OpRewritePattern<gpu::BarrierOp> {
   using OpRewritePattern<gpu::BarrierOp>::OpRewritePattern;
@@ -260,6 +341,16 @@ struct GPUBarrierToNVVMLowering : public OpRewritePattern<gpu::BarrierOp> {
     return success();
   }
 };
+
+template <typename OpTy>
+static void populateOpPatterns(LLVMTypeConverter &converter,
+                               RewritePatternSet &patterns, StringRef f32Func,
+                               StringRef f64Func,
+                               StringRef f32ApproxFunc = "") {
+  patterns.add<ScalarizeVectorOpLowering<OpTy>>(converter);
+  patterns.add<OpToFuncCallLowering<OpTy>>(converter, f32Func, f64Func,
+                                           f32ApproxFunc);
+}
 
 // 将上述 3 个重写加到这个pass中
 struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, OperationPass<ModuleOp>> {
@@ -291,13 +382,17 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                ROCDL::BlockIdYOp, ROCDL::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, ROCDL::ThreadIdXOp,
                                                ROCDL::ThreadIdYOp, ROCDL::ThreadIdZOp>>(typeConverter, AttrBlockDim);
+      patterns.add<GPUShuffleOpToROCDLLowering>(typeConverter);
       patterns.add<GPUBarrierToROCDLLowering>(&getContext());
+      populateOpPatterns<math::ExpOp>(typeConverter, patterns, "__ocml_exp_f32", "__ocml_exp_f64");
     } else if (target == Target::CUDA) {
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, NVVM::BlockIdXOp, 
                                                NVVM::BlockIdYOp, NVVM::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, NVVM::ThreadIdXOp,
                                                NVVM::ThreadIdYOp, NVVM::ThreadIdZOp>>(typeConverter, AttrBlockDim);
+      patterns.add<GPUShuffleOpToNVVMLowering>(typeConverter);
       patterns.add<GPUBarrierToNVVMLowering>(&getContext());
+      populateOpPatterns<math::ExpOp>(typeConverter, patterns, "__nv_expf", "__nv_exp", "__nv_fast_expf");
     }
 
     if (failed(applyPartialConversion(getOperation(), Codetarget, std::move(patterns)))){
