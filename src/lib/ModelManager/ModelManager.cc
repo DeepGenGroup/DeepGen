@@ -1,136 +1,56 @@
-// #include "ModelManager/ModelManager.h"
-// #include "KernelCodeGen.h"
+#include "mlir/IR/AsmState.h"
+#include "mlir/IR/BuiltinOps.h"
+#include "mlir/IR/MLIRContext.h"
+#include "mlir/Parser/Parser.h"
+#include "mlir/Support/FileUtilities.h"
+#include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "mlir/Dialect/Arith/IR/Arith.h"
+#include "mlir/Dialect/Tensor/IR/Tensor.h"
+#include "mlir/Dialect/Linalg/IR/Linalg.h"
+#include "ModelManager/ModelManager.h"
+#include "stablehlo/dialect/StablehloOps.h"
+#include "stablehlo/dialect/ChloOps.h"
+#include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
+#include "torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.h"
 
-// namespace KernelCodeGen {
+#include "llvm/Support/raw_ostream.h"
 
-// ModelManager::ModelManager(mlir::ModuleOp& mod) : 
-//     m_rootModule(mod)
-// { 
-//     ;
-// }
+using namespace mlir;
+namespace KernelCodeGen
+{
+    bool ModelManager::seperateMaingraph(mlir::ModuleOp* root, std::vector<mlir::ModuleOp*> submodules)
+    {
+        mlir::OpBuilder builder(root->getContext());
+        std::vector<std::string> opnames ;
+        for(auto& funcOp : root->getOps()){
+            funcOp.setAttr("graph.level",builder.getStringAttr("main"));
+            auto _funcOp = mlir::dyn_cast<mlir::func::FuncOp>(funcOp);
+            for(auto& region : _funcOp->getRegions()){
+                for(auto& op : region.getOps()){
+                    auto d = op.getName().getStringRef().data();
+                    opnames.push_back(std::string{d});
+                }
+            }
+        }
+        std::cout << "==========\n" ;
+        for(int i=0;i<opnames.size();++i){
+            std::cout << opnames[i] << std::endl;
+        }
+        return true;
+    }
 
-// bool ModelManager::process()
-// {
-//     torchMLIRLowerToLinalg();
-//     // mark 'forward' as root func
-//     m_rootModule.walk([&](mlir::func::FuncOp op){
-//         this->markAsRootFunction(op);
-//     });
-//     // optimize based on root func
-//     graphOptimize();
-//     // based on optimized graph, insert naive operator expression funcs into rootModule
-//     insertKernelNaiveExpressionsToRootModule();
-//     // move kernel funcs from rootFunc to new modules
-//     seperateKernelFuncIntoModules();
-//     return true;
-// }
+    bool ModelManager::process(const std::string& filepath)
+    {
+        // Import Module from IR text
+        m_ctx.loadDialect<func::FuncDialect, arith::ArithDialect,stablehlo::StablehloDialect, torch::Torch::TorchDialect, 
+                        chlo::ChloDialect, torch::TorchConversion::TorchConversionDialect>();
+        mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<ModuleOp>(filepath, &m_ctx);
+        auto _mod = mod.operator->();
+        std::vector<mlir::ModuleOp*> submodules;
+        auto ret = seperateMaingraph(_mod, submodules);
+        mod->dump();
+        return ret;
+    }
 
-// /**
-//  * @brief 基于 root module & forward function ，将其中出现的 linalg.matmul 等算子替换为 func.call, 
-//  * 并在root module里插入对应的算子朴素表达function
-//  * 
-//  * @return true 
-//  * @return false 
-//  */
-// bool ModelManager::insertKernelNaiveExpressionsToRootModule()
-// {
-//     auto& ops = this->m_rootModule.getBody()->getOperations();
-//     mlir::OpBuilder b(m_rootModule.getContext());
-//     KernelCodeGenerator gen(Target::ROCm,"906");
-//     for(auto& op : ops){
-//         if(tools::isOpAttrEqualToString(&op,AttrKernelType,
-//             tools::KcgKernelTypeToString(KcgKernelType::matmul))){
-//             // auto kernelmod = gen.create<Operators::Matmul>(
-//             //     std::vector<int64_t>{M, N, K},
-//             //     std::vector<std::string>{dtypeA,dtypeB,dtypeC},
-//             //     name,isATranspose
-//             // );
-//             continue;
-//         }
-//         if(tools::isOpAttrEqualToString(&op,AttrKernelType,
-//             tools::KcgKernelTypeToString(KcgKernelType::conv2d))){
-//             // auto kernelmod = gen.create<Operators::Matmul>(
-//             //     std::vector<int64_t>{M, N, K},
-//             //     std::vector<std::string>{dtypeA,dtypeB,dtypeC},
-//             //     name,isATranspose
-//             // );
-//             continue;
-//         }
-//         if(tools::isOpAttrEqualToString(&op,AttrKernelType,
-//             tools::KcgKernelTypeToString(KcgKernelType::poolmax))){
-//             // auto kernelmod = gen.create<Operators::Matmul>(
-//             //     std::vector<int64_t>{M, N, K},
-//             //     std::vector<std::string>{dtypeA,dtypeB,dtypeC},
-//             //     name,isATranspose
-//             // );
-//             continue;
-//         }
-//     }
-//     return true;
-// }
 
-// bool ModelManager::seperateKernelFuncIntoModules()
-// {
-//     auto loc = m_rootModule.getLoc();
-//     int i=0;
-//     this->m_modules.push_back(m_rootModule);
-//     m_rootModule.walk([&](mlir::func::FuncOp op){
-//       if(isRootFunction(op)){
-//         ;
-//       }
-//       else{
-//         auto funName = op.getName();
-//         auto newMod = mlir::ModuleOp::create(loc,funName);
-//         mlir::OpBuilder b(newMod.getContext());
-//         b.setInsertionPointToEnd(newMod.getBody());
-//         auto dumpOp = b.create<mlir::arith::ConstantIntOp>(b.getUnknownLoc(),111,32);
-//         op->moveAfter(dumpOp);
-//         dumpOp.erase();
-//         m_modules.push_back(newMod);
-//       }
-//     });
-//     return true;
-// }
-
-// void ModelManager::markAsRootFunction(mlir::func::FuncOp & op){
-//     tools::opSetAttr(op,"kcg.isRoot","1");
-// }
-// bool ModelManager::isRootFunction(mlir::func::FuncOp & op){
-//     return op->hasAttr("kcg.isRoot");
-// }
-
-// /**
-//  * @brief 对forward函数里的算子进行walk，分析性质并添加属性用来标记其种类
-//  * 
-//  * @return true 
-//  * @return false 
-//  */
-// bool ModelManager::graphOptimize()
-// {
-//     // 处理完毕后或处理过程里，调用 generateKernelNaiveExpressions 在rootModule里插入朴素表达的funcop
-//     // todo ...
-//     // ... (graph optimize algorithm ) ...
-//     // optimize ok, add attr to operators
-//     for(auto& op : this->m_rootModule.getBody()->getOperations()){
-//         if(mlir::dyn_cast<mlir::linalg::MatmulOp>(op) != nullptr){
-//             tools::opSetAttr(&op, AttrKernelType, tools::KcgKernelTypeToString(KcgKernelType::matmul));
-//             continue;
-//         }
-//         if(mlir::dyn_cast<mlir::linalg::Conv2DNchwFchwOp>(op) != nullptr){
-//             tools::opSetAttr(&op, AttrKernelType, tools::KcgKernelTypeToString(KcgKernelType::conv2d));
-//             continue;
-//         }
-//         if(mlir::dyn_cast<mlir::linalg::PoolingNchwMaxOp>(op) != nullptr){
-//             tools::opSetAttr(&op, AttrKernelType, tools::KcgKernelTypeToString(KcgKernelType::poolmax));
-//             continue;
-//         }
-//     }
-//     return true;
-// }
-// bool ModelManager::torchMLIRLowerToLinalg()
-// {
-//     // lower MLIR to linalg
-//     return true;
-// }
-
-// }  // KernelCodeGen
+};

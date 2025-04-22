@@ -2,6 +2,6 @@
 int main(int argc, char ** argv) {
   using namespace KernelCodeGen;
   ModelManager m;
-  m.importModelFromIR(std::string(argv[1]));
+  m.process(std::string(argv[1]));
   return 0;
 }

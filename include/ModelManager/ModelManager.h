@@ -2,17 +2,18 @@
 #define _ModelManager_h_
 
 #include "Common/Utils.h"
+#include "mlir/IR/OwningOpRef.h"
+#include "mlir/InitAllDialects.h"
 #include <vector>
+#include "mlir/IR/MLIRContext.h"
 
 namespace KernelCodeGen {
 
 class ModelManager{
 public :
-    bool process();
-    bool importModelFromIR(const std::string& filepath);
+    bool process(const std::string& filepath);
 private:
-    // 将module中的func根据attr 拆分进多个module。每个module对应一个kernel，存入 m_kernels
-    bool seperateKernelFuncIntoModules();
+    bool seperateMaingraph(mlir::ModuleOp* root, std::vector<mlir::ModuleOp*> submodules);
     // 图优化
     bool graphOptimize();
     // torchMLIR lower to Linalg
@@ -23,7 +24,8 @@ private:
 private:
     bool isRootFunction(mlir::func::FuncOp& mod);
     void markAsRootFunction(mlir::func::FuncOp & mod);
-    mlir::ModuleOp m_rootModule;
+    mlir::ModuleOp* m_rootModule;
+    mlir::MLIRContext m_ctx;
 
 };
 
