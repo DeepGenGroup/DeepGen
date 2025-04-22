@@ -9,6 +9,9 @@
 #include "mlir/Dialect/Linalg/IR/Linalg.h"
 #include "ModelManager/ModelManager.h"
 #include "stablehlo/dialect/StablehloOps.h"
+#include "stablehlo/dialect/ChloOps.h"
+#include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
+#include "torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.h"
 
 #include "llvm/Support/raw_ostream.h"
 
@@ -22,7 +25,7 @@ bool ModelManager::process(){
 bool ModelManager::importModelFromIR(const std::string& filepath){
   MLIRContext ctx;
   // 首先，注册需要的 dialect
-  ctx.loadDialect<func::FuncDialect, arith::ArithDialect, stablehlo::StablehloDialect >();
+  ctx.loadDialect<func::FuncDialect, arith::ArithDialect, stablehlo::StablehloDialect, torch::Torch::TorchDialect , chlo::ChloDialect, torch::TorchConversion::TorchConversionDialect>();
   // 读入文件
   auto src = parseSourceFile<ModuleOp>(filepath, &ctx);
   // 输出dialect，也可以输出到 llvm::errs(), llvm::dbgs()

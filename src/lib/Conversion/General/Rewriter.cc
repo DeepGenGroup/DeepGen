@@ -503,7 +503,7 @@ mlir::affine::AffineForOp write(mlir::OpBuilder& builder, mlir::Value src, mlir:
   auto dimsNum = map.getNumDims();
   auto dim0 = builder.getAffineDimExpr(0);
   auto dim1 = builder.getAffineDimExpr(1);
-  bool twoLoop = abs(dimsNum - operands.size()) == 2;
+  bool twoLoop = abs(int(dimsNum - operands.size())) == 2;
   auto srcMap = !twoLoop ? 
                 mlir::AffineMap::get(/*dimCount*/1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * width), builder.getContext()) :
                 mlir::AffineMap::get(/*dimCount*/2, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * width + dim1), builder.getContext());

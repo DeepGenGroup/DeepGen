@@ -1,5 +1,6 @@
 message("KernelCodeGen_BINARY_DIR = ${KernelCodeGen_BINARY_DIR}")
 include_directories(${KernelCodeGen_BINARY_DIR}/rocm-stablehlo)
+add_compile_options(-g)
 add_mlir_library(model_manager
   ModelManager.cc
     
@@ -49,4 +50,25 @@ target_link_libraries(kcg_modelProcessor PUBLIC
   MLIRTargetLLVMIRImport
   MLIRTargetLLVMIRExport
   MLIRFuncToLLVM
+  libTorchMLIRCAPI.a
+  libTorchMLIRConversionPasses.a
+  libTorchMLIRConversionUtils.a
+  libTorchMLIRInitAll.a
+  libTorchMLIRRefBackend.a
+  libTorchMLIRTMTensorDialect.a
+  libTorchMLIRTMTensorPasses.a
+  libTorchMLIRTorchConversionDialect.a
+  libTorchMLIRTorchConversionPasses.a
+  libTorchMLIRTorchConversionToMLProgram.a
+  libTorchMLIRTorchDialect.a
+  libTorchMLIRTorchOnnxToTorch.a
+  libTorchMLIRTorchPasses.a
+  libTorchMLIRTorchToArith.a
+  libTorchMLIRTorchToLinalg.a
+  libTorchMLIRTorchToSCF.a
+  libTorchMLIRTorchToStablehlo.a
+  libTorchMLIRTorchToTensor.a
+  libTorchMLIRTorchToTMTensor.a
+  libTorchMLIRTorchToTosa.a
+  libTorchMLIRTorchUtils.a
 )
