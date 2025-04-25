@@ -1,15 +1,19 @@
 #!/bin/bash
-model=/home/xushilong/onnxMLIRLearn/data/self_attention.onnx
+llvm_install_dir=~/rocm-llvm-install
+model=/home/xushilong/DeepGen/_TempCodes/self_attention.onnx
+OUT_DIR=/home/xushilong/DeepGen/_TempCodes
 # model=/home/xushilong/onnxMLIRLearn/data/fixed_transformer_sim.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/mnist.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/auto_Opset16_sim.onnx  #  error: failed to legalize operation 'torch.aten.cumsum' that was explicitly marked illegal
 # model=/home/xushilong/onnxMLIRLearn/data/model_structure.onnx  
 
-IMPORT_ONNX=~/llvm-install/bin/torch-mlir-import-onnx
-TORCH_MLIR_OPT=~/llvm-install/bin/torch-mlir-opt
-MLIR_OPT=~/llvm-install/bin/mlir-opt
+IMPORT_ONNX=$llvm_install_dir/bin/torch-mlir-import-onnx
+TORCH_MLIR_OPT=$llvm_install_dir/bin/torch-mlir-opt
+MLIR_OPT=$llvm_install_dir/bin/mlir-opt
+MLIR_TRANSLATE=$llvm_install_dir/bin/mlir-translate
+MLIR_RUNNER=$llvm_install_dir/bin/mlir-runner
 
-OUT_DIR=/home/xushilong/onnxMLIRLearn/testTorchMLIR
+
 
 echo ===Start Import model And lower to onnxDialect
 $IMPORT_ONNX  --data-prop $model > ${OUT_DIR}/onnx.mlir 
@@ -55,19 +59,38 @@ echo ===wating444
 $MLIR_OPT --affine-simplify-structures 333gpu.mlir > 444.mlir
 echo ===wating555
 
+# For HIP
+# $MLIR_OPT --pass-pipeline="builtin.module(\
+#     rocdl-attach-target{chip=gfx906 O=3 triple=amdgcn-amd-amdhsa}, \
+#     gpu-decompose-memrefs, \
+#     lower-affine, \
+#     convert-scf-to-cf, \
+#     gpu.module(convert-gpu-to-rocdl{use-bare-ptr-memref-call-conv }), \
+#     convert-index-to-llvm, \
+#     reconcile-unrealized-casts, \
+#     canonicalize \
+#      )"   444.mlir > 555.mlir
+
+# For CUDA
 $MLIR_OPT --pass-pipeline="builtin.module(\
-    rocdl-attach-target{chip=gfx906 O=3 triple=amdgcn-amd-amdhsa}, \
+    nvvm-attach-target{chip=sm_80 O=3}, \
     gpu-decompose-memrefs, \
     lower-affine, \
     convert-scf-to-cf, \
-    gpu.module(convert-gpu-to-rocdl{use-bare-ptr-memref-call-conv }), \
+    gpu.module(convert-gpu-to-nvvm), \
     convert-index-to-llvm, \
     reconcile-unrealized-casts, \
     canonicalize \
      )"   444.mlir > 555.mlir 
+# Or Use Pipeline
+# $MLIR_OPT 555.mlir  -gpu-lower-to-nvvm-pipeline="cubin-chip=sm_80 opt-level=3" > 666.mlir
 
+$MLIR_OPT --pass-pipeline="builtin.module(\
+    convert-func-to-llvm, \
+    gpu-to-llvm, \
+    gpu-module-to-binary, \
+    canonicalize \
+     )"   555.mlir > 666.mlir  # Can be run with mlir-runner : mlir-runner 666.mlir -e main_graph
 
-# $MLIR_OPT --pass-pipeline="builtin.module(\
-#     convert-func-to-llvm, \
-#     gpu-module-to-binary{toolkit=/usr/bin/clang} \
-#      )"   555.mlir > 666.mlir 
+$MLIR_RUNNER 666.mlir -e main_graph
+# $MLIR_TRANSLATE 666.mlir --mlir-to-llvmir -o 777.ll

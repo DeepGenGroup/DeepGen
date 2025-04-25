@@ -1,23 +1,24 @@
 # !/bin/bash
 
-pybind11_DIR=$HOME/anaconda3/envs/py310/lib/python3.10/site-packages/pybind11/share/cmake/pybind11 
-nanobind_DIR=$HOME/anaconda3/envs/py310/lib/python3.10/site-packages/nanobind/cmake 
+pybind11_DIR=/home/xushilong/anaconda3/envs/py310/lib/python3.10/site-packages/pybind11/share/cmake/pybind11
+nanobind_DIR=/home/xushilong/anaconda3/envs/py310/lib/python3.10/site-packages/nanobind/cmake 
+llvm_install_dir=$HOME/rocm-llvm-install
 
 # Update compilers to support cxx20
 update_compiler_support_cxx20(){
-    if test -e $HOME/llvm-install/gcc
+    if test -e $llvm_install_dir/gcc
     then
         echo "==== gcc already updated"
     else
         conda install gcc_linux-64=11.2.0
-        ln -s  $HOME/anaconda3/envs/py310/bin/x86_64-conda_cos7-linux-gnu-gcc  $HOME/llvm-install/gcc
+        ln -s  $HOME/anaconda3/envs/py310/bin/x86_64-conda_cos7-linux-gnu-gcc  $llvm_install_dir/gcc
     fi
-    if test -e $HOME/llvm-install/g++
+    if test -e $llvm_install_dir/g++
     then
         echo "==== g++ already updated"
     else
         conda install gxx_linux-64=11.2.0
-        ln -s  $HOME/anaconda3/envs/py310/bin/x86_64-conda_cos7-linux-gnu-g++  $HOME/llvm-install/g++
+        ln -s  $HOME/anaconda3/envs/py310/bin/x86_64-conda_cos7-linux-gnu-g++  $llvm_install_dir/g++
     fi
 }
 
@@ -40,7 +41,7 @@ install_rocm_llvm(){
             -Wno-unused-but-set-parameter \
             -Dpybind11_DIR=$pybind11_DIR \
             -Dnanobind_DIR=$nanobind_DIR \
-            -DCMAKE_INSTALL_PREFIX=$HOME/llvm-install
+            -DCMAKE_INSTALL_PREFIX=$llvm_install_dir
         ninja -j8; ninja install; 
     fi
 }
@@ -69,13 +70,14 @@ install_torch_mlir(){
         cd $HOME ; git clone https://github.com/DeepGenGroup/rocm-torch-mlir.git ; cd rocm-torch-mlir ;
         git switch xsl_self; git submodule init; git submodule update ;
         mkdir build; cd build ;
-        cmake -G Ninja .. -DCMAKE_INSTALL_PREFIX=$HOME/llvm-install  \
-            -DCMAKE_CXX_COMPILER=$HOME/llvm-install/g++ \
-            -DCMAKE_C_COMPILER=$HOME/llvm-install/gcc \
+        cmake -G Ninja .. -DCMAKE_INSTALL_PREFIX=$llvm_install_dir  \
+            -DCMAKE_CXX_COMPILER=$llvm_install_dir/g++ \
+            -DCMAKE_C_COMPILER=$llvm_install_dir/gcc \
             -Dpybind11_DIR=$pybind11_DIR \
             -Dnanobind_DIR=$nanobind_DIR \
             -DProtobuf_DIR=$HOME/protobuf-3.21.12-install/lib/cmake/protobuf
-        ninja -j8; ninja install
+        ninja -j8; ninja install; 
+        ln -s $HOME/rocm-torch-mlir/build/bin/torch-mlir-import-onnx $llvm_install_dir/bin/torch-mlir-import-onnx
     fi
 }
 

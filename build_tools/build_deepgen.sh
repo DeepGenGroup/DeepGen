@@ -9,5 +9,6 @@ cd build
 cmake .. \
     -DCOMPILE_AS_PYMODULE=$is_as_pymodule \
     -DENABLE_DEBUG_LOG=$enable_debug_mode \
-    -Dpybind11_DIR=$HOME/anaconda3/envs/py310/lib/python3.10/site-packages/pybind11/share/cmake/pybind11
+    -Dpybind11_DIR=$HOME/anaconda3/envs/py310/lib/python3.10/site-packages/pybind11/share/cmake/pybind11 \
+    -Dnanobind_DIR=/home/xushilong/anaconda3/envs/py310/lib/python3.10/site-packages/nanobind/cmake 
 make -j16
