@@ -66,6 +66,10 @@ __global__ void verify_kernel(float* C, float* D, int m, int n) {
 
 // nvcc -o ./bin/runkernel runkernel.cu -lcuda -lcublas
 int main(int argc, char** argv) {
+    if (argc <= 8){
+        std::cout << "Usage : M N K gridDims blockDims shmBytes cubinPath cubinFunc" << std::endl;
+        return 1;
+    }
     int device_count;
     CUresult cuResult = cuInit(0);
     cudaGetDeviceCount(&device_count);

@@ -473,8 +473,8 @@ int main(){
   auto ret = _compile(config);
 #endif
 
-  __GlobalTarget = KernelCodeGen::Target::ROCm;
-  __GlobalPlatDesc = "906";
+  __GlobalTarget = KernelCodeGen::Target::CUDA;
+  __GlobalPlatDesc = "80";
   // cuda
   std::vector<Config> configs = {
     {
@@ -487,7 +487,7 @@ int main(){
       {KEY_DTYPE_A, (int)KcgDtype::float32},
       {KEY_DTYPE_B, (int)KcgDtype::float32},
       {KEY_DTYPE_C, (int)KcgDtype::float32},
-      {KEY_M, 1024},{KEY_N, 1024},{KEY_K, 1024}, {KEY_BATCH,2},
+      {KEY_M, 1024},{KEY_N, 1024},{KEY_K, 1024}, {KEY_BATCH,1},
       {KEY_IS_A_TRANSPOSE, 1}
     },
   };
