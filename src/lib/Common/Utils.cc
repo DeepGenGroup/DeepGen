@@ -190,7 +190,7 @@ void opSetAttr(mlir::Operation* op, const std::string& name, int val){
 
 uint64_t getIntAttr(mlir::Operation* op, const std::string& name){
   assert(op != nullptr && "getAttr:nullptr error!");
-  uint64_t ret = -1;
+  uint64_t ret = 0;
   if(op->hasAttr(name)){
     auto attr = mlir::dyn_cast<mlir::IntegerAttr>(op->getAttr(name));
     ret = attr.getValue().getLimitedValue();

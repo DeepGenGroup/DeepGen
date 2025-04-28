@@ -85,7 +85,8 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 get_property(translation_libs GLOBAL PROPERTY MLIR_TRANSLATION_LIBS)
 
-add_executable(kcg_modelProcessor ./ModelManager/main.cc)
+add_compile_options(-g)
+add_executable(kcg_modelProcessor ./ModelManager/main.cc  ${common_src})
 target_link_libraries(kcg_modelProcessor PUBLIC 
         model_manager
         ${dialect_libs}

@@ -1,12 +1,11 @@
 #!/bin/bash
 llvm_install_dir=~/rocm-llvm-install
-model=/home/xushilong/DeepGen/_TempCodes/self_attention.onnx
-OUT_DIR=/home/xushilong/DeepGen/_TempCodes
-# model=/home/xushilong/onnxMLIRLearn/data/fixed_transformer_sim.onnx
+model=/home/xushilong/DeepGen/_TempCodes/model/fixed_transformer_sim.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/mnist.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/auto_Opset16_sim.onnx  #  error: failed to legalize operation 'torch.aten.cumsum' that was explicitly marked illegal
 # model=/home/xushilong/onnxMLIRLearn/data/model_structure.onnx  
 
+OUT_DIR=/home/xushilong/DeepGen/_TempCodes
 IMPORT_ONNX=$llvm_install_dir/bin/torch-mlir-import-onnx
 TORCH_MLIR_OPT=$llvm_install_dir/bin/torch-mlir-opt
 MLIR_OPT=$llvm_install_dir/bin/mlir-opt
@@ -14,13 +13,19 @@ MLIR_TRANSLATE=$llvm_install_dir/bin/mlir-translate
 MLIR_RUNNER=$llvm_install_dir/bin/mlir-runner
 
 
-
+cd $OUT_DIR
 echo ===Start Import model And lower to onnxDialect
-$IMPORT_ONNX  --data-prop $model > ${OUT_DIR}/onnx.mlir 
+$IMPORT_ONNX  --data-prop  --opset-version 14 $model > onnx.mlir 
 echo ===Start Lowering to torchMLIR
-$TORCH_MLIR_OPT  --torch-onnx-to-torch-backend-pipeline  ${OUT_DIR}/onnx.mlir > 000.mlir
+
+# Equal to : torch-onnx-to-torch-backend-pipeline 
+$TORCH_MLIR_OPT  -convert-torch-onnx-to-torch    onnx.mlir >  000t.mlir
+echo ===Start Lowering to 000
+$TORCH_MLIR_OPT  --pass-pipeline="builtin.module(torch-function-to-torch-backend-pipeline)"     000t.mlir > 000.mlir
+
+# $TORCH_MLIR_OPT  --pass-pipeline="builtin.module(torch-onnx-to-torch-backend-pipeline)"    onnx.mlir >  000.mlir
 echo ===wating111
-$TORCH_MLIR_OPT  --torch-backend-to-stablehlo-backend-pipeline 000.mlir > 111.mlir
+$TORCH_MLIR_OPT  --torch-backend-to-stablehlo-backend-pipeline -stablehlo-aggressive-simplification 000.mlir > 111.mlir   # 删除 in out形状相同的 broadcastOp 
 echo ===wating222
 $TORCH_MLIR_OPT  --pass-pipeline="builtin.module(stablehlo-legalize-to-linalg{enable-primitive-ops}, canonicalize)" 111.mlir > 222Linalg.mlir
 echo ===222affine
@@ -60,31 +65,34 @@ $MLIR_OPT --affine-simplify-structures 333gpu.mlir > 444.mlir
 echo ===wating555
 
 # For HIP
-# $MLIR_OPT --pass-pipeline="builtin.module(\
-#     rocdl-attach-target{chip=gfx906 O=3 triple=amdgcn-amd-amdhsa}, \
-#     gpu-decompose-memrefs, \
-#     lower-affine, \
-#     convert-scf-to-cf, \
-#     gpu.module(convert-gpu-to-rocdl{use-bare-ptr-memref-call-conv }), \
-#     convert-index-to-llvm, \
-#     reconcile-unrealized-casts, \
-#     canonicalize \
-#      )"   444.mlir > 555.mlir
-
-# For CUDA
 $MLIR_OPT --pass-pipeline="builtin.module(\
-    nvvm-attach-target{chip=sm_80 O=3}, \
+    rocdl-attach-target{chip=gfx906 O=3 triple=amdgcn-amd-amdhsa}, \
     gpu-decompose-memrefs, \
     lower-affine, \
     convert-scf-to-cf, \
-    gpu.module(convert-gpu-to-nvvm), \
+    gpu.module(convert-gpu-to-rocdl{use-bare-ptr-memref-call-conv }), \
     convert-index-to-llvm, \
     reconcile-unrealized-casts, \
     canonicalize \
-     )"   444.mlir > 555.mlir 
-# Or Use Pipeline
-# $MLIR_OPT 555.mlir  -gpu-lower-to-nvvm-pipeline="cubin-chip=sm_80 opt-level=3" > 666.mlir
+     )"   444.mlir > 555.mlir
 
+# For CUDA [测试 转化 fixed_transformer_sim.onnx 时会出错], 应使用 -gpu-lower-to-nvvm-pipeline
+# $MLIR_OPT --pass-pipeline="builtin.module(\
+#     nvvm-attach-target{chip=sm_80 O=3}, \
+#     gpu-decompose-memrefs, \
+#     lower-affine, \
+#     convert-scf-to-cf, \
+#     gpu.module(convert-gpu-to-nvvm), \
+#     convert-index-to-llvm, \
+#     reconcile-unrealized-casts, \
+#     canonicalize \
+#      )"   444.mlir > 555.mlir 
+
+
+# For CUDA Pipeline
+# $MLIR_OPT 444.mlir  -gpu-lower-to-nvvm-pipeline="cubin-chip=sm_80 opt-level=3" > 555.mlir
+
+echo ===wating666
 $MLIR_OPT --pass-pipeline="builtin.module(\
     convert-func-to-llvm, \
     gpu-to-llvm, \
@@ -92,5 +100,6 @@ $MLIR_OPT --pass-pipeline="builtin.module(\
     canonicalize \
      )"   555.mlir > 666.mlir  # Can be run with mlir-runner : mlir-runner 666.mlir -e main_graph
 
-$MLIR_RUNNER 666.mlir -e main_graph
+# echo ===wating Runner
+# $MLIR_RUNNER 666.mlir -e main_graph
 # $MLIR_TRANSLATE 666.mlir --mlir-to-llvmir -o 777.ll
