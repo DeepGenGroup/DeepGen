@@ -212,6 +212,13 @@ class CreateMatmulConfig:
         self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
       )
       kam.setArgs(*config)
+      nthreads = kam.BLOCK_SIZE_M / kam.THREAD_SIZE_M * kam.BLOCK_SIZE_N / kam.THREAD_SIZE_N * kam.LOCAL_SPLIT_U
+      if kam.LOAD_CONTINUOUS == 0 :
+        if nthreads < kam.BLOCK_SIZE_K : 
+          continue
+      if kam.LOCAL_SPLIT_U > 1 :
+        if (nthreads / kam.LOCAL_SPLIT_U) < kam.BLOCK_SIZE_M :
+          continue
       kamEncodedStr = self.encoder.encode(kam.jsonfy())
       kams.append(int(kamEncodedStr))
     return kams
