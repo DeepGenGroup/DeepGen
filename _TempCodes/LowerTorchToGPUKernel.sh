@@ -1,6 +1,8 @@
 #!/bin/bash
 llvm_install_dir=~/rocm-llvm-install
-model=/home/xushilong/DeepGen/_TempCodes/model/fixed_transformer_sim.onnx
+# model=/home/xushilong/DeepGen/_TempCodes/model/fixed_transformer_sim.onnx
+# model=/home/xushilong/DeepGen/_TempCodes/model/softmax_model.onnx
+model=/home/xushilong/DeepGen/_TempCodes/model/self_attention.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/mnist.onnx
 # model=/home/xushilong/onnxMLIRLearn/data/auto_Opset16_sim.onnx  #  error: failed to legalize operation 'torch.aten.cumsum' that was explicitly marked illegal
 # model=/home/xushilong/onnxMLIRLearn/data/model_structure.onnx  
@@ -30,6 +32,10 @@ echo ===wating222
 $TORCH_MLIR_OPT  --pass-pipeline="builtin.module(stablehlo-legalize-to-linalg{enable-primitive-ops}, canonicalize)" 111.mlir > 222Linalg.mlir
 echo ===222affine
 
+# $MLIR_OPT --linalg-fold-into-elementwise  222Linalg.mlir > 222Linalg_opt1.mlir   无效pass，不起作用
+# sed -i '1d' 222Linalg_opt1.mlir
+# $MLIR_OPT --linalg-fuse-elementwise-ops   222Linalg_opt1.mlir > 222Linalg_opt2.mlir  无效pass，不起作用
+
 $MLIR_OPT -one-shot-bufferize="bufferize-function-boundaries=1 function-boundary-type-conversion=identity-layout-map " \
     -convert-linalg-to-affine-loops \
     -canonicalize \
@@ -40,12 +46,25 @@ $MLIR_OPT -one-shot-bufferize="bufferize-function-boundaries=1 function-boundary
     222Linalg.mlir > 222affine.mlir
     # --affine-loop-fusion \   两个4层for合为一个4层for,ubs 不变
     # --affine-loop-coalescing \   4层for变1层for，ubs改变
+# $MLIR_OPT --pass-pipeline="builtin.module(\
+#     func.func(affine-loop-invariant-code-motion), \
+#     func.func(affine-loop-unroll-jam), \
+#     canonicalize, \
+#     cse \
+#     )" \
+#     222affine.mlir > 222affine_fuse.mlir
 
+$MLIR_OPT --pass-pipeline="builtin.module(func.func(affine-loop-coalescing), affine-loop-fusion{mode=greedy}, \
+    func.func(affine-loop-invariant-code-motion), \
+    canonicalize, \
+    cse \
+    )" \
+    222affine.mlir > 222affine_co_fuse.mlir
 
 echo ===222affinepara
-$MLIR_OPT --affine-parallelize -canonicalize 222affine.mlir > 222affinepara.mlir
+$MLIR_OPT --affine-parallelize -canonicalize 222affine_co_fuse.mlir > 222affine_para.mlir
 echo ===222scfpara
-$MLIR_OPT --lower-affine  -canonicalize 222affinepara.mlir > 222scfpara.mlir
+$MLIR_OPT --lower-affine  -canonicalize 222affine_para.mlir > 222scfpara.mlir
 # $MLIR_OPT -one-shot-bufferize="bufferize-function-boundaries=1 function-boundary-type-conversion=identity-layout-map " \
 #     -convert-linalg-to-parallel-loops \
 #     -canonicalize \
@@ -103,3 +122,14 @@ $MLIR_OPT --pass-pipeline="builtin.module(\
 # echo ===wating Runner
 # $MLIR_RUNNER 666.mlir -e main_graph
 # $MLIR_TRANSLATE 666.mlir --mlir-to-llvmir -o 777.ll
+
+
+
+LLC="$HOME/rocm-llvm-install/bin/llc"
+
+$MLIR_TRANSLATE --mlir-to-llvmir 666.mlir -o testLL.ll  # emit llIR
+$LLC -relocation-model=pic -mcpu=native -filetype=obj testLL.ll -o testLL.o  # 使用PIC模式生成目标文件
+nvcc  -L/home/xushilong/rocm-llvm-install/lib -lmlir_cuda_runtime -shared testLL.o -o output.so  # 生成so文件
+
+# cd $OUT_DIR/build 
+# cmake .. & make 
