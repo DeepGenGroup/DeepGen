@@ -4,6 +4,8 @@ file(GLOB_RECURSE operators_src ./Operators/*.cc)
 file(GLOB_RECURSE target_src ./Target/*.cc)
 file(GLOB_RECURSE common_src ./Common/*.cc)
 file(GLOB_RECURSE modelmanager_src ./ModelManager/*.cc)
+add_compile_options(-g)
+add_definitions(-DTORCH_MLIR_ENABLE_STABLEHLO)
 
 add_library(kcg_runtime 
             ${analysis_src}
@@ -60,7 +62,7 @@ target_link_libraries(kcg_runtime
 
 message("KernelCodeGen_BINARY_DIR = ${KernelCodeGen_BINARY_DIR}")
 include_directories(${KernelCodeGen_BINARY_DIR}/rocm-stablehlo)
-add_compile_options(-g)
+
 add_mlir_library(model_manager
         ./ModelManager/ModelManager.cc
 DEPENDS
@@ -85,7 +87,6 @@ get_property(dialect_libs GLOBAL PROPERTY MLIR_DIALECT_LIBS)
 get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 get_property(translation_libs GLOBAL PROPERTY MLIR_TRANSLATION_LIBS)
 
-add_compile_options(-g)
 add_executable(kcg_modelProcessor ./ModelManager/main.cc  ${common_src})
 target_link_libraries(kcg_modelProcessor PUBLIC 
         model_manager
@@ -131,4 +132,18 @@ target_link_libraries(kcg_modelProcessor PUBLIC
         libTorchMLIRTorchToTMTensor.a
         libTorchMLIRTorchToTosa.a
         libTorchMLIRTorchUtils.a
+        libMLIRFuncAllExtensions.a
+        libMLIRTensorMeshShardingExtensions.a
+        libMLIRTensorAllExtensions.a
+        libMLIRFuncMeshShardingExtensions.a
+        libLLVMExtensions.a
+        libMLIRTransformDialectIRDLExtension.a
+        libMLIRTransformDebugExtension.a
+        libMLIRTransformLoopExtension.a
+        libMLIRTransformPDLExtension.a
+        libMLIRFuncInlinerExtension.a
+        MLIRTensorMeshShardingExtensions
+        StablehloPasses
+        TorchMLIRConversionUtils
+        MLIRTensorInferTypeOpInterfaceImpl
 )

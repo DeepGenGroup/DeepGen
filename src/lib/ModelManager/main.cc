@@ -1,4 +1,5 @@
 #include "ModelManager/ModelManager.h"
+
 int main(int argc, char ** argv) {
   using namespace KernelCodeGen;
   ModelManager m;

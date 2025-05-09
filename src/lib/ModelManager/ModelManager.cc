@@ -12,7 +12,15 @@
 #include "stablehlo/dialect/ChloOps.h"
 #include "torch-mlir/Dialect/Torch/IR/TorchDialect.h"
 #include "torch-mlir/Dialect/TorchConversion/IR/TorchConversionDialect.h"
+#include "torch-mlir/InitAll.h"
 #include "llvm/Support/raw_ostream.h"
+#include "stablehlo/conversions/linalg/transforms/Passes.h"
+#include "mlir/Dialect/Func/Extensions/AllExtensions.h"
+#include "mlir/InitAllExtensions.h"
+#include "torch-mlir/Dialect/TorchConversion/Transforms/Passes.h"
+#include "torch-mlir/Conversion/TorchOnnxToTorch/Passes.h"
+#include "stablehlo/transforms/Passes.h"
+
 
 using namespace mlir;
 namespace KernelCodeGen
@@ -75,6 +83,58 @@ namespace KernelCodeGen
         return;
     }
     
+    void ModelManager::memrefShrinkDim(mlir::ModuleOp* mod)
+    {
+        std::vector<mlir::memref::AllocOp> opToShrink;
+        mod->walk([&](mlir::memref::AllocOp op){
+            auto type = op.getResult().getType();
+            auto mem = mlir::dyn_cast<mlir::MemRefType>(type);
+            if(mem != nullptr){
+                const auto& shape = mem.getShape();
+                int totalSize = 1;
+                for(auto i : shape){
+                    totalSize *= i;
+                }
+                if(totalSize==1){
+                    opToShrink.push_back(op);
+                }
+            }
+        });
+        mlir::OpBuilder builder{mod->getContext()};
+        for(auto op : opToShrink){
+            llvm::outs() << "replace : " << op.getLoc() << "\n"; llvm::outs().flush();
+            auto oldtype = op.getResult().getType();
+            auto mem = mlir::dyn_cast<mlir::MemRefType>(oldtype);
+            auto etype = mem.getElementType();
+            auto newop = builder.create<mlir::memref::AllocOp>(op.getLoc(), mlir::MemRefType::get({1},etype)) ;
+            for(auto user : op.getResult().getUsers()){
+                if(auto ptr = mlir::dyn_cast<mlir::affine::AffineLoadOp>(user)){
+                    ptr.getAffineMap();
+                }
+            } 
+        }
+    }
+    void ModelManager::hoistAllocOp(mlir::ModuleOp* mod)
+    {
+        mlir::Operation* firstAllocOp = nullptr;
+        mod->walk<mlir::WalkOrder::PreOrder>([&](mlir::memref::AllocOp op){
+            if(firstAllocOp == nullptr){
+                firstAllocOp = op.getOperation();
+            }
+        });
+        llvm::outs() << "First  loc = " << firstAllocOp->getLoc() << "\n" ; llvm::outs().flush();
+        std::vector<mlir::Operation*> opToMove{};
+        mod->walk([&](mlir::memref::AllocOp op){
+            std::string parentOpName = op.getOperation()->getParentOp()->getName().getStringRef().data();
+            if(parentOpName.find("func.func") != std::string::npos && op.getOperation() != firstAllocOp){
+                opToMove.push_back(op.getOperation());
+            }
+        });
+        for(auto op : opToMove){
+            op->moveAfter(firstAllocOp);
+        }
+
+    }
     void ModelManager::analyzeRetOp(mlir::ModuleOp* mod)
     {
         mlir::func::ReturnOp retOp;
@@ -88,13 +148,46 @@ namespace KernelCodeGen
         auto val = retOp.getOperand(0);
         auto memrefOp = val.getDefiningOp();
         llvm::outs() << memrefOp->getName().getStringRef() << "\n"; llvm::outs().flush();
+        std::vector<AffineGroupInfo*> infos;
+        std::queue<AffineGroupInfo*> q;
+        auto info = getInfoFromDefineOp(memrefOp);
+        q.push(info);
 
-        for(auto user : memrefOp->getUsers()) {
+        while (!q.empty())
+        {
+            auto info = q.front();
+            q.pop();
+            if(info != nullptr){
+                infos.push_back(info);        
+                for(auto loadop : info->loadOps){
+                    for(auto user : loadop->getOperand(0).getUsers()){
+                        std::string name = user->getName().getStringRef().data();
+                        if(name.find("affine.store") != std::string::npos){
+                            auto tempInfo = getInfoFromDefineOp(user->getOperand(1).getDefiningOp());
+                            q.push(tempInfo);
+                        }
+                    }
+                }
+            }
+        }
+        std::cout << "collected Info num = " << infos.size() << std::endl;
+        return;
+    }
+
+
+    AffineGroupInfo* ModelManager::getInfoFromDefineOp(mlir::Operation* memrefDefOp)
+    {
+        AffineGroupInfo* ret = new AffineGroupInfo();
+        if(memrefDefOp != nullptr){
+            llvm::outs() << "--- getinfo : " << memrefDefOp->getName().getStringRef() << " : " << memrefDefOp->getLoc() << "\n"; llvm::outs().flush();
+        }
+        for(auto user : memrefDefOp->getUsers()) {
             if(user != nullptr){
                 std::string name = user->getName().getStringRef().data();
                 llvm::outs() << "[user name]" << name << "\n"; llvm::outs().flush();
                 if(name.find("store") != std::string::npos){
-                    for(auto o : user->getOperands()){
+                    ret->storeOps.push_back(user);
+                    for(auto o : user->getOperands()){  // operands of affine.store(val, targetMem, indexes) op
                         auto defop = o.getDefiningOp();
                         if(defop != nullptr){
                             llvm::outs() <<"[defOps]"<< defop->getName().getStringRef() << " - " << defop->getLoc() << "\n" ; llvm::outs().flush();
@@ -110,7 +203,7 @@ namespace KernelCodeGen
                                         std::string parentName = parentOp->getName().getStringRef().data();
                                         llvm::outs() << "parentOp = " << parentName << "\n"; llvm::outs().flush();
                                         if (parentName.find("func.func") != std::string::npos){
-                                            
+                                            ret->outmostForOp = ivsOuterForOp;
                                         }
                                     }
                                 }
@@ -120,6 +213,12 @@ namespace KernelCodeGen
                 }
             }
         }
+        if(ret->outmostForOp != nullptr){
+            ret->outmostForOp->walk([&](mlir::affine::AffineLoadOp loadop){
+                ret->loadOps.push_back(loadop.getOperation());
+            });
+        }
+        return ret;
     }
 
     bool ModelManager::getDOMTree(mlir::ModuleOp* graph){
@@ -136,12 +235,6 @@ namespace KernelCodeGen
             }
             if(func.getName() == "main_graph"){
                 tools::opSetAttr(func,"isRoot",1);
-                // func->walk([&](mlir::func::ReturnOp retop){
-                //     if(node != nullptr){
-                //         return;
-                //     }
-                //     node = buildNode(retop.getOperand(0).getDefiningOp(),true,false, hashtable);
-                // });
                 buildDomNodes(func);
                 flag = false;
             }
@@ -223,15 +316,96 @@ namespace KernelCodeGen
         return currNode;
     }
 
+    void ModelManager::lowerOnnxIRToTorch(mlir::ModuleOp* mod){
+        mlir::PassManager pm(m_ctx.get());
+        // pm.addNestedPass<mlir::func::FuncOp>(mlir::torch::onnx_c::createTorchOnnxToTorchPass());
+        mlir::torch::Torch::TorchLoweringPipelineOptions opt;
+        mlir::torch::Torch::createTorchOnnxToTorchBackendPipeline(pm, opt);
+        // mlir::torch::Torch::createTorchFunctionToTorchBackendPipeline(pm, opt);
+        pm.run(mod->getOperation());
+        llvm::outs() << "\n======== onnx->torch ===========\n";llvm::outs().flush();mod->dump();
+        return;
+    }
+
+
+    void ModelManager::lowerTorchToStableHLO(mlir::ModuleOp* mod){
+        
+        mlir::PassManager pm(m_ctx.get());
+        mlir::torch::TorchConversion::StablehloBackendPipelineOptions opt;
+        mlir::torch::TorchConversion::createTorchBackendToStablehloBackendPipeline(pm, opt);
+        pm.addPass(mlir::stablehlo::createStablehloCanonicalizeDynamismPass());
+        pm.addPass(mlir::stablehlo::createStablehloAggressiveSimplificationPass());
+        pm.run(mod->getOperation());
+        llvm::outs() << "\n======== torch->stablehlo ===========\n";llvm::outs().flush();mod->dump();
+
+        return;
+    }
+
+    void ModelManager::lowerStableHLOToAffine(mlir::ModuleOp* mod){
+        mlir::PassManager pm(m_ctx.get());
+        mlir::stablehlo::StablehloLegalizeToLinalgPassOptions stablehloToLinalgOpt;
+        stablehloToLinalgOpt.enablePrimitiveOps = true;
+        stablehloToLinalgOpt.enableSparseOps = false;
+        pm.addPass(mlir::stablehlo::createStablehloLegalizeToLinalgPass(stablehloToLinalgOpt));
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.run(mod->getOperation());
+        llvm::outs() << "\n======== stablehlo -> linalg =========== \n"; llvm::outs().flush();mod->dump();
+        
+
+        mlir::bufferization::OneShotBufferizePassOptions opt;
+        opt.bufferizeFunctionBoundaries = true;
+        opt.functionBoundaryTypeConversion = mlir::bufferization::LayoutMapOption::IdentityLayoutMap;
+        opt.allowUnknownOps = true;
+        // opt.dialectFilter.push_back("linalg");
+        // opt.dialectFilter.push_back("func");
+        // opt.dialectFilter.push_back("tensor");
+
+        pm.addPass(::mlir::bufferization::createOneShotBufferizePass(opt));
+        pm.run(mod->getOperation());
+        // pm.addPass(mlir::createConvertBufferizationToMemRefPass());
+        pm.addPass(mlir::createConvertLinalgToAffineLoopsPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addNestedPass<mlir::func::FuncOp>(mlir::createLoopInvariantCodeMotionPass());
+        pm.addPass(mlir::createCanonicalizerPass());
+        pm.addPass(mlir::createCSEPass());
+        pm.addPass(mlir::createRemoveDeadValuesPass());
+        pm.addPass(mlir::createSymbolDCEPass());
+        pm.run(mod->getOperation());
+        llvm::outs() << "\n======== linalg->affine =========== \n"; llvm::outs().flush();mod->dump();
+        
+        return;
+    }
+
+    void ModelManager::init(){
+        mlir::DialectRegistry registry;
+        mlir::registerAllExtensions(registry);
+        mlir::linalg::registerAllDialectInterfaceImplementations(registry);
+        mlir::arith::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::tensor::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::bufferization::func_ext::registerBufferizableOpInterfaceExternalModels(registry);
+        mlir::torch::registerAllDialects(registry);
+        mlir::torch::registerAllExtensions(registry);
+        mlir::torch::registerOptionalInputDialects(registry);
+        m_ctx = std::make_unique<mlir::MLIRContext>(registry);
+
+        // Import Module from IR text
+        m_ctx->loadDialect<func::FuncDialect, arith::ArithDialect,stablehlo::StablehloDialect, torch::Torch::TorchDialect, 
+                        memref::MemRefDialect, affine::AffineDialect, math::MathDialect, mlir::linalg::LinalgDialect, mlir::tensor::TensorDialect,
+                        chlo::ChloDialect, torch::TorchConversion::TorchConversionDialect>();
+    }
+
     bool ModelManager::process(const std::string& filepath)
     {
-        // Import Module from IR text
-        m_ctx.loadDialect<func::FuncDialect, arith::ArithDialect,stablehlo::StablehloDialect, torch::Torch::TorchDialect, 
-                        memref::MemRefDialect, affine::AffineDialect, math::MathDialect, 
-                        chlo::ChloDialect, torch::TorchConversion::TorchConversionDialect>();
-        mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<ModuleOp>(filepath, &m_ctx);
+        init();
+        mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<ModuleOp>(filepath, m_ctx.get());
         auto _mod = mod.operator->();
-        analyzeRetOp(_mod);
+        // analyzeRetOp(_mod);
+        // hoistAllocOp(_mod);
+        lowerOnnxIRToTorch(_mod);
+        lowerTorchToStableHLO(_mod);
+        lowerStableHLOToAffine(_mod);
+        // memrefShrinkDim(_mod);
+        
         // getDOMTree(_mod);
         // std::vector<mlir::ModuleOp*> submodules;
         // auto ret = seperateMaingraph(_mod, submodules);

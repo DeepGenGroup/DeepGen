@@ -8,6 +8,8 @@
 #include "mlir/IR/MLIRContext.h"
 #include <unordered_map>
 
+
+
 namespace KernelCodeGen {
 
 class DOMTreeNode {
@@ -22,13 +24,14 @@ public:
     void addUniqueParent(DOMTreeNode* node);
 };
 
-class LowerInfo {
+class AffineGroupInfo {
 public:
     mlir::Operation* outmostForOp;
-    std::vector< mlir::Operation*> outStoreOp;   // affine.store
-    std::vector< mlir::Operation*> inputLoadOp;  // affine.load
+    std::vector< mlir::Operation*> storeOps;   // affine.store
+    std::vector< mlir::Operation*> loadOps;  // affine.load
 };
 
+/// @brief 与ONNX模型交互，将模型接入torchIR-> stableHLO -> linalg
 class ModelManager{
 public :
     bool process(const std::string& filepath);
@@ -40,23 +43,35 @@ private:
     bool getDOMTree(mlir::ModuleOp* graph);
     void buildDomNodes(mlir::func::FuncOp func);
     DOMTreeNode* buildNode(mlir::Operation* op, bool noparent ,bool nochild, std::unordered_map<mlir::Operation*, DOMTreeNode*>& hash);
-    
+    // 从ReturnOp开始递归地分析，得到for循环结构之间的依赖关系
     void analyzeRetOp(mlir::ModuleOp* mod);
+    // 
+    void hoistAllocOp(mlir::ModuleOp* mod);
+    void memrefShrinkDim(mlir::ModuleOp* mod);
+    AffineGroupInfo* getInfoFromDefineOp(mlir::Operation* memrefStoreOp);
 
     // torchMLIR lower to Linalg
     bool torchMLIRLowerToLinalg();
     bool insertKernelNaiveExpressionsToRootModule();
+
+    void lowerStableHLOToAffine(mlir::ModuleOp* mod);
+    void lowerTorchToStableHLO(mlir::ModuleOp* mod);
+    void lowerOnnxIRToTorch(mlir::ModuleOp* mod);
+    void init();
+
     std::vector<mlir::ModuleOp> m_modules;
 
 private:
     bool isRootFunction(mlir::func::FuncOp& mod);
     void markAsRootFunction(mlir::func::FuncOp & mod);
     mlir::ModuleOp* m_rootModule;
-    mlir::MLIRContext m_ctx;
+    std::unique_ptr<mlir::MLIRContext> m_ctx {nullptr};
     std::unordered_map<mlir::Operation*, DOMTreeNode*> m_domNodes ;
 
 
 };
+
+
 
 } // KernelCodeGen
 
