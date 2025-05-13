@@ -243,6 +243,7 @@ namespace tools {
   bool isOpAttrEqualToString(mlir::Operation* op, const std::string& name, const std::string& expectedvalue);
   uint64_t getIntAttr(mlir::Operation* op, const std::string& name);
   std::vector<int> getIntArrayAttr(mlir::Operation* op, const std::string& name);
+  std::string getLocationString(mlir::Location loc);
   /* ******** for debug use *************** */
   void _opSetDescription(mlir::Operation* op, const std::string& attrValue);
 

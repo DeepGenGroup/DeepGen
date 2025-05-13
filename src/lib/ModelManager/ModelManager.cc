@@ -170,6 +170,10 @@ namespace KernelCodeGen
                 }
             }
         }
+        for(auto info : infos){
+            tools::_opSetDescription(info->outmostForOp,"outmost");
+            
+        }
         std::cout << "collected Info num = " << infos.size() << std::endl;
         return;
     }
@@ -322,6 +326,7 @@ namespace KernelCodeGen
         mlir::torch::Torch::TorchLoweringPipelineOptions opt;
         mlir::torch::Torch::createTorchOnnxToTorchBackendPipeline(pm, opt);
         // mlir::torch::Torch::createTorchFunctionToTorchBackendPipeline(pm, opt);
+        // mlir::torch::Torch::createTorchSimplificationPipeline(pm,opt);
         pm.run(mod->getOperation());
         llvm::outs() << "\n======== onnx->torch ===========\n";llvm::outs().flush();mod->dump();
         return;
@@ -333,7 +338,7 @@ namespace KernelCodeGen
         mlir::PassManager pm(m_ctx.get());
         mlir::torch::TorchConversion::StablehloBackendPipelineOptions opt;
         mlir::torch::TorchConversion::createTorchBackendToStablehloBackendPipeline(pm, opt);
-        pm.addPass(mlir::stablehlo::createStablehloCanonicalizeDynamismPass());
+        pm.addNestedPass<mlir::func::FuncOp>(mlir::stablehlo::createStablehloCanonicalizeDynamismPass());
         pm.addPass(mlir::stablehlo::createStablehloAggressiveSimplificationPass());
         pm.run(mod->getOperation());
         llvm::outs() << "\n======== torch->stablehlo ===========\n";llvm::outs().flush();mod->dump();
@@ -356,13 +361,9 @@ namespace KernelCodeGen
         opt.bufferizeFunctionBoundaries = true;
         opt.functionBoundaryTypeConversion = mlir::bufferization::LayoutMapOption::IdentityLayoutMap;
         opt.allowUnknownOps = true;
-        // opt.dialectFilter.push_back("linalg");
-        // opt.dialectFilter.push_back("func");
-        // opt.dialectFilter.push_back("tensor");
 
         pm.addPass(::mlir::bufferization::createOneShotBufferizePass(opt));
         pm.run(mod->getOperation());
-        // pm.addPass(mlir::createConvertBufferizationToMemRefPass());
         pm.addPass(mlir::createConvertLinalgToAffineLoopsPass());
         pm.addPass(mlir::createCanonicalizerPass());
         pm.addNestedPass<mlir::func::FuncOp>(mlir::createLoopInvariantCodeMotionPass());
@@ -371,7 +372,7 @@ namespace KernelCodeGen
         pm.addPass(mlir::createRemoveDeadValuesPass());
         pm.addPass(mlir::createSymbolDCEPass());
         pm.run(mod->getOperation());
-        llvm::outs() << "\n======== linalg->affine =========== \n"; llvm::outs().flush();mod->dump();
+        llvm::outs() << "\n======== linalg->affine (with LICM) =========== \n"; llvm::outs().flush();mod->dump();
         
         return;
     }
@@ -394,22 +395,107 @@ namespace KernelCodeGen
                         chlo::ChloDialect, torch::TorchConversion::TorchConversionDialect>();
     }
 
+    void ModelManager::analyzeParallelizabilityOfAffine(mlir::ModuleOp* mod){
+        std::vector<mlir::Operation*> outmostForLoops;
+        mlir::Operation* mainGraphFunc = nullptr;
+        mod->walk([&](mlir::func::FuncOp funcop){
+            if(mainGraphFunc != nullptr){
+                return;
+            }
+            mainGraphFunc = funcop.getOperation();
+        });
+        mod->walk([&](mlir::affine::AffineForOp forop){
+            auto parentop = forop.getOperation()->getParentOp();
+            if(parentop == mainGraphFunc){
+                outmostForLoops.push_back(forop.getOperation());
+            }
+        });
+        llvm::outs() << "outmostLoop size = " << outmostForLoops.size() << "\n";llvm::outs().flush();
+        for(auto outmostLoop : outmostForLoops){
+            tools::opSetAttr(outmostLoop,"loopLevel","outmostLoop");
+            bool isWriteAfterRead = false;
+            outmostLoop->walk([&](mlir::affine::AffineStoreOp op){
+                auto memLoc = op.getOperand(op.getMemRefOperandIndex());
+                for(auto user : memLoc.getUsers()){  // 这里打印出的location 依然基于 onnx.mlir， 即可以通过loc来映射 forlops - onnx.operator
+                    auto opParentLoc = op->getParentOp()->getLoc();
+                    auto userParentLoc = user->getParentOp()->getLoc();
+                    // llvm::outs() <<"Loc: " << user->getParentOp()->getName() << " | " << op->getParentOp()->getName() << "\n";llvm::outs().flush();
+                    if(op.getOperation() == user){
+                        continue;
+                    }
+                    if(op->getParentOp() == user->getParentOp()){
+                        isWriteAfterRead = true;
+                        tools::opSetAttr(op->getParentOp(),"canParallel","no");
+                    }
+                } 
+            });
+        }
+        for(auto outmostLoop : outmostForLoops){
+            // 添加位置标识
+            std::string loc = tools::getLocationString(outmostLoop->getLoc());
+            auto it = m_onnxOpLocationMap.find(loc);
+            if(it != m_onnxOpLocationMap.end()){
+                std::string onnxOpName = it->second;
+                tools::opSetAttr(outmostLoop,"onnx.op",onnxOpName);
+                tools::opSetAttr(outmostLoop,"onnx.loc",loc);
+            }
+            outmostLoop->walk([&](mlir::affine::AffineStoreOp op){
+                auto innerMostLoop = op.getOperation()->getParentOp();
+                auto xloop = getInnerMostParallelableLoop(innerMostLoop);
+                auto yloop = xloop->getParentOp();
+                tools::opSetAttr(xloop,"loop.desc","x");
+                tools::opSetAttr(yloop,"loop.desc","y");
+            });
+        }
+
+    }
+    
+    mlir::Operation* ModelManager::getInnerMostParallelableLoop(mlir::Operation* innermostOp){
+        if(tools::isOpAttrEqualToString(innermostOp,"canParallel","no")){
+            auto op = innermostOp->getParentOp();
+            if(mlir::dyn_cast<mlir::affine::AffineForOp>(op)){
+                return getInnerMostParallelableLoop(op);
+            }
+            return nullptr;
+        }
+        else{
+            return innermostOp;
+        }
+    }
+
     bool ModelManager::process(const std::string& filepath)
     {
         init();
         mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<ModuleOp>(filepath, m_ctx.get());
         auto _mod = mod.operator->();
-        // analyzeRetOp(_mod);
+        auto getOpName = [](Operation *op) -> std::string {
+          std::string name = op->getName().getStringRef().str();
+          if (name != "torch.operator")
+            return name;
+          // for unconverted onnx ops
+          return mlir::dyn_cast<StringAttr>(op->getAttr("name"))
+              .getValue()
+              .str();
+        };
+        _mod->walk([&](mlir::Operation* op){
+            auto p = std::make_pair(tools::getLocationString(op->getLoc()), getOpName(op));
+            m_onnxOpLocationMap.insert(p);
+        });
+        for(const auto& p : m_onnxOpLocationMap){
+            llvm::outs() << "onnxMap : " << p.first << " -> " << p.second << "\n";llvm::outs().flush();
+        }
         // hoistAllocOp(_mod);
         lowerOnnxIRToTorch(_mod);
         lowerTorchToStableHLO(_mod);
         lowerStableHLOToAffine(_mod);
+        // analyzeRetOp(_mod);
+        analyzeParallelizabilityOfAffine(_mod);
         // memrefShrinkDim(_mod);
         
         // getDOMTree(_mod);
         // std::vector<mlir::ModuleOp*> submodules;
         // auto ret = seperateMaingraph(_mod, submodules);
-        // mod->dump();
+        mod->dump();
         return true;
     }
 

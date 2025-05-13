@@ -241,6 +241,13 @@ void _opSetDescription(mlir::Operation* op, const std::string& attrValue){
   op->setAttr(AttrDescription, b.getStringAttr(attrValue));
 }
 
+std::string getLocationString(mlir::Location loc){
+  std::string data;
+  llvm::raw_string_ostream ss(data);
+  ss << loc;
+  return data;
+}
+
 namespace mapUtils {
   
 mlir::AffineExpr waprId(mlir::AffineExpr tid, const std::map<std::string, int>& config){

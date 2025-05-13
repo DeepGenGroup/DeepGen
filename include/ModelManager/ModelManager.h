@@ -57,6 +57,8 @@ private:
     void lowerStableHLOToAffine(mlir::ModuleOp* mod);
     void lowerTorchToStableHLO(mlir::ModuleOp* mod);
     void lowerOnnxIRToTorch(mlir::ModuleOp* mod);
+
+    void analyzeParallelizabilityOfAffine(mlir::ModuleOp* mod);
     void init();
 
     std::vector<mlir::ModuleOp> m_modules;
@@ -64,10 +66,12 @@ private:
 private:
     bool isRootFunction(mlir::func::FuncOp& mod);
     void markAsRootFunction(mlir::func::FuncOp & mod);
+
+    mlir::Operation* getInnerMostParallelableLoop(mlir::Operation* innermostOp);
     mlir::ModuleOp* m_rootModule;
     std::unique_ptr<mlir::MLIRContext> m_ctx {nullptr};
     std::unordered_map<mlir::Operation*, DOMTreeNode*> m_domNodes ;
-
+    std::unordered_map<std::string, std::string> m_onnxOpLocationMap;  // 存放 onnx.mlir中 location->op对应关系。
 
 };
 
