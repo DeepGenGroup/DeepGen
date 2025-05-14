@@ -253,9 +253,9 @@ void MatmulOptimizer::computeTuneArgs() {
 
 void MatmulOptimizer::parseFuncArgs(mlir::func::FuncOp funcOp) {
   // 解析kernel函数的参数基本信息
-  typeA = A.getType().dyn_cast<mlir::MemRefType>();
-  typeB = B.getType().dyn_cast<mlir::MemRefType>();
-  typeC = C.getType().dyn_cast<mlir::MemRefType>();
+  typeA = mlir::dyn_cast<mlir::MemRefType>(A.getType());
+  typeB = mlir::dyn_cast<mlir::MemRefType>(B.getType());
+  typeC = mlir::dyn_cast<mlir::MemRefType>(C.getType());
   // get transpose args
   std::vector<bool> isTrans;
   auto transArr = funcOp->getAttr(ARGTRAN);
@@ -376,7 +376,7 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     this->byIdx = result[0]; this->bxIdx = result[1];
     LOG_DEBUG("===== after blockMapping =======\n",module);
   }
-
+  // ====================================== load and store =======================================
   // splitu and fuse forop into parallelop
   auto bIdx = Analyzer::getParallelIdx(blockIdx);
   auto tIdx = Analyzer::getParallelIdx(this->threadIdx);
@@ -389,14 +389,14 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   auto loadTileBMap = getGlobToTempMap(builder, "B");   // {b1, b2, by, bx, tid}
   llvm::SmallVector<mlir::Value> gttoperands(operands);
   gttoperands.push_back(k_outer.getInductionVar());
-  auto loadTileA = Rewriter::loadToRegisters(A, tempA, loadTileAMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_A"]}, k_outer, Position::begin);
-  auto loadTileB = Rewriter::loadToRegisters(B, tempB, loadTileBMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_B"]}, loadTileA, Position::after);
+  auto loadTileA = Rewriter::loadToRegisters(A, tempA, loadTileAMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_A"]}, k_outer, Position::begin, "globToRegA");
+  auto loadTileB = Rewriter::loadToRegisters(B, tempB, loadTileBMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_B"]}, loadTileA, Position::after, "globToRegB");
   LOG_DEBUG("===== after read A/B =======\n",module);
   // temp reg load to sm
   auto storeTileAMap = getTempToSmMap(builder, "A");
   auto storeTileBMap = getTempToSmMap(builder, "B");   // {tid, iter}
-  auto storeTileA = Rewriter::loadFromRegisters(tempA, smA, storeTileAMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_A"]}, loadTileB, Position::after);
-  auto storeTileB = Rewriter::loadFromRegisters(tempB, smB, storeTileBMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_B"]}, storeTileA, Position::after);
+  auto storeTileA = Rewriter::loadFromRegisters(tempA, smA, storeTileAMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_A"]}, loadTileB, Position::after, "tempToSmA");
+  auto storeTileB = Rewriter::loadFromRegisters(tempB, smB, storeTileBMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_B"]}, storeTileA, Position::after, "tempToSmB");
   auto gpuBarrierPrefix = Rewriter::barrier(loadTileA, Position::before);
   auto gpuBarrierSuffix = Rewriter::barrier(storeTileB, Position::after);
   LOG_DEBUG("===== write A/B =======\n",module);
@@ -406,14 +406,15 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   llvm::SmallVector<mlir::Value> stroperands{tIdx[0], k_mider.getInductionVar()};  
   std::vector<int64_t> widthsA{cfg["BLOCK_SCATTER_WIDTH_M"], cfg["WARP_SCATTER_WIDTH_M"]};
   std::vector<int64_t> widthsB{cfg["BLOCK_SCATTER_WIDTH_N"], cfg["WARP_SCATTER_WIDTH_N"]};
-  auto loadFragA = Rewriter::loadToRegisters(smA, regA, loadFragAMap, stroperands, widthsA, k_mider, Position::begin);
-  auto loadFragB = Rewriter::loadToRegisters(smB, regB, loadFragBMap, stroperands, widthsB, loadFragA, Position::after);
+  auto loadFragA = Rewriter::loadToRegisters(smA, regA, loadFragAMap, stroperands, widthsA, k_mider, Position::begin, "smToRegA");
+  auto loadFragB = Rewriter::loadToRegisters(smB, regB, loadFragBMap, stroperands, widthsB, loadFragA, Position::after, "smToRegB");
   LOG_DEBUG("===== read sh_A/B =======\n",module);
   // Calculate 
   auto calMap = getCalculateMap(builder);  // {iter}
   Rewriter::cache_read(xTileForOp, A, regA, calMap, {yTileForOp.getInductionVar()});
   Rewriter::cache_read(xTileForOp, B, regB, calMap, {xTileForOp.getInductionVar()});
   LOG_DEBUG("===== load regA & cache_read =======\n",module);
+  // ==============================================================================================
   // split store c for
   auto writeCbody = Rewriter::get_write(this->threadIdx, C);
   assert(writeCbody.size() == 1);
@@ -445,7 +446,7 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
     auto regCToGlobMap = getReduceRegCToGlobMap(builder);
     llvm::SmallVector<mlir::Value> rtgOperands(operands);
-    Rewriter::splitUWrite(regC_, C, regCToGlobMap, rtgOperands, cfg["LOCAL_SPLIT_U"], cfg["GLOB_STORE_WIDTH"], rLoop1, Position::after);
+    Rewriter::splitUWrite(regC_, C, regCToGlobMap, rtgOperands, cfg["LOCAL_SPLIT_U"], cfg["GLOB_STORE_WIDTH"], rLoop1, Position::after, "");
     auto storeBarrier1 = Rewriter::barrier(m_inner_0, Position::after);
     LOG_DEBUG("===== load write to C =======\n",module);
   } else {

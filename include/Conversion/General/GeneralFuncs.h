@@ -188,7 +188,7 @@ std::pair<mlir::AffineMap, llvm::SmallVector<mlir::Value>> getParaMapAndOperands
   if (pidx < 0) {
     expr_ = shiftExprDim(builder, expr, fidx);
     newOperands[fidx] = piv;
-    if (expr_.dyn_cast<mlir::AffineConstantExpr>()) {
+    if (mlir::dyn_cast<mlir::AffineConstantExpr>(expr_)) {
       newOperands.erase(newOperands.begin()+fidx);
     }
   } else {
@@ -236,7 +236,8 @@ mlir::affine::AffineForOp shiftBufferDatas(mlir::OpBuilder builder,
                                            llvm::SmallVector<mlir::Value> srcOperands, 
                                            llvm::SmallVector<mlir::Value> dstOperands, 
                                            int64_t loadWidth, 
-                                           std:: vector<int> times);
+                                           std:: vector<int> times, 
+                                           const std::string& forDesc);
 
 template <typename AffineMemoryOp>
 mlir::AffineMap getOneDimMap(AffineMemoryOp memOp, int64_t offset) {

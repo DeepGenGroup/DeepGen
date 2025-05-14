@@ -64,20 +64,13 @@ std::vector<mlir::func::FuncOp> getAllKernels(mlir::ModuleOp mod) {
 
 std::vector<mlir::func::FuncOp> getSpecifiedKernels(mlir::ModuleOp mod, 
                                                     const std::vector<std::string>& kernelNames) {
-  // get specified kernel in module and adding attr funcName to x/y forOp
+  // get specified kernel in module
   std::vector<mlir::func::FuncOp> funOps;
   mlir::OpBuilder builder(mod);
   mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto name = funcOp.getName().str();
     auto it = std::find(kernelNames.begin(), kernelNames.end(), name);
     if (it != kernelNames.end()) {
-      // 给xyfor加上所属的funcname
-      funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
-        auto forDesc = getStrAttr(forOp, FORDESC);
-        if (forDesc == "x" || forDesc == "y") {
-          forOp->setAttr(FORINCFUNC, builder.getStringAttr(name));
-        }
-      });
       funOps.push_back(funcOp);
     }
     if (funOps.size() >= kernelNames.size()) {
@@ -183,7 +176,7 @@ std::vector<mlir::Value>>
                                                              mlir::ValueRange({}), loopBody);
   int index = 0;
   outerLoop.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp fop) {
-    if (!forDescs.empty()) {
+    if (forDescs.size() > index) {
       fop->setAttr(FORDESC, builder.getStringAttr(forDescs[index++]));
     }
     mostLoops.push_back(fop);
@@ -689,7 +682,7 @@ mlir::affine::AffineForOp warpBroadcast(mlir::OpBuilder &builder,
   auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
     for (auto buf: bufs) {
       auto elem = b.create<mlir::affine::AffineLoadOp>(loc, buf, iv);
-      auto downElem = b.create<mlir::gpu::ShuffleOp>(loc, elem.getResult(), index, width, mlir::gpu::ShuffleMode::DOWN);
+      auto downElem = b.create<mlir::gpu::ShuffleOp>(loc, elem.getResult(), index, width, mlir::gpu::ShuffleMode::IDX);
       b.create<mlir::affine::AffineStoreOp>(loc, downElem.getResult(0), buf, iv);
     }
     b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
@@ -711,43 +704,43 @@ mlir::AffineExpr getOrderExpr(mlir::OpBuilder builder, int dimCount) {
 
 bool isContainsDimInExpr(mlir::AffineExpr expr, unsigned dim) {
   // 判断expr中是否有维度为dim的expr
-  if (auto dimExpr = expr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
     return dimExpr.getPosition() == dim;
-  } else if (auto binaryExpr = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)){
     auto LHS = isContainsDimInExpr(binaryExpr.getLHS(), dim);
     auto RHS = isContainsDimInExpr(binaryExpr.getRHS(), dim);
     return LHS || RHS;
   } else {
-    auto constExpr = expr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(expr);
     return false;
   }
 }
 
 int getGETargetExprNum(mlir::AffineExpr expr, unsigned target) {
   // 获取expr表达式中大于==target的dim的数量
-  if (auto dimExpr = expr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
     if (dimExpr.getPosition() >= target) return 1;
     else return 0;
-  } else if (auto binaryExpr = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)){
     auto LHS = getGETargetExprNum(binaryExpr.getLHS(), target);
     auto RHS = getGETargetExprNum(binaryExpr.getRHS(), target);
     return LHS + RHS;
   } else {
-    auto constExpr = expr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(expr);
     return 0;
   }
 }
 
 int getMaxDimInExpr(mlir::AffineExpr expr) {
   // 获取expr中最大的dim
-  if (auto dimExpr = expr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
     return dimExpr.getPosition();
-  } else if (auto binaryExpr = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)){
     auto LHS = getMaxDimInExpr(binaryExpr.getLHS());
     auto RHS = getMaxDimInExpr(binaryExpr.getRHS());
     return LHS > RHS ? LHS : RHS;
   } else {
-    auto constExpr = expr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(expr);
     return -1;
   }
 }
@@ -756,15 +749,15 @@ mlir::AffineExpr shiftExprDim(mlir::OpBuilder builder,
                               mlir::AffineExpr expr, 
                               int shift) {
   // d0 + d1 + d2  =>  shift==1  =>  d1 + d2 + d3
-  if (auto dimExpr_ = expr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr_ = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
     return builder.getAffineDimExpr(dimExpr_.getPosition() + shift);
-  } else if (auto binaryExpr_ = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr_ = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)){
     auto LHS = shiftExprDim(builder, binaryExpr_.getLHS(), shift);
     auto RHS = shiftExprDim(builder, binaryExpr_.getRHS(), shift);
     return mlir::getAffineBinaryOpExpr(binaryExpr_.getKind(), LHS, RHS);
   } else {
     // allowed dim, constant, binaryOp
-    auto constExpr_ = expr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr_ = mlir::dyn_cast<mlir::AffineConstantExpr>(expr);
     assert(constExpr_);
     return constExpr_;
   }
@@ -775,18 +768,18 @@ mlir::AffineExpr shiftUpTargetExprDim(mlir::OpBuilder builder,
                                     int target, 
                                     int shift) {
   // d0 + d1 + d2  target==1 & shift==1  => d0 + d2 + d3
-  if (auto dimExpr = expr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr = mlir::dyn_cast<mlir::AffineDimExpr>(expr)) {
     if (dimExpr.getPosition() >= target) {
       return mlir::getAffineDimExpr(dimExpr.getPosition() + shift, builder.getContext());
     } else {
       return dimExpr;
     }
-  } else if (auto binaryExpr = expr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(expr)){
     auto LHS = shiftUpTargetExprDim(builder, binaryExpr.getLHS(), target, shift);
     auto RHS = shiftUpTargetExprDim(builder, binaryExpr.getRHS(), target, shift);
     return mlir::getAffineBinaryOpExpr(binaryExpr.getKind(), LHS, RHS);
   } else {
-    auto constExpr = expr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(expr);
     return constExpr;
   }
 }
@@ -814,7 +807,7 @@ mlir::AffineExpr replaceExprInExpr(mlir::OpBuilder builder,
                                   int replaceNumberDims) {
   // 这个函数只能替换replaceExpr的dim小于targetDim的也就是 d0+0 ->d1 不能 d2+2 ->d1
   // 可以在上层将d2+2变成d1+2（限定为一维替换）
-  if (auto dimExpr_ = inExpr.dyn_cast<mlir::AffineDimExpr>()) {
+  if (auto dimExpr_ = mlir::dyn_cast<mlir::AffineDimExpr>(inExpr)) {
     if (dimExpr_.getPosition() == targetDim) {  // 因为这个地方会直接将 d1 替换成 d2+2，而d2+2需要变成d1+2才行
       return replaceExpr;
     } else if (dimExpr_.getPosition() > targetDim) {
@@ -822,13 +815,13 @@ mlir::AffineExpr replaceExprInExpr(mlir::OpBuilder builder,
     } else {
       return dimExpr_;
     }
-  } else if (auto binaryExpr_ = inExpr.dyn_cast<mlir::AffineBinaryOpExpr>()){
+  } else if (auto binaryExpr_ = mlir::dyn_cast<mlir::AffineBinaryOpExpr>(inExpr)){
     auto LHS = replaceExprInExpr(builder, binaryExpr_.getLHS(), replaceExpr, targetDim, replaceNumberDims);
     auto RHS = replaceExprInExpr(builder, binaryExpr_.getRHS(), replaceExpr, targetDim, replaceNumberDims);
     return mlir::getAffineBinaryOpExpr(binaryExpr_.getKind(), LHS, RHS);
   } else {
     // allowed dim, constant, binaryOp
-    auto constExpr_ = inExpr.dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr_ = mlir::dyn_cast<mlir::AffineConstantExpr>(inExpr);
     assert(constExpr_);
     return constExpr_;
   }
@@ -913,14 +906,15 @@ mlir::affine::AffineForOp shiftBufferDatas(mlir::OpBuilder builder,
                                            llvm::SmallVector<mlir::Value> srcOperands, 
                                            llvm::SmallVector<mlir::Value> dstOperands, 
                                            int64_t loadWidth, 
-                                           std:: vector<int> times) {
+                                           std:: vector<int> times, 
+                                           const std::string& forDesc) {
   // 这个函数是将数据在buf之间转移
   // times是线程load一次的数据量与线程load数据的总量相除得到一个load次数，这个load的次数又被分成多层循环，就有了times
   // 若srcOperands+ivs - srcNumDims == 1，则证明loadWidth的元素不能使用vectorload
   // src/dstOperand是外面idx或者k/bk等value，push_back(iv)是load的次数的forop的value，最后一个push_back(iv)是不能进行vector，for loadWidth的value
-  auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
+  auto dstType = mlir::dyn_cast<mlir::MemRefType>(dst.getType());
   mlir::SmallVector<int64_t> lbs(times.size(), 0), ubs(times.begin(), times.end()), steps(times.size(), 1);
-  auto [allForOp, ivs] = createNestedLoops(builder, lbs, ubs, steps);   // 创建嵌套循环（load次数的forop）
+  auto [allForOp, ivs] = createNestedLoops(builder, lbs, ubs, steps, {forDesc});   // 创建嵌套循环（load次数的forop）
   for (auto iv : ivs) {
     srcOperands.push_back(iv);
     dstOperands.push_back(iv);
@@ -971,7 +965,7 @@ mlir::Value doubleBuffer(mlir::Value buffer) {
   // 否则创建新的buf
   mlir::OpBuilder builder(op);
   std::vector<int64_t> shape{2};
-  auto bufType = buffer.getType().dyn_cast<mlir::MemRefType>();
+  auto bufType = mlir::dyn_cast<mlir::MemRefType>(buffer.getType());
   auto memSpace = static_cast<MemorySpace>(bufType.getMemorySpaceAsInt());
   for (auto s : bufType.getShape()) { shape.push_back(s); }
   mlir::Value newBuffer = createAllocOp(builder, shape, bufType.getElementType(), memSpace, KCG_ALIGNBYTE, bufDesc);

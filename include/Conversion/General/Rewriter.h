@@ -44,7 +44,8 @@ mlir::affine::AffineForOp loadToRegisters(mlir::Value src,
                                           llvm::SmallVector<mlir::Value> operands, 
                                           std::vector<int64_t> widths, 
                                           mlir::affine::AffineForOp compute_at, 
-                                          Position pos);
+                                          Position pos,
+                                          const std::string& forDesc);
 
 mlir::affine::AffineForOp loadFromRegisters(mlir::Value src, 
                                             mlir::Value dst, 
@@ -52,7 +53,8 @@ mlir::affine::AffineForOp loadFromRegisters(mlir::Value src,
                                             llvm::SmallVector<mlir::Value> operands, 
                                             std::vector<int64_t> widths, 
                                             mlir::affine::AffineForOp compute_at, 
-                                            Position pos);
+                                            Position pos,
+                                            const std::string& forDesc);
 
 mlir::gpu::BarrierOp barrier(mlir::affine::AffineForOp compute_at, Position pos);
 
@@ -76,7 +78,8 @@ mlir::affine::AffineForOp splitUWrite(mlir::Value src,
                                       int localSplitU, 
                                       int64_t globStoreWidth, 
                                       mlir::affine::AffineForOp compute_at, 
-                                      Position pos);
+                                      Position pos, 
+                                      const std::string& forDesc);
 
 mlir::Value bufferCombine(std::vector<mlir::Value> buf1, std::vector<mlir::Value> buf2, std::string bufDesc);
 
@@ -99,12 +102,10 @@ void cache_write(mlir::affine::AffineForOp scope,
 
 void separateNoOpRelyForOp(std::vector<mlir::affine::AffineForOp> forOps);
 
-std::pair<std::vector<mlir::Value>, 
-std::vector<mlir::Value>> createSMAndRegInitBuf(mlir::affine::AffineForOp initForOp, 
-                                                mlir::Operation* blockIdx, 
-                                                mlir::Operation* threadIdx, 
-                                                const std::vector<int64_t>& smShape, 
-                                                const std::vector<int64_t>& regShape);
+std::vector<mlir::Value> createHierarchyInitBuf(mlir::affine::AffineForOp initForOp,
+                                                const std::vector<int64_t>& newShape, 
+                                                mlir::Operation* pos,
+                                                MemorySpace space);
 
 std::vector<std::vector<mlir::affine::AffineForOp>> get_write(mlir::affine::AffineParallelOp parallelLevel, 
                                                               mlir::Value dst);

@@ -162,16 +162,16 @@ std::string KcgDtypeToStr(KcgDtype type){
 }
 
 std::string typeToStr(mlir::Type type) {
-  if(type.isa<mlir::Float16Type>()) return {"float16"};
-  if(type.isa<mlir::Float32Type>()) return {"float32"};
-  if(type.isa<mlir::Float64Type>()) return {"float64"};
-  if(auto int_type = type.dyn_cast<mlir::IntegerType>()) {
+  if(mlir::isa<mlir::Float16Type>(type)) return {"float16"};
+  if(mlir::isa<mlir::Float32Type>(type)) return {"float32"};
+  if(mlir::isa<mlir::Float64Type>(type)) return {"float64"};
+  if(auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
     if (int_type.getWidth() == 1) return {"bool"};
     else if (int_type.getWidth() == 16) return {"int16"};
     else if (int_type.getWidth() == 32) return {"int32"};
     else if (int_type.getWidth() == 64) return {"int64"};
   }
-  if(type.isa<mlir::IndexType>()) return {"index"};
+  if(mlir::isa<mlir::IndexType>(type)) return {"index"};
   assert(false && "not supported type!");
   return "";
 }

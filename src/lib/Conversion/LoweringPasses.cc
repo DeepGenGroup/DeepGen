@@ -270,21 +270,31 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
     auto predTy = IntegerType::get(rewriter.getContext(), 1);
 
-    Value one = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 1);
+    // Value one = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 1);
     Value minusOne = rewriter.create<LLVM::ConstantOp>(loc, int32Type, -1);
-    Value thirtyTwo = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 32);
-    Value numLeadInactiveLane = rewriter.create<LLVM::SubOp>(loc, int32Type, thirtyTwo, adaptor.getWidth());
+    // Value thirtyTwo = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 32);
+    // Value numLeadInactiveLane = rewriter.create<LLVM::SubOp>(loc, int32Type, thirtyTwo, adaptor.getWidth());
     // Bit mask of active lanes: `(-1) >> (32 - activeWidth)`.
-    Value activeMask = rewriter.create<LLVM::LShrOp>(loc, int32Type, minusOne, numLeadInactiveLane);
-    Value maskAndClamp;
-    if (op.getMode() == gpu::ShuffleMode::UP) {
-      // Clamp lane: `32 - activeWidth`
-      maskAndClamp = numLeadInactiveLane;
+    // Value activeMask = rewriter.create<LLVM::LShrOp>(loc, int32Type, minusOne, numLeadInactiveLane);
+    // Value maskAndClamp;
+    // if (op.getMode() == gpu::ShuffleMode::UP) {
+    //   // Clamp lane: `32 - activeWidth`
+    //   maskAndClamp = numLeadInactiveLane;
+    // } else {
+    //   // Clamp lane: `activeWidth - 1`
+    //   maskAndClamp = rewriter.create<LLVM::SubOp>(loc, int32Type, adaptor.getWidth(), one);
+    // }
+    Value segmaskAndClamp;
+    auto constOp = adaptor.getWidth().getDefiningOp<arith::ConstantOp>();
+    auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
+    auto width = intAttr.getInt();
+    llvm::outs() << "witdh: " << width;
+    if (width < 32) {
+      segmaskAndClamp = rewriter.create<LLVM::ConstantOp>(loc, int32Type, ((32 - width) << 8) + 31);
     } else {
-      // Clamp lane: `activeWidth - 1`
-      maskAndClamp = rewriter.create<LLVM::SubOp>(loc, int32Type, adaptor.getWidth(), one);
+      segmaskAndClamp = rewriter.create<LLVM::ConstantOp>(loc, int32Type, width - 1);;
     }
-
+    
     bool predIsUsed = !op->getResult(1).use_empty();
     UnitAttr returnValueAndIsValidAttr = nullptr;
     Type resultTy = valueTy;
@@ -309,8 +319,10 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
       default:
         return failure();
     }
-    Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, activeMask, adaptor.getValue(), adaptor.getOffset(),
-        maskAndClamp, nvvmMode, returnValueAndIsValidAttr);
+    // Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, activeMask, adaptor.getValue(), adaptor.getOffset(),
+        // maskAndClamp, nvvmMode, returnValueAndIsValidAttr);
+    Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, minusOne, adaptor.getValue(), adaptor.getOffset(),
+        segmaskAndClamp, nvvmMode, returnValueAndIsValidAttr);
     if (predIsUsed) {
       Value shflValue = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 0);
       Value isActiveSrcLane = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 1);
@@ -342,16 +354,6 @@ struct GPUBarrierToNVVMLowering : public OpRewritePattern<gpu::BarrierOp> {
   }
 };
 
-template <typename OpTy>
-static void populateOpPatterns(LLVMTypeConverter &converter,
-                               RewritePatternSet &patterns, StringRef f32Func,
-                               StringRef f64Func,
-                               StringRef f32ApproxFunc = "") {
-  patterns.add<ScalarizeVectorOpLowering<OpTy>>(converter);
-  patterns.add<OpToFuncCallLowering<OpTy>>(converter, f32Func, f64Func,
-                                           f32ApproxFunc);
-}
-
 // 将上述 3 个重写加到这个pass中
 struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, OperationPass<ModuleOp>> {
   MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(GPUToROCDLOrNVVMPass)
@@ -361,6 +363,11 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
   private:
     Target target;
     unsigned indexBitwidth;
+    StringRef amdgcnDataLayout =
+    "e-p:64:64-p1:64:64-p2:32:32-p3:32:32-p4:64:64-p5:32:32-p6:32:32"
+    "-p7:160:256:256:32-p8:128:128-p9:192:256:256:32-i64:64-v16:16-v24:32-v32:"
+    "32-v48:64-v96:128-v192:256-v256:256-v512:512-v1024:1024-v2048:2048-n32:"
+    "64-S32-A5-G1-ni:7:8:9";
 
   void getDependentDialects(DialectRegistry &registry) const override {
     registry.insert<ROCDL::ROCDLDialect>();
@@ -371,6 +378,9 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
     RewritePatternSet patterns(&getContext());
     LLVMConversionTarget Codetarget(getContext());
     LowerToLLVMOptions options(&getContext());
+    if (target == Target::ROCm) {
+      options.dataLayout = llvm::DataLayout(amdgcnDataLayout);
+    }
     options.overrideIndexBitwidth(indexBitwidth);
     LLVMTypeConverter typeConverter(&getContext(), options);
 
@@ -378,21 +388,23 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
     Codetarget.addLegalDialect<ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
 
     if (target == Target::ROCm) {
+      // populateGpuToROCDLConversionPatterns(typeConverter, patterns, gpu::amd::Runtime::HIP);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, ROCDL::BlockIdXOp, 
                                                ROCDL::BlockIdYOp, ROCDL::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, ROCDL::ThreadIdXOp,
                                                ROCDL::ThreadIdYOp, ROCDL::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToROCDLLowering>(typeConverter);
       patterns.add<GPUBarrierToROCDLLowering>(&getContext());
-      populateOpPatterns<math::ExpOp>(typeConverter, patterns, "__ocml_exp_f32", "__ocml_exp_f64");
+      populateMathToROCDLConversionPatterns(typeConverter, patterns);
     } else if (target == Target::CUDA) {
+      // populateGpuToNVVMConversionPatterns(typeConverter, patterns, 10);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, NVVM::BlockIdXOp, 
                                                NVVM::BlockIdYOp, NVVM::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, NVVM::ThreadIdXOp,
                                                NVVM::ThreadIdYOp, NVVM::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToNVVMLowering>(typeConverter);
       patterns.add<GPUBarrierToNVVMLowering>(&getContext());
-      populateOpPatterns<math::ExpOp>(typeConverter, patterns, "__nv_expf", "__nv_exp", "__nv_fast_expf");
+      populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);
     }
 
     if (failed(applyPartialConversion(getOperation(), Codetarget, std::move(patterns)))){
@@ -682,7 +694,7 @@ struct CombineMemrefPass : public PassWrapper<CombineMemrefPass, OperationPass<M
     for (Operation &op : module.getBody()->getOperations()) {
       if (auto funcOp = mlir::dyn_cast<func::FuncOp>(&op)) {
         combineAllocOrAllocaOp<memref::AllocOp>(funcOp);
-        combineAllocOrAllocaOp<memref::AllocaOp>(funcOp);
+        // combineAllocOrAllocaOp<memref::AllocaOp>(funcOp);
       }
     }
   }
@@ -943,7 +955,7 @@ struct SCFParallelToGPULowering : public OpRewritePattern<scf::ParallelOp> {
       blockIds.push_back(blockId);
 
       auto constOp = outerUpperBounds[i].getDefiningOp<arith::ConstantOp>();
-      auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>();
+      auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
       blockUpperBounds.push_back(intAttr.getInt());
     }
 
@@ -955,7 +967,7 @@ struct SCFParallelToGPULowering : public OpRewritePattern<scf::ParallelOp> {
       threadIds.push_back(threadId);
 
       auto constOp = innerUpperBounds[i].getDefiningOp<arith::ConstantOp>();
-      auto intAttr = constOp.getValue().dyn_cast<IntegerAttr>();
+      auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
       threadUpperBounds.push_back(intAttr.getInt());
     }
 
@@ -1096,7 +1108,7 @@ struct ConvertArithIndexToI64Pass : public PassWrapper<ConvertArithIndexToI64Pas
       if (auto constantOp = dyn_cast<arith::ConstantOp>(op)) {
         Type constantType = constantOp.getValue().getType();
         if (constantType.isIndex()) {
-          auto indexValue = constantOp.getValue().cast<IntegerAttr>().getInt();
+          auto indexValue = mlir::dyn_cast<IntegerAttr>(constantOp.getValue()).getInt();
           OpBuilder builder(op);
           auto i64Op = builder.create<arith::ConstantOp>(constantOp.getLoc(), builder.getI64IntegerAttr(indexValue));
           auto indexVal = builder.create<arith::IndexCastOp>(i64Op.getLoc(), builder.getIndexType(), i64Op);
@@ -1115,7 +1127,7 @@ struct ConvertArithConstantIndexToI64 : public OpRewritePattern<arith::ConstantO
   LogicalResult matchAndRewrite(arith::ConstantOp constOp, PatternRewriter &rewriter) const final {
     Type constType = constOp.getValue().getType();
     if (constType.isIndex()) {
-      auto indexValue = constOp.getValue().cast<IntegerAttr>().getInt();
+      auto indexValue = mlir::dyn_cast<IntegerAttr>(constOp.getValue()).getInt();
       auto i64Op = rewriter.create<arith::ConstantOp>(constOp.getLoc(), rewriter.getI64IntegerAttr(indexValue));
       auto indexVal = rewriter.create<arith::IndexCastOp>(i64Op.getLoc(), rewriter.getIndexType(), i64Op);
       rewriter.replaceOp(constOp, indexVal);

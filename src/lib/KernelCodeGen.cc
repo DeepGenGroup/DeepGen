@@ -52,6 +52,23 @@ std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod,
       noSupKernels.push_back(kernel.type);
     }
   }
+  // add attr
+  for (auto kernel : kernelList) {
+    mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
+      auto name = funcOp.getName().str();
+      if (name == kernel.name) {
+        mlir::OpBuilder builder(funcOp);
+        funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+          auto forDesc = getStrAttr(forOp, FORDESC);
+          if (forDesc == "x" || forDesc == "y") {
+            forOp->setAttr(FORINCFUNC, builder.getStringAttr(name));
+          }
+        });
+        return;
+      }
+    });
+  }
+
   return noSupKernels;
 }
 
@@ -247,17 +264,13 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target targ
   mlir::PassManager pm(context);
   // pm.addPass(createROCDLIdOpModifyPass());                      // 自定义 rocdl idop加attr (弃用)
   pm.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
-  pm.addPass(mlir::createConvertSCFToCFPass());                    // scf -> cf
+  pm.addPass(mlir::createSCFToControlFlowPass());                    // scf -> cf
 
   ConvertControlFlowToLLVMPassOptions cfOptions;
   cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
   
   pm.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));        // cf -> llvm
   // pm.addPass(createConvertArithIndexToI64Pass());                      // 自定义 将arith中的constantOp的result为index类型的Op全部转成result为i64的op
-
-  ArithToLLVMConversionPassOptions arithOptions;
-  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  pm.addPass(mlir::createArithToLLVMConversionPass(arithOptions));            // arith -> llvm
 
   pm.addPass(createVectorToLLVMPass(/*indexBitwidth*/INDEX_BIT_WIDTH));                    // 自定义 vector to llvm pass
   // pm.addPass(mlir::createConvertVectorToLLVMPass());                       // vector -> llvm
@@ -267,9 +280,9 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target targ
   // memrefOptions.useAlignedAlloc = true;                                    // 这个如果不开启的话，且上为i32，则llir转换失败，解决使用pass - createMallocFuncOpArgTypeI32ToI64Pass
   pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));  // memref -> llvm
 
-  pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::createCSEPass());
-  pm.addPass(mlir::createSymbolDCEPass());
+  // pm.addPass(mlir::createCanonicalizerPass());
+  // pm.addPass(mlir::createCSEPass());
+  // pm.addPass(mlir::createSymbolDCEPass());
 
   ConvertFuncToLLVMPassOptions funcOptions;                                 // passes.h.inc文件中有通过tablegen生成的pass base类型 以及createxxx()
   funcOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // func loewring 到 llvm 时，其index转到llvm上是使用i32类型
@@ -278,6 +291,10 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target targ
 
   pm.addPass(createLLVMFuncOpAddGPUAttrPass(target));                       // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
   pm.addPass(createGPUToROCDLOrNVVMPass(target, INDEX_BIT_WIDTH));          // GPU indexOp to rocdl/nvvm indexOp
+
+  ArithToLLVMConversionPassOptions arithOptions;
+  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  pm.addPass(mlir::createArithToLLVMConversionPass(arithOptions));            // arith -> llvm
   // pm.addPass(createEraseRedundantUnCCastPass());                         // 手动写的去除多余UnrealizedCast
   // pm.addPass(mlir::createReconcileUnrealizedCastsPass());                // 内置去除多余cast的pass
   pm.addPass(mlir::createCanonicalizerPass());
@@ -349,15 +366,15 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
   if (target == Target::ROCm) {
     const int wavesPerEU = 0;
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
-    llvm::outs() << " =========== after LLVM IR ============\n";
-    llvm::outs() << llvmIR << "\n";
+    // llvm::outs() << " =========== after LLVM IR ============\n";
+    // llvm::outs() << llvmIR << "\n";
     const std::string gfx_triple{"amdgcn-amd-amdhsa"};
     const std::string gfx_features{""};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
-    llvm::outs() << " =========== after LLVM IR ============\n";
-    llvm::outs() << llvmIR << "\n";
+    // llvm::outs() << " =========== after LLVM IR ============\n";
+    // llvm::outs() << llvmIR << "\n";
     const int capability = CUDA_CAP;
     const int version = PTXAS_VERSION;
     auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);

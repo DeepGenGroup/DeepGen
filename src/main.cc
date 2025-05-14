@@ -12,8 +12,8 @@ using namespace KernelCodeGen;
 
 int main(){
   int64_t bs = 1;
-  int64_t hn = 16;
-  int64_t sl = 4096;
+  int64_t hn = 1;
+  int64_t sl = 128;
   int64_t hd = 128;
 
   KernelCodeGenerator generator(Target::CUDA, "");
@@ -27,9 +27,9 @@ int main(){
   kd1.name = "matmul1";
   kd1.type = "Matmul";
   kd1.argNames = {"A1", "B1", "C1"};
-  kd1.shapes = {{bs, hn, sl, hd}, {bs, hn, hd, sl}, {bs, hn, sl, sl}};
+  kd1.shapes = {{bs, hn, hd, sl}, {bs, hn, hd, sl}, {bs, hn, sl, sl}};
   kd1.dtypes = {"float32", "float32", "float32"};
-  kd1.isTrans = {false, false};
+  kd1.isTrans = {true, false};
   kd1.outputArgNum = 1;
   kds.push_back(kd1);
   //Softmax1
@@ -56,13 +56,13 @@ int main(){
     "attention1",
     "FlashAttn",
     {"matmul1", "softmax1", "matmul2"},
-    {{bs, hn, sl, hd}, {bs, hn, hd, sl}, {bs, hn, sl, hd}, {bs, hn, sl, hd}},
-    {{bs, hn, sl, sl}},
+    {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]},
+    {kd1.shapes[2]},
     {"float32", "float32", "float32", "float32"},
     {"float32"},
     {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {{"matmul2", {2}}}}, 
     {{{"matmul1", {2}}, {"softmax1", {0, 1}} , {"matmul2", {0}}}},
-    {false, false, false},
+    {kd1.isTrans[0], kd1.isTrans[1], kd3.isTrans[1]},
     {"y"},
     1
   };
@@ -70,6 +70,7 @@ int main(){
 
   // create kernels
   auto noSupKernels = generator.createKernels(module, kds);
+  llvm::outs() << module << "\n";
   // fusing
   auto result = generator.fusing(module, fkds);
   // llvm::outs() << module << "\n";
@@ -77,27 +78,27 @@ int main(){
   std::vector<mlir::ModuleOp> mods;
 
   std::map<std::string, std::map<std::string, int64_t>> tileConfig = {
-    {"matmul1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 4}}}, 
-    {"softmax1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 4}}},
+    {"matmul1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 2}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 8}}}, 
+    {"softmax1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 2}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 8}}},
     {"matmul2", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 8}}},
   };
   
   //
   std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
     {"attention1", 
-      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 32}, {"Slice2", 32}, 
-       {"PTr", 4}, {"PTc", 4}, {"OTr", 4}, {"OTc", 8}, 
+      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+       {"PTr", 2}, {"PTc", 8}, {"OTr", 4}, {"OTc", 8}, 
        // global to shared
-       {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4},
+       {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
        {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
        // prefecth
        {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
        // P = Q * K
-       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 2}, {"WARP_LAYOUT_P_X", 16},
-       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 4}, {"WARP_SCATTER_WIDTH_Q", 2}, {"WARP_SCATTER_WIDTH_K", 2},
+       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 8},
+       {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
        // O = P * V
        {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
-       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 4}, {"WARP_SCATTER_WIDTH_P", 2}, {"WARP_SCATTER_WIDTH_V", 2},
+       {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
        {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
   };
   // std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
@@ -122,7 +123,7 @@ int main(){
 for (auto mod : mods) {
   // mpping
   result = generator.mapping(mod, tileConfig);
-  // llvm::outs() << mod << "\n";
+  llvm::outs() << mod << "\n";
   
   // optimize
   generator.optimize(mod, tuneConfig);

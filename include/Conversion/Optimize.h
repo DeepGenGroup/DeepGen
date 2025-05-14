@@ -27,7 +27,7 @@ struct Optimizer {
 };
 
 // ======================================== matmul ==================================================
-struct MatmulOptimizer : Optimizer {
+struct  MatmulOptimizer : Optimizer {
   MatmulOptimizer() {
     this->name = std::move(std::string("Matmul"));
   }

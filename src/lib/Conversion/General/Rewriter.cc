@@ -302,13 +302,15 @@ mlir::affine::AffineForOp loadToRegisters(mlir::Value src,
                                           llvm::SmallVector<mlir::Value> operands, 
                                           std::vector<int64_t> widths, 
                                           mlir::affine::AffineForOp compute_at, 
-                                          Position pos) {
+                                          Position pos, 
+                                          const std::string& forDesc) {
   // 加载数据到寄存器
   auto dimsNum = map.getNumDims();
   auto builder = getBuilder(compute_at, pos);
-  auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
+  auto dstType = mlir::dyn_cast<mlir::MemRefType>(dst.getType());
   int64_t totalWidth = dstType.getShape()[0];
 
+  // 构建reg中的访问map == dim0 * width0 + dim1 + width1 + ...
   std::vector<int> times;
   mlir::AffineExpr expr = builder.getAffineConstantExpr(0);
   for (int i=0; i<widths.size(); i++) {
@@ -318,7 +320,7 @@ mlir::affine::AffineForOp loadToRegisters(mlir::Value src,
     totalWidth = widths[i];
   }
   mlir::AffineMap dstMap;
-  if (dimsNum - (operands.size() + times.size()) == 1) {
+  if (dimsNum - (operands.size() + times.size()) == 1) {  // 不能用vectorload取数据
     expr = expr + builder.getAffineDimExpr(widths.size());
     dstMap = mlir::AffineMap::get(/*dimCount*/widths.size() + 1, 0, llvm::ArrayRef<mlir::AffineExpr>(expr), builder.getContext());
   } else {
@@ -326,7 +328,7 @@ mlir::affine::AffineForOp loadToRegisters(mlir::Value src,
   }
   
   llvm::SmallVector<mlir::Value> dstOperands;
-  auto load = shiftBufferDatas(builder, src, dst, map, dstMap, operands, dstOperands, widths.back(), times);
+  auto load = shiftBufferDatas(builder, src, dst, map, dstMap, operands, dstOperands, widths.back(), times, forDesc);
   return load;
 }
 
@@ -337,11 +339,12 @@ mlir::affine::AffineForOp loadFromRegisters(mlir::Value src,
                                 llvm::SmallVector<mlir::Value> operands, 
                                 std::vector<int64_t> widths, 
                                 mlir::affine::AffineForOp compute_at, 
-                                Position pos) {
+                                Position pos, 
+                                const std::string& forDesc) {
   // write store
   auto dimsNum = map.getNumDims();
   auto builder = getBuilder(compute_at, pos);
-  auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
+  auto srcType = mlir::dyn_cast<mlir::MemRefType>(src.getType());
   int64_t totalWidth = srcType.getShape()[0];
 
   std::vector<int> times;
@@ -361,7 +364,7 @@ mlir::affine::AffineForOp loadFromRegisters(mlir::Value src,
   }
   
   llvm::SmallVector<mlir::Value> srcOperands;
-  auto store = shiftBufferDatas(builder, src, dst, srcMap, map, srcOperands, operands, widths.back(), times);
+  auto store = shiftBufferDatas(builder, src, dst, srcMap, map, srcOperands, operands, widths.back(), times, forDesc);
   return store;
 }
 
@@ -453,71 +456,90 @@ void separateNoOpRelyForOp(std::vector<mlir::affine::AffineForOp> forOps) {
   }
 }
 
-std::pair<std::vector<mlir::Value>, 
-std::vector<mlir::Value>> createSMAndRegInitBuf(mlir::affine::AffineForOp initForOp, 
-                                                mlir::Operation* blockIdx, 
-                                                mlir::Operation* threadIdx, 
-                                                const std::vector<int64_t>& smShape, 
-                                                const std::vector<int64_t>& regShape) {
-  // 按照glob的initbuf添加sm的initbuf和reg的initbuf（主要作用于attention）
+std::vector<mlir::Value> createHierarchyInitBuf(mlir::affine::AffineForOp initForOp,
+                                                const std::vector<int64_t>& newShape, 
+                                                mlir::Operation* pos, 
+                                                MemorySpace space) {
+  // 根据提供的glob initbuf 的for创建sm/reg上的initbuf（也可以根据其他level的initbuf创建）
   std::vector<float> csts;
   std::vector<std::string> bufDescs;
   std::vector<mlir::Type> elemTypes;
   std::string initForDesc = getStrAttr(initForOp, FORDESC);
+  // collect must datas
   auto innerForOp = getInnerMostOp<mlir::affine::AffineForOp>(initForOp);
   innerForOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineStoreOp storeOp) {
     // get constant value
-    auto defOp = storeOp.getValue().getDefiningOp();
-    auto cstOp = mlir::dyn_cast<mlir::arith::ConstantOp>(defOp);
-    if (auto floatAttr = cstOp.getValue().dyn_cast<mlir::FloatAttr>()) {
+    auto cstOp = mlir::dyn_cast<mlir::arith::ConstantOp>(storeOp.getValue().getDefiningOp());
+    if (auto floatAttr = mlir::dyn_cast<mlir::FloatAttr>(cstOp.getValue())) {
       csts.push_back(floatAttr.getValueAsDouble());
     }
     // get type
     auto buf = storeOp.getMemRef();
-    auto bufType = buf.getType().dyn_cast<mlir::MemRefType>();
+    auto bufType = mlir::dyn_cast<mlir::MemRefType>(buf.getType());
     elemTypes.push_back(bufType.getElementType());
     // get buffer desc
-    defOp = buf.getDefiningOp();
-    auto allocOp = mlir::dyn_cast<mlir::memref::AllocOp>(defOp);
+    auto allocOp = mlir::dyn_cast<mlir::memref::AllocOp>(buf.getDefiningOp());
     bufDescs.push_back(getStrAttr(allocOp, AttrBufDescription));
   });
-
-  // block level
-  auto createInit = [&](const std::vector<int64_t>& shape, 
-                        mlir::Operation* paraIdx, 
-                        MemorySpace space) -> std::vector<mlir::Value> {
-    mlir::OpBuilder builder = getBuilder(paraIdx, Position::begin);
-    // create alloc sm buf
-    std::vector<mlir::Value> bufs;
-    for (int i=0; i<elemTypes.size(); i++) {
-      std::string tempDesc;
-      if (space == MemorySpace::shared) {
-        tempDesc = "sm" + bufDescs[i];
-      } else {
-        tempDesc = "reg" + bufDescs[i];
+  mlir::Value tid;
+  int64_t thread_num;
+  if (auto parallelOp = mlir::dyn_cast<mlir::affine::AffineParallelOp>(pos)) {
+    tid = parallelOp.getIVs()[0];
+    thread_num = (*(parallelOp.getConstantRanges()))[0];
+  }
+  // create new initbuf
+  mlir::OpBuilder builder = getBuilder(pos, Position::begin);
+  // create alloc sm buf
+  std::vector<mlir::Value> newBufs;
+  for (int i=0; i<elemTypes.size(); i++) {
+    std::string tempDesc;
+    if (space == MemorySpace::shared) {
+      tempDesc = "sm" + bufDescs[i];
+    } else {
+      tempDesc = "reg" + bufDescs[i];
+    }
+    auto buf = createAllocOp(builder, newShape, elemTypes[i], space, KCG_ALIGNBYTE, tempDesc);
+    newBufs.push_back(buf);
+  }
+  // get forop ub/lb/step datas
+  llvm::SmallVector<int64_t> lbs, ubs, steps;
+  for (auto dim : newShape) {
+    lbs.push_back(0); ubs.push_back(dim); steps.push_back(1);
+  }
+  int64_t max = -1, maxIdx = -1;
+  if (space == MemorySpace::shared) {
+    for (int i=0; i<newShape.size(); i++) {
+      if (max < newShape[i]) {
+        maxIdx = i; max = newShape[i];
       }
-      auto buf = createAllocOp(builder, shape, elemTypes[i], space, KCG_ALIGNBYTE, tempDesc);
-      bufs.push_back(buf);
     }
-    // create init forop
-    llvm::SmallVector<int64_t> lbs, ubs, steps;
-    for (auto dim : shape) {
-      lbs.push_back(0); ubs.push_back(dim); steps.push_back(1);
-    }
-    auto [newForOps, newIvs] = createNestedLoops(builder, lbs, ubs, steps);
-    newForOps.front()->setAttr(FORDESC, builder.getStringAttr(initForDesc));
-    builder.setInsertionPointToStart(newForOps.back().getBody());
-    //create cstop and store
-    for (int i=0; i<csts.size(); i++) {
-      auto cstAttr = builder.getFloatAttr(elemTypes[i], csts[i]);
-      auto cstOp = builder.create<mlir::arith::ConstantOp>(builder.getUnknownLoc(), cstAttr);
-      builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), cstOp, bufs[i], newIvs);
-    }
-    return bufs;
-  };
-  auto smBufs = createInit(smShape, blockIdx, MemorySpace::shared);
-  auto regBufs = createInit(regShape, threadIdx, MemorySpace::local);
-  return {smBufs, regBufs};
+    steps[maxIdx] = thread_num;
+  }
+  // create init forop
+  auto [newForOps, newIvs] = createNestedLoops(builder, lbs, ubs, steps);
+  newForOps.front()->setAttr(FORDESC, builder.getStringAttr(initForDesc));
+  builder.setInsertionPointToStart(newForOps.back().getBody());
+  // create ifop
+  llvm::SmallVector<mlir::AffineExpr> exprs;
+  for (int i=0; i<newIvs.size(); i++) {
+    exprs.push_back(builder.getAffineDimExpr(i));
+  }
+  if (space == MemorySpace::shared) {
+    mlir::AffineExpr expr = max - 1 - builder.getAffineDimExpr(0) - builder.getAffineDimExpr(1);
+    auto cst = mlir::IntegerSet::get(2, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), llvm::ArrayRef<bool>({false}));
+    auto ifOp = builder.create<mlir::affine::AffineIfOp>(builder.getUnknownLoc(), cst, mlir::ValueRange{tid, newIvs[maxIdx]}, false);
+    builder.setInsertionPointToStart(ifOp.getThenBlock());
+    exprs[maxIdx] = builder.getAffineDimExpr(maxIdx) + builder.getAffineDimExpr(newIvs.size());
+    newIvs.push_back(tid);
+  }
+  //create cstop and store
+  for (int i=0; i<csts.size(); i++) {
+    auto cstAttr = builder.getFloatAttr(elemTypes[i], csts[i]);
+    auto cstOp = builder.create<mlir::arith::ConstantOp>(builder.getUnknownLoc(), cstAttr);
+    auto map = mlir::AffineMap::get(newIvs.size(), 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+    builder.create<mlir::affine::AffineStoreOp>(builder.getUnknownLoc(), cstOp, newBufs[i], map, newIvs);
+  }
+  return newBufs;
 }
 
 ///TODO: two level vector.
@@ -553,7 +575,7 @@ mlir::affine::AffineForOp vectorize(mlir::affine::AffineForOp readOrWrite, int64
   readOrWrite.setStep(width);
   readOrWrite.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineLoadOp load) {
     mlir::OpBuilder builder(load);
-    auto type = load.getMemRef().getType().dyn_cast<mlir::MemRefType>();
+    auto type = mlir::dyn_cast<mlir::MemRefType>(load.getMemRef().getType());
     auto vectorType = mlir::VectorType::get(width, type.getElementType());
     auto vectorLoad = builder.create<mlir::affine::AffineVectorLoadOp>(builder.getUnknownLoc(), vectorType, load.getMemRef(), load.getAffineMap(), load.getMapOperands());
     load.getResult().replaceAllUsesWith(vectorLoad.getResult());
@@ -561,7 +583,7 @@ mlir::affine::AffineForOp vectorize(mlir::affine::AffineForOp readOrWrite, int64
   });
   readOrWrite.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineStoreOp store) {
     mlir::OpBuilder builder(store);
-     auto type = store.getMemRef().getType().dyn_cast<mlir::MemRefType>();
+     auto type = mlir::dyn_cast<mlir::MemRefType>(store.getMemRef().getType());
     auto vectorType = mlir::VectorType::get(width, type.getElementType());
     auto vectorStore = builder.create<mlir::affine::AffineVectorStoreOp>(builder.getUnknownLoc(), store.getValue(), store.getMemRef(), store.getAffineMap(), store.getMapOperands());
     store.erase();
@@ -580,7 +602,7 @@ mlir::affine::AffineForOp> splitUReduce(mlir::Value src,
                                         Position pos) {
   // splitU!=1时，插入将多层结果进行累加求和的结构
   auto builder = getBuilder(compute_at, pos);
-  auto dstType = dst.getType().dyn_cast<mlir::MemRefType>();
+  auto dstType = mlir::dyn_cast<mlir::MemRefType>(dst.getType());
   int64_t regCTotalWidth = dstType.getShape()[0];   // 16
   int64_t globStoreTotalWidth = regCTotalWidth / localSplitU;  // 8
   int64_t globStoreNum = globStoreTotalWidth / globStoreWidth;  // 4
@@ -632,16 +654,17 @@ mlir::affine::AffineForOp splitUWrite(mlir::Value src,
                                       int localSplitU, 
                                       int64_t globStoreWidth, 
                                       mlir::affine::AffineForOp compute_at, 
-                                      Position pos) {
+                                      Position pos, 
+                                      const std::string& forDesc) {
   // 将结果累加完成后，再将结果写回到C矩阵
   auto builder = getBuilder(compute_at, pos);
   auto dim0 = builder.getAffineDimExpr(0);
-  auto srcType = src.getType().dyn_cast<mlir::MemRefType>();
+  auto srcType = mlir::dyn_cast<mlir::MemRefType>(src.getType());
   int64_t regTotalWidth = srcType.getShape()[0];
   int globStoreNum = regTotalWidth / localSplitU / globStoreWidth;
   mlir::AffineMap srcMap = mlir::AffineMap::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>(dim0 * globStoreWidth), builder.getContext());
   llvm::SmallVector<mlir::Value> srcOperands;
-  auto store = shiftBufferDatas(builder, src, dst, srcMap, map, srcOperands, operands, globStoreWidth, {globStoreNum});
+  auto store = shiftBufferDatas(builder, src, dst, srcMap, map, srcOperands, operands, globStoreWidth, {globStoreNum}, forDesc);
   return store;
 }
 
@@ -651,14 +674,14 @@ mlir::Value bufferCombine(std::vector<mlir::Value> buf1, std::vector<mlir::Value
   std::vector<std::pair<mlir::Value, int64_t>> bufAndOffsets;
   int64_t buf1Size = 0, buf2Size = 0;
   for (auto buf : buf1) {
-    auto bufType = buf.getType().dyn_cast<mlir::MemRefType>();
+    auto bufType = mlir::dyn_cast<mlir::MemRefType>(buf.getType());
     int64_t size = 1;
     for (auto shape : bufType.getShape()) { size *= shape; }
     buf1Size += size;
     bufAndOffsets.push_back(std::make_pair(buf, buf1Size - size));
   }
   for (auto buf : buf2) {
-    auto bufType = buf.getType().dyn_cast<mlir::MemRefType>();
+    auto bufType = mlir::dyn_cast<mlir::MemRefType>(buf.getType());
     int64_t size = 1;
     for (auto shape : bufType.getShape()) { size *= shape; }
     buf2Size += size;
@@ -667,7 +690,7 @@ mlir::Value bufferCombine(std::vector<mlir::Value> buf1, std::vector<mlir::Value
   int64_t maxBufSize = buf1Size > buf2Size ? buf1Size : buf2Size;
   // create new allocop
   mlir::OpBuilder b = getBuilder(buf1[0].getDefiningOp()->getParentOp(), Position::begin);
-  auto bufType = buf1[0].getType().dyn_cast<mlir::MemRefType>();
+  auto bufType = mlir::dyn_cast<mlir::MemRefType>(buf1[0].getType());
   auto memSpace = static_cast<MemorySpace>(bufType.getMemorySpaceAsInt());
   auto elementType = bufType.getElementType();
   mlir::Value newBuffer = createAllocOp(b, {maxBufSize}, elementType, memSpace, KCG_ALIGNBYTE, bufDesc);
@@ -978,16 +1001,19 @@ void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchFo
     auto regToSharedOps = collectInnerMostAllOps(shShPerfetchForOps[i]);
     if (globToRegOps.size() == regToSharedOps.size()) {  // 只有相等才是怎么取到reg的数据就怎么取到shared
 
-      mlir::affine::AffineVectorLoadOp rtsLoadOp, newLoadOp;
       for (auto op : globToRegOps) {
         if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
           for (auto op_ : regToSharedOps) {
             if (auto vectorLoadOp_ = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op_)) {
               auto ivs = collectNestedIvs(shShPerfetchForOps[i]);
+              auto regivs = collectNestedIvs(shRegPerfetchForOps[i]);
               // operands
+              if (ivs.size() > regivs.size()) {
+                break;
+              }
               auto oldOperands = vectorLoadOp.getMapOperands();
               llvm::SmallVector<mlir::Value> newOperands(oldOperands.begin(), oldOperands.end());
-              for (int i=0; i<ivs.size(); i++) {
+              for (int i=0; i<regivs.size(); i++) {
                 newOperands.erase(newOperands.end()-1);
               }
               for (auto iv : ivs) {

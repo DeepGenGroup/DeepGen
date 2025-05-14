@@ -127,12 +127,12 @@ mlir::AffineMap FlashAttnOptimizer::getTempToSmMap(mlir::OpBuilder& builder, con
 
 // ================================== sm to reg and calculate ====================================
 std::array<int64_t, 8> FlashAttnOptimizer::getSmCfgDatas(const std::string& bufType) {
-  int64_t blockLayoutY = cfg["BLOCK_LAYOUT_P_Y"], blockLayoutX = cfg["WARP_LAYOUT_P_X"];
+  int64_t blockLayoutY = cfg["BLOCK_LAYOUT_P_Y"], blockLayoutX = cfg["BLOCK_LAYOUT_P_X"];
   int64_t warpLayoutY = cfg["WARP_LAYOUT_P_Y"], warpLayoutX = cfg["WARP_LAYOUT_P_X"];
   int64_t blockScatterY = cfg["BLOCK_SCATTER_WIDTH_Q"], warpScatterY = cfg["WARP_SCATTER_WIDTH_Q"];
   int64_t blockScatterX = cfg["BLOCK_SCATTER_WIDTH_K"], warpScatterX = cfg["WARP_SCATTER_WIDTH_K"];
   if (bufType == "P" || bufType == "V") {
-    blockLayoutY = cfg["BLOCK_LAYOUT_O_Y"], blockLayoutX = cfg["WARP_LAYOUT_O_X"];
+    blockLayoutY = cfg["BLOCK_LAYOUT_O_Y"], blockLayoutX = cfg["BLOCK_LAYOUT_O_X"];
     warpLayoutY = cfg["WARP_LAYOUT_O_Y"], warpLayoutX = cfg["WARP_LAYOUT_O_X"];
     blockScatterY = cfg["BLOCK_SCATTER_WIDTH_P"], warpScatterY = cfg["WARP_SCATTER_WIDTH_P"];
     blockScatterX = cfg["BLOCK_SCATTER_WIDTH_V"], warpScatterX = cfg["WARP_SCATTER_WIDTH_V"];
@@ -149,11 +149,11 @@ mlir::AffineMap FlashAttnOptimizer::getSmQKVToRegQKVMap(mlir::OpBuilder& builder
   int64_t blockLayout, warpLayout, blockScatter, warpScatter;
   if (bufType == "Q") {
     widx = tools::mapUtils::wapr_y(dims[0], cfg["WARP_SIZE"], args[1]);
-    lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[1]);
+    lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[3]);
     blockLayout = args[0], warpLayout = args[2], blockScatter = args[4], warpScatter = args[6];    
   } else if (bufType == "K" || bufType == "V") {
     widx = tools::mapUtils::wapr_x(dims[0], cfg["WARP_SIZE"], args[1]);
-    lidx = tools::mapUtils::lane_x(dims[0], cfg["WARP_SIZE"], args[1]);
+    lidx = tools::mapUtils::lane_x(dims[0], cfg["WARP_SIZE"], args[3]);
     blockLayout = args[1], warpLayout = args[3], blockScatter = args[5], warpScatter = args[7];
   }
   llvm::SmallVector<mlir::AffineExpr> exprs;
@@ -163,16 +163,16 @@ mlir::AffineMap FlashAttnOptimizer::getSmQKVToRegQKVMap(mlir::OpBuilder& builder
 }
 
 mlir::AffineMap FlashAttnOptimizer::getSmPToRegPMap(mlir::OpBuilder& builder) {
-  // sm p to reg p（不能连续取）
+  // sm p to reg p（不能连续取，索引位置也是相反的）
   int dimCount = 6;
   auto dims = getExprs(builder, dimCount);  // {tid, kmid, bk, blockRepIter, warpRepIter, iter}
   auto args = getSmCfgDatas("P");
   int64_t blockLayout = args[0], warpLayout = args[2], blockScatter = args[4], warpScatter = args[6];
   mlir::AffineExpr widx = tools::mapUtils::wapr_y(dims[0], cfg["WARP_SIZE"], args[1]);
-  mlir::AffineExpr lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[1]);
+  mlir::AffineExpr lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[3]);
   llvm::SmallVector<mlir::AffineExpr> exprs;
-  exprs.push_back(dims[1] + dims[2]);
   exprs.push_back((dims[3] * blockLayout + widx) * warpLayout * blockScatter + (dims[4] * warpLayout + lidx) * warpScatter + dims[5]);
+  exprs.push_back(dims[1] + dims[2]);
   return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext()); 
 }
 
@@ -183,7 +183,7 @@ mlir::AffineMap FlashAttnOptimizer::getSmToRegUpdateTtileOMap(mlir::OpBuilder& b
   auto args = getSmCfgDatas("P");
   int64_t blockLayout = args[0], warpLayout = args[2], blockScatter = args[4], warpScatter = args[6];
   mlir::AffineExpr widx = tools::mapUtils::wapr_y(dims[0], cfg["WARP_SIZE"], args[1]);
-  mlir::AffineExpr lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[1]);
+  mlir::AffineExpr lidx = tools::mapUtils::lane_y(dims[0], cfg["WARP_SIZE"], args[3]);
   auto expr = (dims[1] * blockLayout + widx) * warpLayout * blockScatter + (dims[2] * warpLayout + lidx) * warpScatter;
   return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), builder.getContext()); 
 }
@@ -250,14 +250,14 @@ mlir::AffineMap FlashAttnOptimizer::getTileOToGlobOMap(mlir::OpBuilder& builder)
   auto lane_x = tools::mapUtils::lane_x(dims[3], cfg["WARP_SIZE"], cfg["WARP_LAYOUT_O_X"]);
   // create exprs
   auto ty = (dims[4] * cfg["BLOCK_LAYOUT_O_Y"] + warp_y * cfg["BLOCK_SCATTER_WIDTH_P"]) * cfg["WARP_LAYOUT_O_Y"] + 
-             dims[5] * cfg["WARP_LAYOUT_O_Y"] + lane_y * cfg["WARP_SCATTER_WIDTH_P"] + dims[8];
-  auto tx = (dims[6] * cfg["BLOCK_LAYOUT_O_X"] + warp_x * cfg["BLOCK_SCATTER_WIDTH_V"]) * cfg["WARP_LAYOUT_O_X"] + 
+             dims[6] * cfg["WARP_LAYOUT_O_Y"] + lane_y * cfg["WARP_SCATTER_WIDTH_P"] + dims[8];
+  auto tx = (dims[5] * cfg["BLOCK_LAYOUT_O_X"] + warp_x * cfg["BLOCK_SCATTER_WIDTH_V"]) * cfg["WARP_LAYOUT_O_X"] + 
              dims[7] * cfg["WARP_LAYOUT_O_X"] + lane_x * cfg["WARP_SCATTER_WIDTH_V"] + dims[9];
   
   llvm::SmallVector<mlir::AffineExpr> exprs;
   exprs.push_back(dims[0]);
   exprs.push_back(dims[1]);
-  exprs.push_back(dims[3] + ty);
+  exprs.push_back(dims[2] + ty);
   exprs.push_back(tx);
   return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext()); 
 }
@@ -282,7 +282,7 @@ mlir::AffineMap FlashAttnOptimizer::getBlockLevelRegMap(mlir::OpBuilder& builder
   int dimCount = 3;  // {blockrepeatq, warprepeatq, width}
   auto dims = getExprs(builder, dimCount);
   int64_t blockScatter = cfg["BLOCK_SCATTER_WIDTH_Q"], warpScatter = cfg["WARP_SCATTER_WIDTH_Q"];
-  mlir::AffineExpr expr = dims[0] * blockScatter + dims[1] * warpScatter + dims[2];
+  mlir::AffineExpr expr = dims[0] + dims[1] + dims[2];
   return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), builder.getContext()); 
 }
 
@@ -330,11 +330,11 @@ void FlashAttnOptimizer::computeTuneArgs() {
 
 void FlashAttnOptimizer::parseFuncArgs(mlir::func::FuncOp funcOp) {
   // 解析kernel函数的参数基本信息
-  typeQ = Q.getType().dyn_cast<mlir::MemRefType>();
-  typeK = K.getType().dyn_cast<mlir::MemRefType>();
-  typeV = V.getType().dyn_cast<mlir::MemRefType>();
-  typeO = O.getType().dyn_cast<mlir::MemRefType>();
-  typeMid = midBuf.getType().dyn_cast<mlir::MemRefType>();
+  typeQ = mlir::dyn_cast<mlir::MemRefType>(Q.getType());
+  typeK = mlir::dyn_cast<mlir::MemRefType>(K.getType());
+  typeV = mlir::dyn_cast<mlir::MemRefType>(V.getType());
+  typeO = mlir::dyn_cast<mlir::MemRefType>(O.getType());
+  typeMid = mlir::dyn_cast<mlir::MemRefType>(midBuf.getType());
   // get transpose args
   std::vector<bool> isTrans;
   auto transArr = funcOp->getAttr(ARGTRAN);
@@ -473,7 +473,7 @@ void FlashAttnOptimizer::updateTileO(mlir::Operation* localtionOp, mlir::Value s
   // create load and store smFactor to regFactor
   builder.setInsertionPointAfter(localtionOp);
   if (bufDesc != "regFactor") { builder.setInsertionPoint(localtionOp); }
-  llvm::SmallVector<int64_t> lbs{0, 0}, ubs{blockRepeatP, warpRepeatP}, steps{1, 1};
+  llvm::SmallVector<int64_t> lbs{0, 0}, ubs{this->blockRepeatP, this->warpRepeatP}, steps{1, 1};
   auto [newForOps, newIvs] = createNestedLoops(builder, lbs, ubs, steps);
   builder.setInsertionPointToStart(newForOps.back().getBody());
   // create load and store
@@ -538,7 +538,8 @@ void FlashAttnOptimizer::updateTileO(mlir::Operation* localtionOp, mlir::Value s
     Rewriter::reorder({ps_outer, vs_outer, ps_midder, vs_midder, ps_inner, vs_inner});
     auto storeTileOMap = getTileOToGlobOMap(builder);
     auto bivs = this->blockIdx.getIVs();
-    llvm::SmallVector<mlir::Value> rtsOperands(bivs.rbegin(), bivs.rend());
+    llvm::SmallVector<mlir::Value> rtsOperands(bivs.rbegin(), bivs.rend()-1);
+    rtsOperands.push_back(byIdx);
     rtsOperands.push_back(this->threadIdx.getIVs()[0]);
     for (int i=0; i<3; i++) {
       rtsOperands.push_back(ps[i].getInductionVar());
@@ -590,14 +591,14 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   auto loadTileKMap = getGlobQKToTempQKMap(builder, "K");
   llvm::SmallVector<mlir::Value> gttoperands(operands);
   gttoperands.push_back(k1_outer.getInductionVar());   // {b1, b2, by, bx, tid, k}
-  auto loadTileQ = Rewriter::loadToRegisters(Q, tempQ, loadTileQMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_Q"]}, k1_outer, Position::begin);
-  auto loadTileK = Rewriter::loadToRegisters(K, tempK, loadTileKMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_K"]}, loadTileQ, Position::after);
+  auto loadTileQ = Rewriter::loadToRegisters(Q, tempQ, loadTileQMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_Q"]}, k1_outer, Position::begin, "");
+  auto loadTileK = Rewriter::loadToRegisters(K, tempK, loadTileKMap, gttoperands, {cfg["GLOB_LOAD_WIDTH_K"]}, loadTileQ, Position::after, "");
   LOG_DEBUG("===== after read Q/K =======\n",module);
   // temp reg load to sm
   auto storeTileQMap = getTempToSmMap(builder, "Q");
   auto storeTileKMap = getTempToSmMap(builder, "K");   // {tid, iter}
-  auto storeTileQ = Rewriter::loadFromRegisters(tempQ, smQ, storeTileQMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_Q"]}, loadTileK, Position::after);
-  auto storeTileK = Rewriter::loadFromRegisters(tempK, smK, storeTileKMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_K"]}, storeTileQ, Position::after);
+  auto storeTileQ = Rewriter::loadFromRegisters(tempQ, smQ, storeTileQMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_Q"]}, loadTileK, Position::after, "");
+  auto storeTileK = Rewriter::loadFromRegisters(tempK, smK, storeTileKMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_K"]}, storeTileQ, Position::after, "");
   auto prefix = Rewriter::barrier(loadTileQ, Position::before);
   auto suffix = Rewriter::barrier(storeTileK, Position::after);
   LOG_DEBUG("===== write Q/K =======\n",module);
@@ -607,8 +608,8 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   llvm::SmallVector<mlir::Value> stroperands{tIdx[0], k1_inner.getInductionVar()};  
   std::vector<int64_t> widthsQ{cfg["BLOCK_SCATTER_WIDTH_Q"], cfg["WARP_SCATTER_WIDTH_Q"]};
   std::vector<int64_t> widthsK{cfg["BLOCK_SCATTER_WIDTH_K"], cfg["WARP_SCATTER_WIDTH_K"]};
-  auto loadFragQ = Rewriter::loadToRegisters(smQ, regQ, loadFragQMap, stroperands, widthsQ, k1_inner, Position::begin);
-  auto loadFragK = Rewriter::loadToRegisters(smK, regK, loadFragKMap, stroperands, widthsK, loadFragQ, Position::after);
+  auto loadFragQ = Rewriter::loadToRegisters(smQ, regQ, loadFragQMap, stroperands, widthsQ, k1_inner, Position::begin, "");
+  auto loadFragK = Rewriter::loadToRegisters(smK, regK, loadFragKMap, stroperands, widthsK, loadFragQ, Position::after, "");
   LOG_DEBUG("===== read sh_Q/K =======\n",module);
   // Calculate 
   auto calMap = getCalculateMap(builder, "matmul");  // {iter}
@@ -624,7 +625,9 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   LOG_DEBUG("===== separateNoOpRelyForOp =======\n",module);
 
   // 2.定义smmax和smsum以及rowsum和rowmax，以及将它们进行初始化
-  auto [smMaxAndSum, regMaxAndSum] = Rewriter::createSMAndRegInitBuf(initBufFor, blockIdx, xBlockFors[0], {cfg["Br"]}, {cfg["PTr"]});
+  auto smMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["Br"]}, threadIdx, MemorySpace::shared);
+  auto regMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["PTr"]}, xBlockFors[0], MemorySpace::local);
+  // auto [smMaxAndSum, regMaxAndSum] = Rewriter::createSMAndRegInitBuf(initBufFor, blockIdx, xBlockFors[0], {cfg["Br"]}, {cfg["PTr"]});
   auto smMax = smMaxAndSum[0], smSum = smMaxAndSum[1], regMax = regMaxAndSum[0], regSum = regMaxAndSum[1];
   LOG_DEBUG("===== createSMAndRegInitBuf =======\n",module);
 
@@ -692,11 +695,11 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   auto loadTileVMap = getGlobVToTempVMap(builder);
   llvm::SmallVector<mlir::Value> gvoperands(bIdx.begin(), bIdx.end()-1);  // {b1, b2, bx, tid, k}
   gvoperands.push_back(xBlockFor.getInductionVar()); gvoperands.push_back(tIdx[0]); gvoperands.push_back(k2_midder.getInductionVar());
-  auto loadTileV = Rewriter::loadToRegisters(V, tempV, loadTileVMap, gvoperands, {cfg["GLOB_LOAD_WIDTH_V"]}, k2_midder, Position::begin);
+  auto loadTileV = Rewriter::loadToRegisters(V, tempV, loadTileVMap, gvoperands, {cfg["GLOB_LOAD_WIDTH_V"]}, k2_midder, Position::begin, "");
   LOG_DEBUG("===== after read V =======\n",module);
   // temp reg load to sm
   auto storeTileVMap = getTempToSmMap(builder, "V");   // {tid, iter}
-  auto storeTileV = Rewriter::loadFromRegisters(tempV, smV, storeTileVMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_V"]}, loadTileV, Position::after);
+  auto storeTileV = Rewriter::loadFromRegisters(tempV, smV, storeTileVMap, {tIdx[0]}, {cfg["GLOB_LOAD_WIDTH_V"]}, loadTileV, Position::after, "");
   auto prefix_ = Rewriter::barrier(loadTileV, Position::before);
   auto suffix_ = Rewriter::barrier(storeTileV, Position::after);
   LOG_DEBUG("===== write V =======\n",module);
@@ -705,19 +708,22 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   auto loadFragVMap = getSmQKVToRegQKVMap(builder, "V");
   llvm::SmallVector<mlir::Value> spoperands{tIdx[0], k2_midder.getInductionVar(), k2_inner.getInductionVar()};  // {tid, kmid, bk, blockRepIter, warpRepIter} 
   llvm::SmallVector<mlir::Value> svoperands{tIdx[0], k2_inner.getInductionVar()};  // {tid, bk, blockRepIter, warpRepIter}
-  std::vector<int64_t> widthsP{cfg["BLOCK_SCATTER_WIDTH_P"], cfg["WARP_SCATTER_WIDTH_P"], };
+  std::vector<int64_t> widthsP{cfg["BLOCK_SCATTER_WIDTH_P"], cfg["WARP_SCATTER_WIDTH_P"]};
   std::vector<int64_t> widthsV{cfg["BLOCK_SCATTER_WIDTH_V"], cfg["WARP_SCATTER_WIDTH_V"]};
-  auto loadFragP = Rewriter::loadToRegisters(smP, regP, loadFragPMap, spoperands, widthsP, k2_inner, Position::begin);
-  auto loadFragV = Rewriter::loadToRegisters(smV, regV, loadFragVMap, svoperands, widthsV, loadFragP, Position::after);
+  auto loadFragP = Rewriter::loadToRegisters(smP, regP, loadFragPMap, spoperands, widthsP, k2_inner, Position::begin, "");
+  auto loadFragV = Rewriter::loadToRegisters(smV, regV, loadFragVMap, svoperands, widthsV, loadFragP, Position::after, "");
   LOG_DEBUG("===== read sh_P/V =======\n",module);
   // Calculate 
   calMap = getCalculateMap(builder, "matmul");  // {iter}
-  Rewriter::cache_read(xTileForOps[2], midBuf, regP, calMap, {xBlockFor.getInductionVar()});
+  Rewriter::cache_read(xTileForOps[2], midBuf, regP, calMap, {yTileForOps[2].getInductionVar()});
   Rewriter::cache_read(xTileForOps[2], V, regV, calMap, {xTileForOps[2].getInductionVar()});
   LOG_DEBUG("===== load regV/P & cache_read =======\n",module);
 
   updateTileO(tyds.back(), smSum, tileO[0], "ORegSum");
   LOG_DEBUG("===== update last TileO =======\n",module);
+
+  // Rewriter::unrollAttribute(module, cfg["UNROLL_NUM"]);
+  // LOG_DEBUG("===== unrollAttribute =======\n",module);
 }
 
 }

@@ -23,7 +23,7 @@ std::vector<int64_t> getParallelNumber(mlir::affine::AffineParallelOp parallelLe
     auto map = parallelLevel.getUpperBoundMap(i);
     auto exprs = map.getResults();
     assert(exprs.size() == 1);
-    auto constExpr = exprs[0].dyn_cast<mlir::AffineConstantExpr>();
+    auto constExpr = mlir::dyn_cast<mlir::AffineConstantExpr>(exprs[0]);
     assert(constExpr);
     totalNumber *= constExpr.getValue();
     result.push_back(constExpr.getValue());
@@ -43,7 +43,7 @@ std::map<std::string, std::string> collectNameTypeMap(mlir::ModuleOp& module) {
   std::map<std::string, std::string> ntMap;
   module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto type = funcOp->getAttr(std::string("func.op.type"));
-    auto typeAttr = type.dyn_cast<mlir::StringAttr>();
+    auto typeAttr = mlir::dyn_cast<mlir::StringAttr>(type);
     ntMap[funcOp.getName().str()] = typeAttr.getValue().str();
   });
   return ntMap;
@@ -53,7 +53,7 @@ std::set<std::string> collectFuncTypes(mlir::ModuleOp& module) {
   std::set<std::string> result;
   module.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
     auto type = funcOp->getAttr(std::string("func.op.type"));
-    auto typeAttr = type.dyn_cast<mlir::StringAttr>();
+    auto typeAttr = mlir::dyn_cast<mlir::StringAttr>(type);
     result.insert(typeAttr.getValue().str()); 
   });
   return result;
