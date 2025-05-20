@@ -28,9 +28,9 @@ struct CompareFunc {
   }
 };
 
-struct BufferCompare {
-  bool operator()(const mlir::Value& buf0, const mlir::Value& buf1) const {
-    return buf0.getAsOpaquePointer() < buf1.getAsOpaquePointer();
+struct ValueCompare {
+  bool operator()(const mlir::Value& val0, const mlir::Value& val1) const {
+    return val0.getAsOpaquePointer() < val1.getAsOpaquePointer();
   }
 };
 

@@ -1,0 +1,193 @@
+#include <iostream>
+#include <string>
+#include <vector>
+#include "KernelCodeGen.h"
+#include <stdio.h>
+#include <stdlib.h>
+#include "Common/Utils.h"
+#include "Python.h"
+
+using namespace KernelCodeGen;
+
+using TuneConfig = std::map<std::string, std::map<std::string, int64_t>>;
+
+std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
+  auto attn = config.at("attention1");
+  std::map<std::string, std::map<std::string, int64_t>> tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
+                 {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}}, 
+    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
+                 {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")}, 
+                 {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+
+  KernelCodeGenerator generator(Target::CUDA, "");
+  mlir::ModuleOp module = generator.createModule();
+  std::vector<KernelData> kds;
+  std::vector<FuseKernelData> fkds;
+
+// ======  kernel  ======
+  KernelData kd1, kd2, kd3;
+  // matmul1
+  kd1.name = "matmul1";
+  kd1.type = "Matmul";
+  kd1.argNames = {"A1", "B1", "C1"};
+  kd1.shapes = {{shape[0], shape[1], shape[3], shape[2]}, 
+                {shape[0], shape[1], shape[3], shape[2]}, 
+                {shape[0], shape[1], shape[2], shape[2]}};
+  kd1.dtypes = {"float32", "float32", "float32"};
+  kd1.isTrans = {true, false};
+  kd1.outputArgNum = 1;
+  kds.push_back(kd1);
+  //Softmax1
+  kd2.name = "softmax1";
+  kd2.type = "Softmax";
+  kd2.argNames = {"C1", "C2"};
+  kd2.shapes = {{shape[0], shape[1], shape[2], shape[2]}, 
+                {shape[0], shape[1], shape[2], shape[2]}};
+  kd2.dtypes = {"float32", "float32"};
+  kd2.isTrans = {false};
+  kd2.outputArgNum = 1;
+  kds.push_back(kd2);
+  // matmul2
+  kd3.name = "matmul2";
+  kd3.type = "Matmul";
+  kd3.argNames = {"C2", "B2", "C3"};
+  kd3.shapes = {{shape[0], shape[1], shape[2], shape[2]}, shape, shape};
+  kd3.dtypes = {"float32", "float32", "float32"};
+  kd3.isTrans = {false, false};
+  kd3.outputArgNum = 1;
+  kds.push_back(kd3);
+
+  // ======  fuse kernel  ======
+  FuseKernelData fkd = {
+    "attention1",
+    "FlashAttn",
+    {"matmul1", "softmax1", "matmul2"},
+    {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]},
+    {kd1.shapes[2]},
+    {"float32", "float32", "float32", "float32"},
+    {"float32"},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {{"matmul2", {2}}}}, 
+    {{{"matmul1", {2}}, {"softmax1", {0, 1}} , {"matmul2", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1], kd3.isTrans[1]},
+    {"y"},
+    1
+  };
+  fkds.push_back(fkd);
+
+  // create kernels
+  auto noSupKernels = generator.createKernels(module, kds);
+  // fusing
+  auto result = generator.fusing(module, fkds);
+  // mpping
+  result = generator.mapping(module, tileConfig);
+  // optimize
+  generator.optimize(module, config);
+  // lowering
+  generator.lowering(module);
+  // translate
+  auto path = generator.translate(module);
+  return path;
+}
+
+
+static bool py_list_to_vector(PyObject* py_list, std::vector<int64_t>& vec) {
+  // list to vector
+  if (!PyList_Check(py_list)) {
+    PyErr_SetString(PyExc_TypeError, "Expected a list");
+    return false;
+  }
+  Py_ssize_t size = PyList_Size(py_list);
+  vec.resize(size);
+  for (Py_ssize_t i = 0; i < size; ++i) {
+    PyObject* item = PyList_GetItem(py_list, i);
+    if (!PyLong_Check(item)) {
+      PyErr_SetString(PyExc_TypeError, "List items must be integers");
+      return false;
+    }
+    vec[i] = PyLong_AsLongLong(item);
+  }
+  return true;
+}
+
+
+static bool py_dict_to_config(PyObject* py_dict, TuneConfig& config) {
+  // dict to config
+  if (!PyDict_Check(py_dict)) {
+    PyErr_SetString(PyExc_TypeError, "Expected a dictionary");
+    return false;
+  }
+  PyObject *key, *value;
+  Py_ssize_t pos = 0;
+  while (PyDict_Next(py_dict, &pos, &key, &value)) {
+    if (!PyUnicode_Check(key)) {
+      PyErr_SetString(PyExc_TypeError, "Dictionary keys must be strings");
+      return false;
+    }
+    if (!PyDict_Check(value)) {
+      PyErr_SetString(PyExc_TypeError, "Expected nested dictionary");
+      return false;
+    }
+    const char* outer_key = PyUnicode_AsUTF8(key);
+    std::map<std::string, int64_t> inner_map;
+    PyObject *inner_key, *inner_value;
+    Py_ssize_t inner_pos = 0;
+    while (PyDict_Next(value, &inner_pos, &inner_key, &inner_value)) {
+      if (!PyUnicode_Check(inner_key)) {
+        PyErr_SetString(PyExc_TypeError, "Nested dictionary keys must be strings");
+        return false;
+      }
+      if (!PyLong_Check(inner_value)) {
+        PyErr_SetString(PyExc_TypeError, "Nested dictionary values must be integers");
+        return false;
+      }
+      const char* key_str = PyUnicode_AsUTF8(inner_key);
+      int64_t val = PyLong_AsLongLong(inner_value);
+      inner_map[key_str] = val;
+    }
+      config[outer_key] = inner_map;
+    }
+  return true;
+}
+
+
+static PyObject* py_compile_attn(PyObject* self, PyObject* args) {
+  // bind compile_attn func
+  PyObject* py_shape;
+  PyObject* py_config;
+  if (!PyArg_ParseTuple(args, "OO", &py_shape, &py_config)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) {
+    return NULL;
+  }
+  if (!py_dict_to_config(py_config, config)) {
+    return NULL;
+  }
+  std::string result = compile_attn(shape, config);
+  return PyUnicode_FromString(result.c_str());
+}
+
+// 方法定义
+static PyMethodDef AttentionMethods[] = {
+    {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
+    {NULL, NULL, 0, NULL}
+};
+
+// 模块定义
+static struct PyModuleDef attentionmodule = {
+  PyModuleDef_HEAD_INIT,
+  "attention",
+  NULL,
+  -1,
+  AttentionMethods
+};
+
+// 模块初始化
+PyMODINIT_FUNC PyInit_attention(void) {
+  return PyModule_Create(&attentionmodule);
+}

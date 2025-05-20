@@ -462,33 +462,61 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   Rewriter::vectorize(n_inner_2, cfg["WARP_SCATTER_WIDTH_N"]);
   LOG_DEBUG("===== vectorize =======\n",module);
   
+  // mlir::affine::AffineForOp regRearForOp;
+  // std::vector<mlir::affine::AffineForOp> shPerfetchRegForOp, perfetchSharedForOp, regPerfetchRegForOp;
+  // if (cfg["SHARED_PREFETCH"]) {
+  //   std::vector<mlir::affine::AffineForOp> shLoadRegForOps{loadTileA, loadTileB}, loadSharedForOps{storeTileA, storeTileB};
+  //   std::vector<mlir::Value> smBufs{smA, smB};
+  //   auto shResult = Rewriter::sharedMemroyPrefetch(k_outer, shLoadRegForOps, loadSharedForOps, k_mider, smBufs);
+  //   smA = shResult.first[smA], smB = shResult.first[smB];
+  //   shPerfetchRegForOp = shResult.second.first;
+  //   perfetchSharedForOp = shResult.second.second;
+  //   loadTileA = shLoadRegForOps[0], loadTileB = shLoadRegForOps[1];
+  //   storeTileA = loadSharedForOps[0], storeTileB = loadSharedForOps[1];
+  //   LOG_DEBUG("===== sharedMemroyPrefetch =======\n",module);
+  // }
+
+  // if (cfg["REG_PREFETCH"]) {
+  //   std::vector<mlir::affine::AffineForOp> regLoadRegForOps{loadFragA, loadFragB};
+  //   std::vector<mlir::Value> regBufs{regA, regB};
+  //   auto regResult = Rewriter::registersPrefetch(k_mider, regLoadRegForOps, yTileForOp, regBufs);
+  //   regA = regResult.first[regA], regB = regResult.first[regB];
+  //   regPerfetchRegForOp = regResult.second.first;
+  //   regRearForOp = regResult.second.second;
+  //   loadFragA = regLoadRegForOps[0], loadFragB = regLoadRegForOps[1];
+  //   LOG_DEBUG("===== registersPrefetch =======\n",module);
+  // }
+
+  // if (cfg["SHARED_PREFETCH"] && cfg["REG_PREFETCH"]) {
+  //   Rewriter::doublePerfetchAdjust(perfetchSharedForOp, shPerfetchRegForOp, regPerfetchRegForOp, regRearForOp, {smA, smB}, {regA, regB});
+  //   LOG_DEBUG("===== doublePerfetchAdjust =======\n",module);
+  // }
+
   mlir::affine::AffineForOp regRearForOp;
-  std::vector<mlir::affine::AffineForOp> shPerfetchRegForOp, perfetchSharedForOp, regPerfetchRegForOp;
+  std::vector<mlir::affine::AffineForOp> pfLdRegForOps, pfLdSMForOps, pfLdRegForOps_;
   if (cfg["SHARED_PREFETCH"]) {
-    std::vector<mlir::affine::AffineForOp> shLoadRegForOps{loadTileA, loadTileB}, loadSharedForOps{storeTileA, storeTileB};
+    std::vector<mlir::affine::AffineForOp> LdRegForOps{loadTileA, loadTileB}, ldSMForOps{storeTileA, storeTileB};
     std::vector<mlir::Value> smBufs{smA, smB};
-    auto shResult = Rewriter::sharedPrefetch(k_outer, shLoadRegForOps, loadSharedForOps, k_mider, smBufs);
-    smA = shResult.first[smA], smB = shResult.first[smB];
-    shPerfetchRegForOp = shResult.second.first;
-    perfetchSharedForOp = shResult.second.second;
-    loadTileA = shLoadRegForOps[0], loadTileB = shLoadRegForOps[1];
-    storeTileA = loadSharedForOps[0], storeTileB = loadSharedForOps[1];
-    LOG_DEBUG("===== sharedPrefetch =======\n",module);
+    auto smResult = Rewriter::sharedMemroyPrefetch(k_outer, LdRegForOps, ldSMForOps, k_mider, smBufs);
+    smA = smBufs[0], smB = smBufs[1];
+    loadTileA = LdRegForOps[0], loadTileB = LdRegForOps[1];
+    storeTileA = ldSMForOps[0], storeTileB = ldSMForOps[1];
+    pfLdRegForOps = smResult.first; pfLdSMForOps = smResult.second;
+    LOG_DEBUG("===== sharedMemroyPrefetch =======\n",module);
   }
 
   if (cfg["REG_PREFETCH"]) {
-    std::vector<mlir::affine::AffineForOp> regLoadRegForOps{loadFragA, loadFragB};
+    std::vector<mlir::affine::AffineForOp> regLdRegForOps{loadFragA, loadFragB};
     std::vector<mlir::Value> regBufs{regA, regB};
-    auto regResult = Rewriter::registersPrefetch(k_mider, regLoadRegForOps, yTileForOp, regBufs);
-    regA = regResult.first[regA], regB = regResult.first[regB];
-    regPerfetchRegForOp = regResult.second.first;
-    regRearForOp = regResult.second.second;
-    loadFragA = regLoadRegForOps[0], loadFragB = regLoadRegForOps[1];
+    auto regResult = Rewriter::registersPrefetch(k_mider, regLdRegForOps, yTileForOp, regBufs);
+    regA = regBufs[0], regB = regBufs[1];
+    loadFragA = regLdRegForOps[0], loadFragB = regLdRegForOps[1];
+    pfLdRegForOps_ = regResult.first; regRearForOp = regResult.second;
     LOG_DEBUG("===== registersPrefetch =======\n",module);
   }
 
   if (cfg["SHARED_PREFETCH"] && cfg["REG_PREFETCH"]) {
-    Rewriter::doublePerfetchAdjust(perfetchSharedForOp, shPerfetchRegForOp, regPerfetchRegForOp, regRearForOp, {smA, smB}, {regA, regB});
+    Rewriter::doubleBufferAdjust(pfLdSMForOps, pfLdRegForOps, pfLdRegForOps_, regRearForOp);
     LOG_DEBUG("===== doublePerfetchAdjust =======\n",module);
   }
 

@@ -454,7 +454,7 @@ int main() {
 
   // 加载.cubin模块
   CUmodule module;
-  CUresult result = cuModuleLoad(&module, "/tmp/compile-ptx-src-c0476f.cubin");
+  CUresult result = cuModuleLoad(&module, "/tmp/compile-ptx-src-e15e91.cubin");
   if (result != CUDA_SUCCESS) {
     std::cerr << "Failed to load module: " << result << std::endl;
     return -1;
@@ -529,7 +529,7 @@ int main() {
 
   cudaError_t err;
   void* args[] = {&d_Q, &d_K, &d_V, &d_O_};
-  cuLaunchKernel(kernel, 2, 1, 1, 256, 1, 1, 33536, 0, args, NULL);
+  cuLaunchKernel(kernel, 2, 1, 1, 256, 1, 1, 41728, 0, args, NULL);
   err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
       printf("设备同步失败: %s\n", cudaGetErrorString(err));

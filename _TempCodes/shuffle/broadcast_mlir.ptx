@@ -30,7 +30,7 @@
 	mul.wide.s32 	%rd2, %r14, 4;
 	add.s64 	%rd3, %rd1, %rd2;
 	ld.global.f32 	%f1, [%rd3];
-	shfl.sync.idx.b32	%f2, %f1, 0, 4127, 65535;
+	shfl.sync.idx.b32	%f2, %f1, 0, 15, 65535;
 	st.global.f32 	[%rd3], %f2;
 	ret;
 

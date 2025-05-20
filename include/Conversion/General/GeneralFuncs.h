@@ -151,16 +151,16 @@ mlir::AffineExpr shiftUpTargetExprDim(mlir::OpBuilder builder,
 
 mlir::AffineMap addDimToLastExprInMap(mlir::OpBuilder builder, mlir::AffineMap oldMap);
 
+mlir::AffineMap insertExprToMap(mlir::OpBuilder builder, 
+                                mlir::AffineMap oldMap, 
+                                mlir::AffineExpr expr, 
+                                int index);
+
 mlir::AffineExpr replaceExprInExpr(mlir::OpBuilder builder, 
                                  mlir::AffineExpr inExpr, 
                                  mlir::AffineExpr replaceExpr, 
                                  int targetDim, 
                                  int replaceNumberDims);
-
-mlir::AffineMap replaceExprInMap_(mlir::OpBuilder builder, 
-                               mlir::AffineMap oldMap, 
-                               mlir::AffineExpr replaceExpr, 
-                               int targetDim);
 
 mlir::AffineMap replaceExprInMap(mlir::OpBuilder builder, 
                                mlir::AffineMap oldMap, 
@@ -258,134 +258,86 @@ mlir::AffineMap getOneDimMap(AffineMemoryOp memOp, int64_t offset) {
   return mlir::AffineMap::get(memOp.getMapOperands().size(), 0, llvm::ArrayRef<mlir::AffineExpr>({oneDimExpr}), builder.getContext());
 }
 
-template <typename AffineMemoryOp>
-int countOtherOperandNum(AffineMemoryOp loadOrStoreOp, int newLoopIvsSize) {
-  // 检查 load 或者 store op 中operands除了新建的循环的变量和block或者thread的变量外，还有几个其他的变量
-  int num = 0;
-  auto operands = loadOrStoreOp.getMapOperands();
-  for (int i=0; i<operands.size()-newLoopIvsSize; i++) {
-    auto bkv = mlir::dyn_cast<mlir::BlockArgument>(operands[i]);
-    mlir::Operation* op = bkv.getOwner()->getParentOp();
-    if (auto parallelOp = mlir::dyn_cast<mlir::affine::AffineParallelOp>(op)) {
-      continue;
-    } else {
-      num++;
-    }
-  }
-  return num;
-}
+// ======================================= double bffer =========================================
+
+enum class ShiftType {
+  GTRInner = 0,
+  GTRPrefetch = 1,
+  RTSInner = 2,
+  RTSPrefetch = 3,
+  STRInner = 4,
+  STRPrefetch = 5,
+};
 
 template <typename loadOrStoreOp>
 std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
-  getPerfetchMapDatas(mlir::OpBuilder builder, 
+  getDataShiftMapInfos(mlir::OpBuilder builder, 
                       loadOrStoreOp lSOp, 
-                      std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps, 
-                      std::vector<mlir::Value> newLoopIvs, 
-                      mlir::Value mainIv, 
+                      const std::map<mlir::Value, mlir::Value, ValueCompare>& bufMap,      // {sm1, sm2} / {reg1, reg2}
+                      const std::map<mlir::Value, mlir::Value, ValueCompare>& allIvsMap,   // {oldiv0 : newiv0, oldiv1 : newiv1, ...}
+                      const std::pair<mlir::Value, mlir::Value>& forKIv,
+                      ShiftType sType,
                       mlir::AffineExpr addExpr) {
-
-  // 这个会对数据转移的load或者store op (也就是forOp中的load和store)进行分析，获取到load或者store op 的map，operands和buf
-  // 大类分为两种形式：
-  // 1. shared memory的double buffer (在两种forOp中完成，glob->reg; reg->shared)
-  // (1) 将数据从glob取到temp的reg中：不是预取(glob map不需要修改，operands的forK变量修改，buf不改)；是预取(glob map设置forK为0，operands去除forK的变量，buf不变)；temp reg只需要修改operands即可
-  // (2) 将数据从temp的reg中取到shared中：不是预取(shared map添加一个expr，operands添加forK变量，buf为double buf)；是预取(expr为0，operands不需要forK，buf为double buf)；temp reg同上
-  // 2. registers的double buffer (在一种forOp中完成，shared->reg)
-  // (1) 将数据从shared取到reg中：
-  // new datas
+  /* 计算以下部分的map信息（数据移动）
+   1. glob to reg (if/inner)
+   2. reg to sm (if/inner)
+   3. glob to reg (prefetch/outer)
+   4. reg to sm (prefetch/outer)
+   5. sm to reg (inner)
+   6. sm to reg (prefetch/outer)
+  */
+  // memory access type
+  bool isLoadOp = false;
+  auto opName = lSOp.getOperationName();
+  if (opName == "affine.load" || opName == "affine.vector_load") {
+    isLoadOp = true;
+  }
+  // new datas / old datas
+  mlir::Value newBuf, buf = lSOp.getMemref();
+  mlir::AffineMap newMap, map = lSOp.getAffineMap();
+  newBuf = buf; newMap = map;
+  // 替换掉所有的shift for iv
   std::vector<mlir::Value> newOperands;
-  mlir::AffineMap newMap;
-  mlir::Value newBuf;
-
-  // old datas
-  auto buf = lSOp.getMemref();
-  auto map = lSOp.getAffineMap();
-  auto operands = lSOp.getMapOperands();
-
-  if (bufMaps.count(buf)) {  // 如果lsop的buf在bufmaps中，则为需要进行double buf的load 或者 store op
-    newBuf = bufMaps[buf];
-    if (!mainIv) {  // 预取
-      // operands
-      for (auto i=0; i<operands.size() - newLoopIvs.size(); i++) {
-        newOperands.push_back(operands[i]);
-      }
-      for (auto newLoopIv : newLoopIvs) {
-        newOperands.push_back(newLoopIv);
-      }
-      // map
-      llvm::SmallVector<mlir::AffineExpr> newExprs;
-      for (auto oldExpr : map.getResults()) {
-        newExprs.push_back(oldExpr);
-      }
-      newExprs.insert(newExprs.begin(), builder.getAffineConstantExpr(0));
-      newMap = mlir::AffineMap::get(map.getNumDims(), 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
-    } else {  // 非预取
-      // operands
-      int otherOperandNum = countOtherOperandNum(lSOp, newLoopIvs.size());
-      // llvm::outs() << otherOperandNum << "\n";
-      // otherOperandNum = 0;
-      int otherIndex = operands.size() - newLoopIvs.size() - otherOperandNum;
-      for (int i=0; i<otherIndex; i++) {
-        newOperands.push_back(operands[i]);
-      }
-      newOperands.push_back(mainIv);
-      for (int i=otherIndex; i<operands.size() - newLoopIvs.size(); i++) {
-        newOperands.push_back(operands[i]);
-      }
-      for (auto newLoopIv : newLoopIvs) {
-        newOperands.push_back(newLoopIv);
-      }
-      // map
-      llvm::SmallVector<mlir::AffineExpr> newExprs;
-      auto addExprDim = map.getNumDims() - newLoopIvs.size() - otherOperandNum;
-      addExpr = shiftExprDim(builder, addExpr, addExprDim);
-      newExprs.push_back(addExpr);
-      for (auto oldExpr : map.getResults()) {
-        auto newExpr = shiftUpTargetExprDim(builder, oldExpr, addExprDim, 1);
-        newExprs.push_back(newExpr);
-      }
-      newMap = mlir::AffineMap::get(map.getNumDims() + 1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
+  for (auto operand : lSOp.getMapOperands()) {
+    if (allIvsMap.count(operand)) {
+      newOperands.push_back(allIvsMap.at(operand));
+    } else {
+      newOperands.push_back(operand);
     }
-
-  } else {  // 没有则有可能为 glob 的load 或者中转的 store
-    newBuf = buf;
-    if (operands.size() == newLoopIvs.size()) {  // 这个为中转的storeOp，中转operand只有nested loop 的ivs
-      newMap = map;
-      newOperands = newLoopIvs;
-    } else {  // 这个是对 glob 的loadOp进行修改，若mainIv为nullptr则是预取的load，需要修改map
-      int outerIvSize = operands.size() - newLoopIvs.size() - 1; 
-      if (!mainIv) {  // 预取
-        // operands
-        for (int i=0; i<outerIvSize; i++) {
-          newOperands.push_back(operands[i]);
-        }
-        for (auto iv : newLoopIvs) {
-          newOperands.push_back(iv);
-        }
-        // map
-        auto cstExpr = builder.getAffineConstantExpr(0);
-        newMap = replaceExprInMap(builder, map, cstExpr, outerIvSize);
-      } else {  // 非预取
-        // operands
-        for (int i=0; i<outerIvSize; i++) {
-          newOperands.push_back(operands[i]);
-        }
-        newOperands.push_back(mainIv);
-        for (auto iv : newLoopIvs) {
-          newOperands.push_back(iv);
-        }
-        // check mainIv forOp
-        auto blockArg = mlir::dyn_cast<mlir::BlockArgument>(mainIv);
-        mlir::Operation* op = blockArg.getOwner()->getParentOp();
-        auto forOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op);
-        auto [lb, ub, step] = getLoopBoundAndStep(forOp);
-        // map
-        if (lb == 0) {
-          mlir::AffineExpr expr = builder.getAffineDimExpr(outerIvSize) + builder.getAffineConstantExpr(step);
-          newMap = replaceExprInMap(builder, map, expr, outerIvSize);
-        } else {
-          newMap = map;
-        }
+  }
+  if ((sType == ShiftType::RTSInner || sType == ShiftType::STRInner) && !isLoadOp) {
+    // (2/5/storeOp) 内部存储到double buf的infos
+    newBuf = bufMap.at(buf);
+    newOperands.push_back(forKIv.second);
+    addExpr = shiftExprDim(builder, addExpr, map.getNumDims());
+    newMap = insertExprToMap(builder, map, addExpr, /*index*/0);
+  } else if ((sType == ShiftType::RTSPrefetch|| sType == ShiftType::STRPrefetch) && !isLoadOp) {
+    // (4/6/storeOp) 预取存储到double buf的infos
+    newBuf = bufMap.at(buf);
+    newMap = insertExprToMap(builder, map, builder.getAffineConstantExpr(0), 0);
+  } else if ((sType == ShiftType::GTRPrefetch || sType == ShiftType::STRPrefetch) && isLoadOp) {
+    // (3/6/loadOp) 预取从非double buf中加载的infos
+    int idx = -1;
+    for (int i=0; i<newOperands.size(); i++) {
+      if (newOperands[i] == forKIv.first) { idx = i; }
+    }
+    newOperands.erase(newOperands.begin() + idx);
+    newMap = replaceExprInMap(builder, map, builder.getAffineConstantExpr(0), idx);
+  } else if (sType == ShiftType::STRInner && isLoadOp) {
+    // (5/loadOp) 寄存器预取，从非double buf中加载的infos <寄存器预取的内部forbk需要+1>
+    int idx = -1;
+    for (int i=0; i<newOperands.size(); i++) {
+      if (newOperands[i] == forKIv.first) { 
+        newOperands[i] = forKIv.second;
+        idx = i; break;
       }
+    }
+    addExpr = shiftExprDim(builder, builder.getAffineDimExpr(0) + 1, idx);
+    newMap = replaceExprInMap(builder, map, addExpr, idx);
+  } else if (sType == ShiftType::GTRInner && isLoadOp) {
+    // (1/loadOp) 内部从非double buf加载的infos
+    for (int i=0; i<newOperands.size(); i++) {
+      if (newOperands[i] == forKIv.first) { newOperands[i] = forKIv.second; }
     }
   }
   return std::make_tuple(newOperands, newMap, newBuf);
@@ -393,100 +345,56 @@ std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, m
 
 template <typename loadOp>
 std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/
-  getCalculateMapDatas(mlir::OpBuilder builder, 
+  getCalculateMapInfos(mlir::OpBuilder builder, 
                        loadOp lSOp, 
-                       std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps,
-                       mlir::Value mainIv, 
+                       const std::map<mlir::Value, mlir::Value, ValueCompare>& bufMap,
+                       mlir::Value forKIv, 
                        mlir::AffineExpr addExpr) {
   // 计算部分修改的全是load op，而且都是修改buf为double buf，且map多一个expr，operands多一个和ForK/BK相关的变量
-
-  // old datas
-  auto buf = lSOp.getMemref();
-  auto map = lSOp.getAffineMap();
+  // old datas / new datas
+  mlir::Value newBuf = bufMap.at(lSOp.getMemref());
+  mlir::AffineMap newMap, map = lSOp.getAffineMap();
+  // operands
   auto operands = lSOp.getMapOperands();
-
-  // new datas
-  std::vector<mlir::Value> newOperands;
-  mlir::AffineMap newMap;
-  mlir::Value newBuf = nullptr;
-
-  if (bufMaps.count(buf)) {
-    newBuf = bufMaps[buf];
-
-    // map
-    int noParallelOperandNum = countOtherOperandNum(lSOp, 0);
-    // llvm::outs() << noParallelOperandNum << "\n";
-    // noParallelOperandNum = 0;
-    llvm::SmallVector<mlir::AffineExpr> newExprs;
-    auto addExprDim = map.getNumDims() - noParallelOperandNum;
-    addExpr = shiftExprDim(builder, addExpr, addExprDim);
-    newExprs.push_back(addExpr);
-    for (auto oldExpr : map.getResults()) {
-      auto newExpr = shiftUpTargetExprDim(builder, oldExpr, addExprDim, 1);
-      newExprs.push_back(newExpr);
-    }
-    newMap = mlir::AffineMap::get(map.getNumDims()+1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
-
-    // operands
-    for (int i=0; i<addExprDim; i++) {
-      newOperands.push_back(operands[i]);
-    }
-    newOperands.push_back(mainIv);
-    for (int i=addExprDim; i<map.getNumDims(); i++) {
-      newOperands.push_back(operands[i]);
-    }
-  }
+  std::vector<mlir::Value> newOperands(operands.begin(), operands.end());
+  newOperands.push_back(forKIv);
+  // map
+  addExpr = shiftExprDim(builder, addExpr, map.getNumDims());
+  newMap = insertExprToMap(builder, map, addExpr, /*index*/0);
   return std::make_tuple(newOperands, newMap, newBuf);
 }
 
+
 template <typename loadOp>
-std::pair<std::vector<mlir::Value>, mlir::AffineMap> /*operands, map*/ 
-  getRegPerfetchOuterAdjustDatas(mlir::OpBuilder builder, 
-                                 loadOp lSOp, 
-                                 int nestedNum) {
-  // 获取寄存器预取将其调整到forK外所需要的map operands buf
-  auto cst0 = builder.getAffineConstantExpr(0);
-  llvm::SmallVector<mlir::AffineExpr> newExprs{cst0};
-
+std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, map, buf*/ 
+  getDoubleBufferAdjustInfos(mlir::OpBuilder builder, 
+                             loadOp lSOp, 
+                             int step=0) {
+  // 获取寄存器预取将其调整到forK循环外部和fork内部的最后加一个预取
+  // 外部：sm[0, 0, ...] / 尾部：sm[（iter/step)%2, 0, ...]
+  auto map = lSOp.getAffineMap();
   auto operands = lSOp.getMapOperands();
-  int index = operands.size() - nestedNum - 1;
-  auto map = lSOp.getAffineMap();
-  for (int i=1; i<map.getNumResults(); i++) {
-    auto newExpr = replaceExprInExpr(builder, map.getResult(i), cst0, index, 0);
-    newExprs.push_back(newExpr);
-  }
-  auto newMap = mlir::AffineMap::get(map.getNumDims() - 1, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
-
   std::vector<mlir::Value> newOperands(operands.begin(), operands.end());
-  newOperands.erase(newOperands.begin()+1);
-  
-  return std::make_pair(newOperands, newMap);
+  mlir::AffineExpr newExpr;
+  int dimCount = -1;
+  if (step) {
+    dimCount = map.getNumDims();
+    newExpr = builder.getAffineDimExpr(map.getNumDims()-1).floorDiv(step) % 2;
+  } else {
+    dimCount = map.getNumDims() - 1;
+    newExpr = builder.getAffineConstantExpr(0);
+    newOperands.pop_back();
+  }
+  llvm::SmallVector<mlir::AffineExpr> newExprs{newExpr};
+  auto oldExprs = map.getResults();
+  for (int i=1; i<oldExprs.size(); i++) {
+    newExprs.push_back(oldExprs[i]);
+  }
+  auto newMap = mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
+  return std::make_tuple(newOperands, newMap, lSOp.getMemRef());
 }
 
-template <typename loadOp>/*map*/ 
-mlir::AffineMap getRegPerFetchInnerAdjustDatas(mlir::OpBuilder builder, 
-                                               loadOp lSOp, 
-                                               mlir::Value outerForIv, 
-                                               int step) {
-  // 移动内部寄存器预取的for循环到forK的最后，提供map即可
-  int dim = 0;
-  auto oldOperands = lSOp.getMapOperands();
-  for (auto oldOperand : oldOperands) {
-    if (oldOperand == outerForIv) break;
-    dim++;
-  }
-  llvm::SmallVector<mlir::AffineExpr> newExprs;
-  auto map = lSOp.getAffineMap();
-  for (int i=0; i<map.getNumResults(); i++) {
-    if (i == 0) {
-      auto newExpr = builder.getAffineDimExpr(dim).floorDiv(step) % 2;
-      newExprs.push_back(newExpr);
-    } else {
-      newExprs.push_back(map.getResult(i));
-    }
-  }
-  return mlir::AffineMap::get(map.getNumDims(), 0, llvm::ArrayRef<mlir::AffineExpr>(newExprs), builder.getContext());
-}
+// ===========================================================================================
 
 int getLoopNestedNum(mlir::Operation* forOp); 
 
@@ -529,11 +437,12 @@ std::vector<mlir::Operation*> collectInnerMostAllOps(haveBodyOp haveBlockOp) {
   return ops;
 }
 
-mlir::Value doubleBuffer(mlir::Value buffer);
+mlir::Value createDoubleBuffer(mlir::Value buffer);
 
 std::tuple<llvm::SmallVector<int64_t>, 
 llvm::SmallVector<int64_t>, 
-llvm::SmallVector<int64_t>> 
+llvm::SmallVector<int64_t>, 
+std::vector<mlir::Value>> 
   getNestedLoopData(mlir::affine::AffineForOp forOp);
 
 std::tuple<llvm::SmallVector<int64_t>, 
@@ -543,22 +452,27 @@ std::vector<mlir::Value>,
 std::vector<std::string>>
   getNestedLoopDetailDatas(mlir::affine::AffineForOp forOp);
 
-std::vector<mlir::affine::AffineForOp> createNewDataShiftForOp(mlir::OpBuilder builder, 
-                                                               std::vector<mlir::affine::AffineForOp> forOps, 
-                                                               std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps, 
-                                                               mlir::Value mainIv=nullptr, 
-                                                               mlir::AffineExpr 
-                                                               addExpr=nullptr);
+// =========================================== about double buffer ============================================
+
+std::vector<mlir::affine::AffineForOp> 
+  createNewDataShift(mlir::OpBuilder builder, 
+                          const std::vector<mlir::affine::AffineForOp>& forOps,  
+                          const std::map<mlir::Value, mlir::Value, ValueCompare>& bufMap, 
+                          const std::pair<mlir::Value, mlir::Value>& forKIv,
+                          ShiftType sType,
+                          mlir::AffineExpr addExpr=nullptr);
 
 void moveCalculateForOp(mlir::Operation* posOp, 
                         mlir::affine::AffineForOp &forOp, 
-                        std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps, 
-                        mlir::Value mainIv, 
+                        const std::map<mlir::Value, mlir::Value, ValueCompare>& bufMap, 
+                        mlir::Value forKIv,
                         mlir::AffineExpr addExpr);
 
 mlir::affine::AffineForOp createRearCalculateForOp(mlir::OpBuilder builder, 
                                                    mlir::affine::AffineForOp calculateForOp, 
-                                                   std::map<mlir::Value, mlir::Value, BufferCompare> bufMaps);
+                                                   std::map<mlir::Value, mlir::Value, ValueCompare> bufMap);
+
+// =============================================================================================================
 
 int32_t getNoBodyOpCount(mlir::Operation* op);
 

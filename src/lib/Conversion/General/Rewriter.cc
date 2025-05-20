@@ -460,7 +460,7 @@ std::vector<mlir::Value> createHierarchyInitBuf(mlir::affine::AffineForOp initFo
                                                 const std::vector<int64_t>& newShape, 
                                                 mlir::Operation* pos, 
                                                 MemorySpace space) {
-  // 根据提供的glob initbuf 的for创建sm/reg上的initbuf（也可以根据其他level的initbuf创建）
+  // 根据提供的glob initbuf的for创建sm/reg上的initbuf（也可以根据其他level的initbuf创建）
   std::vector<float> csts;
   std::vector<std::string> bufDescs;
   std::vector<mlir::Type> elemTypes;
@@ -803,157 +803,153 @@ void unrollAttribute(mlir::ModuleOp module, int32_t unrollNum) {
 
 // ===================================== about double buffer ========================================
 
-std::pair<std::map<mlir::Value, mlir::Value, BufferCompare>, 
-std::pair<std::vector<mlir::affine::AffineForOp>, 
-std::vector<mlir::affine::AffineForOp>>>
-  sharedPrefetch(mlir::affine::AffineForOp &forOp, 
-                 std::vector<mlir::affine::AffineForOp> &loadRegForOps, 
-                 std::vector<mlir::affine::AffineForOp> &loadSharedForOps, 
-                 mlir::affine::AffineForOp &calculateForOp, 
-                 std::vector<mlir::Value> buffers) {
-  // double buffer save in map
-  std::map<mlir::Value, mlir::Value, BufferCompare> doubleBufMaps;
-  std::vector<mlir::affine::AffineForOp> newLoadSharedForOps, newLoadRegForOps, perfetchLoadSharedForOps, perfetchLoadRegForOps;
+std::pair<std::vector<mlir::affine::AffineForOp>, std::vector<mlir::affine::AffineForOp>>
+  sharedMemroyPrefetch(mlir::affine::AffineForOp &forKOp, 
+                       std::vector<mlir::affine::AffineForOp> &ldRegForOps, 
+                       std::vector<mlir::affine::AffineForOp> &ldSMForOps, 
+                       mlir::affine::AffineForOp &calForOp, 
+                       std::vector<mlir::Value> &buffers) {
+  // shared memory 预取pass
+  std::map<mlir::Value, mlir::Value, ValueCompare> newBufMap;
   for (auto buf : buffers) {
-    doubleBufMaps.emplace(buf, doubleBuffer(buf));
+    newBufMap.emplace(buf, createDoubleBuffer(buf));
   }
 
-  // base datas
-  mlir::OpBuilder builder = getBuilder(forOp, Position::before);  // forK
-  auto [lb, ub, step] = getLoopBoundAndStep(forOp);
-  auto k = builder.getAffineDimExpr(0);
-  auto cst = mlir::IntegerSet::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>({ub - step - k}), llvm::ArrayRef<bool>({false}));
+  // 获取 forK loop infos
+  mlir::OpBuilder builder = getBuilder(forKOp, Position::before);  // forK
+  auto [lb, ub, step] = getLoopBoundAndStep(forKOp);               // forK loop info
 
-  // create new main forOp
+  // 创建新的forK循环 [lb, ub, step] => [lb+step, ub+step, step]
+  mlir::Location loc = builder.getUnknownLoc();
   auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
     b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
   };
-  auto mainForOp = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), step, ub + step, step, mlir::ValueRange({}), loopBody);
+  auto newForKOp = builder.create<mlir::affine::AffineForOp>(loc, step, ub + step, step, mlir::ValueRange({}), loopBody);
 
-  // create load reg ifOp
-  mlir::Value mainIv = mainForOp.getInductionVar();
-  builder.setInsertionPointToStart(mainForOp.getBody());
-  auto ifOp0 = builder.create<mlir::affine::AffineIfOp>(builder.getUnknownLoc(), cst, mlir::ValueRange{mainIv}, false);
+  // 创建新的forK下的ifop： if (iter < ub) {load glob to reg} [lb+step, ub]
+  mlir::Value newForKIv = newForKOp.getInductionVar();
+  builder.setInsertionPointToStart(newForKOp.getBody());
+  mlir::AffineExpr expr = ub - step - builder.getAffineDimExpr(0);
+  auto cdt = mlir::IntegerSet::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), llvm::ArrayRef<bool>({false}));
+  auto ifOp0 = builder.create<mlir::affine::AffineIfOp>(loc, cdt, mlir::ValueRange{newForKIv}, false);
+
+  // 创建ifop下面的 <glob to reg> 的新的数据转移forop
   builder.setInsertionPointToStart(ifOp0.getThenBlock());
-  newLoadRegForOps = createNewDataShiftForOp(builder, loadRegForOps, doubleBufMaps, mainIv);
-  builder.setInsertionPointAfter(ifOp0);
+  auto forKIv = std::make_pair(forKOp.getInductionVar(), newForKIv);
+  auto newLdRegForOps = createNewDataShift(builder, ldRegForOps, newBufMap, forKIv, ShiftType::GTRInner);
 
-  // move calculate forOp to here
-  mlir::AffineExpr expr = (builder.getAffineDimExpr(0).floorDiv(step) - 1) % 2;
-  moveCalculateForOp(ifOp0, calculateForOp, doubleBufMaps, mainIv, expr);
+  // 移动 forBK / 计算部分
+  builder.setInsertionPointAfter(ifOp0);
+  expr = (builder.getAffineDimExpr(0).floorDiv(step) - 1) % 2;
+  moveCalculateForOp(ifOp0, calForOp, newBufMap, newForKIv, expr);
   
-  // create load shared ifOp
-  auto ifOp1 = builder.create<mlir::affine::AffineIfOp>(builder.getUnknownLoc(), cst, mlir::ValueRange{mainIv}, false);
+  // 创建新的forK下的ifop： if (iter < ub) {load reg to sm} [lb+step, ub]
+  auto ifOp1 = builder.create<mlir::affine::AffineIfOp>(loc, cdt, mlir::ValueRange{newForKIv}, false);
+  
+  // 创建ifop下的 <reg to sm> 的新的数据转移forop
   builder.setInsertionPointToStart(ifOp1.getThenBlock());
   expr = builder.getAffineDimExpr(0).floorDiv(step) % 2;
-  newLoadSharedForOps = createNewDataShiftForOp(builder, loadSharedForOps, doubleBufMaps, mainIv, expr);  // 涉及buoule buf
+  auto newLdSMForOps = createNewDataShift(builder, ldSMForOps, newBufMap, forKIv, ShiftType::RTSInner, expr);
   barrier(builder);
 
-  // 预取
-  builder.setInsertionPoint(mainForOp);
-  perfetchLoadRegForOps = createNewDataShiftForOp(builder, loadRegForOps, doubleBufMaps);
-  perfetchLoadSharedForOps = createNewDataShiftForOp(builder, loadSharedForOps, doubleBufMaps);  // 涉及buoule buf 预取
-  barrier(mainForOp, Position::before);
+  // 创建预取部分的for
+  builder.setInsertionPoint(newForKOp);
+  auto pfLdRegForOps = createNewDataShift(builder, ldRegForOps, newBufMap, forKIv, ShiftType::GTRPrefetch);
+  auto pfLdSMForOps = createNewDataShift(builder, ldSMForOps, newBufMap, forKIv, ShiftType::RTSPrefetch);  // 涉及buoule buf 预取
+  barrier(newForKOp, Position::before);
 
   // delete origin
-  forOp.erase();
-  forOp = mainForOp;
-  loadRegForOps = newLoadRegForOps;
-  loadSharedForOps = newLoadSharedForOps;
-  for (auto oldBuf : buffers) {
-    mlir::Operation* op = oldBuf.getDefiningOp();
+  forKOp.erase(); forKOp = newForKOp;
+  ldRegForOps = newLdRegForOps; ldSMForOps = newLdSMForOps;
+  int index = buffers.size();
+  for (auto it=buffers.rbegin(); it != buffers.rend(); ++it) {
+    mlir::Value buf = *it;
+    mlir::Operation* op = buf.getDefiningOp();
     op->erase();
+    buffers[--index] = newBufMap[buf];
   }
-  return std::make_pair(doubleBufMaps, std::make_pair(perfetchLoadRegForOps, perfetchLoadSharedForOps));
+  return std::make_pair(pfLdRegForOps, pfLdSMForOps);
 }
 
-std::pair<std::map<mlir::Value, mlir::Value, BufferCompare>, 
-std::pair<std::vector<mlir::affine::AffineForOp>, 
-mlir::affine::AffineForOp>>
-  registersPrefetch(mlir::affine::AffineForOp &forOp,
-                    std::vector<mlir::affine::AffineForOp> &loadRegForOps, 
-                    mlir::affine::AffineForOp &calculateForOp, 
-                    std::vector<mlir::Value> buffers) {
-  // registers double
-  std::map<mlir::Value, mlir::Value, BufferCompare> doubleBufMaps;
+
+std::pair<std::vector<mlir::affine::AffineForOp>, mlir::affine::AffineForOp>
+  registersPrefetch(mlir::affine::AffineForOp &forBKOp,
+                    std::vector<mlir::affine::AffineForOp> &ldRegForOps, 
+                    mlir::affine::AffineForOp &calForOp, 
+                    std::vector<mlir::Value> &buffers) {
+  // registers 预取pass
+  std::map<mlir::Value, mlir::Value, ValueCompare> newBufMap;
   for (auto buf : buffers) {
-    doubleBufMaps.emplace(buf, doubleBuffer(buf));
+    newBufMap.emplace(buf, createDoubleBuffer(buf));
   }
 
-  // base datas
-  mlir::OpBuilder builder = getBuilder(forOp, Position::before);
-  auto [lb, ub, step] = getLoopBoundAndStep(forOp);
-  std::vector<mlir::affine::AffineForOp> newLoadRegForOps, perfetchLoadRegForOps;
-  // rear outer forBK
-  builder.setInsertionPointAfter(forOp);
-  auto rearForOp = createRearCalculateForOp(builder, calculateForOp, doubleBufMaps);
+  // 获取 forbk 的信息
+  mlir::OpBuilder builder = getBuilder(forBKOp, Position::before);
+  auto [lb, ub, step] = getLoopBoundAndStep(forBKOp);
+
+  // 创建最后一次计算迭代的单独处理
+  builder.setInsertionPointAfter(forBKOp);
+  auto rearForOp = createRearCalculateForOp(builder, calForOp, newBufMap);
   
+  // 创建新 forbk 循环 [0, step-1]
   auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
     b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
   };
-  builder.setInsertionPoint(forOp);
-  auto mainForOp = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ub - step, step, mlir::ValueRange({}), loopBody);
+  builder.setInsertionPoint(forBKOp);
+  auto newForBKOp = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ub - step, step, mlir::ValueRange({}), loopBody);
 
-  mlir::Value mainIv = mainForOp.getInductionVar();
-  builder.setInsertionPointToStart(mainForOp.getBody());
-  // for inner load
+  builder.setInsertionPointToStart(newForBKOp.getBody());
+  // forbk inner load
+  mlir::Value newForBKIv = newForBKOp.getInductionVar();
+  auto forBKIv = std::make_pair(forBKOp.getInductionVar(), newForBKIv);
   mlir::AffineExpr expr = (builder.getAffineDimExpr(0).floorDiv(step) + 1) % 2;
-  newLoadRegForOps = createNewDataShiftForOp(builder, loadRegForOps, doubleBufMaps, mainIv, expr);
+  auto newLdRegForOps = createNewDataShift(builder, ldRegForOps, newBufMap, forBKIv, ShiftType::STRInner, expr);
 
   // move calculate
   expr = builder.getAffineDimExpr(0).floorDiv(step) % 2;
-  moveCalculateForOp(newLoadRegForOps.back(), calculateForOp, doubleBufMaps, mainIv, expr);
+  moveCalculateForOp(newLdRegForOps.back(), calForOp, newBufMap, newForBKIv, expr);
 
   // perfetch
-  builder.setInsertionPoint(mainForOp);
-  perfetchLoadRegForOps = createNewDataShiftForOp(builder, loadRegForOps, doubleBufMaps);
+  builder.setInsertionPoint(newForBKOp);
+  auto pfLdRegForOps = createNewDataShift(builder, ldRegForOps, newBufMap, forBKIv, ShiftType::STRPrefetch);
 
   // delete origin forbk
-  forOp.erase();
-  forOp = mainForOp;
-  loadRegForOps = newLoadRegForOps;
-  for (auto oldBuf : buffers) {
-    mlir::Operation* op = oldBuf.getDefiningOp();
+  forBKOp.erase(); forBKOp = newForBKOp;
+  ldRegForOps = newLdRegForOps;
+  int index = buffers.size();
+  for (auto it=buffers.rbegin(); it != buffers.rend(); ++it) {
+    mlir::Value buf = *it;
+    mlir::Operation* op = buf.getDefiningOp();
     op->erase();
+    buffers[--index] = newBufMap[buf];
   }
-  return std::make_pair(doubleBufMaps, std::make_pair(perfetchLoadRegForOps, rearForOp));
+  return std::make_pair(pfLdRegForOps, rearForOp);
 }
 
-void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchForOps, 
-                          std::vector<mlir::affine::AffineForOp> &shRegPerfetchForOps, 
-                          std::vector<mlir::affine::AffineForOp> &regPerfetchForOps, 
-                          mlir::affine::AffineForOp &rearForOp, 
-                          std::vector<mlir::Value> smBufs, 
-                          std::vector<mlir::Value> regBufs) {
+void doubleBufferAdjust(std::vector<mlir::affine::AffineForOp> &pfLdSMForOps, 
+                          std::vector<mlir::affine::AffineForOp> &pfLdRegForOps, 
+                          std::vector<mlir::affine::AffineForOp> &regPfLdRegForOps, 
+                          mlir::affine::AffineForOp &rearForOp) {
   // 使用两种预取后，需要进行的调整
   mlir::OpBuilder builder(rearForOp->getParentOp());
   // 1.寄存器预取提出最大循环，修改map的第一个expr为0
-  for (auto forOp : regPerfetchForOps) {
+  for (auto forOp : regPfLdRegForOps) {
     // get nested forOp data
-    int nestedNum = 0;
-    forOp.walk<mlir::WalkOrder::PostOrder>([&](mlir::affine::AffineForOp forOp){ nestedNum++; });
     mlir::IRMapping mapper;
     auto newBody = builder.clone(*forOp, mapper);
     auto regPerfetchLoop = mlir::dyn_cast<mlir::affine::AffineForOp>(newBody);
     auto ops = collectInnerMostAllOps(regPerfetchLoop);
-    for (auto smBuf : smBufs) {
-      for (auto op : ops) {
-        mlir::OpBuilder b(op);
-        if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
-          auto buf = loadOp.getMemRef();
-          if (smBuf.getDefiningOp() == buf.getDefiningOp()) {
-            auto result = getRegPerfetchOuterAdjustDatas(b, loadOp, nestedNum);
-            auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(b.getUnknownLoc(), buf, result.second, result.first);
-            replaceAndErase(newLoadOp, loadOp);
-          }
-        } else if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
-          auto buf = vectorLoadOp.getMemRef();
-          if (smBuf.getDefiningOp() == buf.getDefiningOp()) {
-            auto result = getRegPerfetchOuterAdjustDatas(b, vectorLoadOp, nestedNum);
-            auto newVectorLoadOp = b.create<mlir::affine::AffineVectorLoadOp>(b.getUnknownLoc(), vectorLoadOp.getVectorType(), buf, result.second, result.first);
-            replaceAndErase(newVectorLoadOp, vectorLoadOp);
-          }
-        }
+    for (auto op : ops) {
+      mlir::OpBuilder b(op);
+      mlir::Location loc = b.getUnknownLoc();
+      if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
+        auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, loadOp);
+        auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(loc, buf, map, operands);
+        replaceAndErase(newLoadOp, loadOp);
+      } else if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
+        auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, vectorLoadOp);
+        auto newVectorLoadOp = b.create<mlir::affine::AffineVectorLoadOp>(loc, vectorLoadOp.getVectorType(), buf, map, operands);
+        replaceAndErase(newVectorLoadOp, vectorLoadOp);
       }
     }
   }
@@ -967,46 +963,37 @@ void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchFo
   // 3. 在fork最后再加一个寄存器预取
   builder.setInsertionPoint(&(forKOp.getBody()->back()));
   auto step = std::get<2>(getLoopBoundAndStep(forKOp));
-  auto forKIv = forKOp.getInductionVar();
-  for (auto forOp : regPerfetchForOps) {
+  for (auto forOp : regPfLdRegForOps) {
     forOp->remove();
     builder.insert(forOp);
     auto ops = collectInnerMostAllOps(forOp);
-    for (auto smBuf : smBufs) {
-      for (auto op : ops) {
-        mlir::OpBuilder b(op);
-        if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
-          auto buf = loadOp.getMemRef();
-          if (smBuf.getDefiningOp() == buf.getDefiningOp()) {
-            auto newMap = getRegPerFetchInnerAdjustDatas(b, loadOp, forKIv, step);
-            auto newLoadOp = builder.create<mlir::affine::AffineLoadOp>(builder.getUnknownLoc(), buf, newMap, loadOp.getMapOperands());
-            replaceAndErase(newLoadOp, loadOp);
-          }
-        } else if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
-          auto buf = vectorLoadOp.getMemRef();
-          if (smBuf.getDefiningOp() == buf.getDefiningOp()) {
-            auto newMap = getRegPerFetchInnerAdjustDatas(b, vectorLoadOp, forKIv, step);
-            auto newVectorLoadOp = b.create<mlir::affine::AffineVectorLoadOp>(b.getUnknownLoc(), vectorLoadOp.getVectorType(), 
-                                                                              buf, newMap, vectorLoadOp.getMapOperands());
-            replaceAndErase(newVectorLoadOp, vectorLoadOp);
-          }
-        }
+    for (auto op : ops) {
+      mlir::OpBuilder b(op);
+      mlir::Location loc = b.getUnknownLoc();
+      if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
+        auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, loadOp, step);
+        auto newLoadOp = builder.create<mlir::affine::AffineLoadOp>(loc, buf, map, operands);
+        replaceAndErase(newLoadOp, loadOp);
+      } else if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
+        auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, vectorLoadOp, step);
+        auto newVectorLoadOp = b.create<mlir::affine::AffineVectorLoadOp>(loc, vectorLoadOp.getVectorType(), buf, map, operands);
+        replaceAndErase(newVectorLoadOp, vectorLoadOp);
       }
     }
   }
 
   // 4. （可选）将shared的预取合并成为直接从glob到shared
-  for (int i=0; i<shShPerfetchForOps.size(); i++) {
-    auto globToRegOps = collectInnerMostAllOps(shRegPerfetchForOps[i]);
-    auto regToSharedOps = collectInnerMostAllOps(shShPerfetchForOps[i]);
+  mlir::Location loc = builder.getUnknownLoc();
+  for (int i=0; i<pfLdSMForOps.size(); i++) {
+    auto globToRegOps = collectInnerMostAllOps(pfLdRegForOps[i]);
+    auto regToSharedOps = collectInnerMostAllOps(pfLdSMForOps[i]);
     if (globToRegOps.size() == regToSharedOps.size()) {  // 只有相等才是怎么取到reg的数据就怎么取到shared
-
       for (auto op : globToRegOps) {
         if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
           for (auto op_ : regToSharedOps) {
             if (auto vectorLoadOp_ = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op_)) {
-              auto ivs = collectNestedIvs(shShPerfetchForOps[i]);
-              auto regivs = collectNestedIvs(shRegPerfetchForOps[i]);
+              auto ivs = collectNestedIvs(pfLdSMForOps[i]);
+              auto regivs = collectNestedIvs(pfLdRegForOps[i]);
               // operands
               if (ivs.size() > regivs.size()) {
                 break;
@@ -1020,8 +1007,8 @@ void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchFo
                 newOperands.push_back(iv);
               }
               builder.setInsertionPointAfter(vectorLoadOp_);
-              auto newVectorLoadOp = builder.create<mlir::affine::AffineVectorLoadOp>(builder.getUnknownLoc(), vectorLoadOp.getVectorType(), 
-                                                                                 vectorLoadOp.getMemRef(), vectorLoadOp.getAffineMap(), newOperands);
+              auto newVectorLoadOp = builder.create<mlir::affine::AffineVectorLoadOp>(loc, vectorLoadOp.getVectorType(), vectorLoadOp.getMemRef(), 
+                                                                                      vectorLoadOp.getAffineMap(), newOperands);
               replaceAndErase(newVectorLoadOp, vectorLoadOp_);
               break;
             }
@@ -1029,7 +1016,7 @@ void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchFo
           break;
         }
       }
-      shRegPerfetchForOps[i].erase();
+      pfLdRegForOps[i].erase();
     }
   }
 }

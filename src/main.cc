@@ -8,9 +8,13 @@
 #include "Common/Utils.h"
 #include "Common/ThreadPool.h"
 
+#ifdef COMPILE_AS_PYMODULE
+#include "Python.h"
+#endif
+
 using namespace KernelCodeGen;
 
-int main(){
+int main() {
   int64_t bs = 1;
   int64_t hn = 1;
   int64_t sl = 128;
@@ -73,7 +77,7 @@ int main(){
   llvm::outs() << module << "\n";
   // fusing
   auto result = generator.fusing(module, fkds);
-  // llvm::outs() << module << "\n";
+  llvm::outs() << module << "\n";
 
   std::vector<mlir::ModuleOp> mods;
 
@@ -126,16 +130,16 @@ for (auto mod : mods) {
   llvm::outs() << mod << "\n";
   
   // optimize
-  generator.optimize(mod, tuneConfig);
-  // llvm::outs() << mod << "\n";
+  // generator.optimize(mod, tuneConfig);
+  // // llvm::outs() << mod << "\n";
 
-  // lowering
-  generator.lowering(mod);
-  // llvm::outs() << mod << "\n";
+  // // lowering
+  // generator.lowering(mod);
+  // // llvm::outs() << mod << "\n";
 
-  // translate
-  auto path = generator.translate(mod);
-  llvm::outs() << "bin path: " << path << "\n";
+  // // translate
+  // auto path = generator.translate(mod);
+  // llvm::outs() << "bin path: " << path << "\n";
 }
 
   return 0;

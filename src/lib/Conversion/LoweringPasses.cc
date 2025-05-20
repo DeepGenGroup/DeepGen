@@ -288,7 +288,7 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
     auto constOp = adaptor.getWidth().getDefiningOp<arith::ConstantOp>();
     auto intAttr = mlir::dyn_cast<IntegerAttr>(constOp.getValue());
     auto width = intAttr.getInt();
-    llvm::outs() << "witdh: " << width;
+    // llvm::outs() << "witdh: " << width;
     if (width < 32) {
       segmaskAndClamp = rewriter.create<LLVM::ConstantOp>(loc, int32Type, ((32 - width) << 8) + 31);
     } else {

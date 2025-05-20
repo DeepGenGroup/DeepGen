@@ -35,7 +35,6 @@ std::vector<mlir::ModuleOp> KernelCodeGenerator::splitModule(mlir::ModuleOp& mod
   return mods;
 }
 
-
 std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod, std::vector<KernelData> kernelList) {
   // create all kernels
   std::vector<std::string> noSupKernels;
@@ -71,7 +70,6 @@ std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod,
 
   return noSupKernels;
 }
-
 
 bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList) {
   // kernel fusing
@@ -126,7 +124,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
   auto kernels = getAllKernels(mod);
   for (auto kernel : kernels) {
     // collect datas
-    auto paraDims = getArrayStrAttr(kernel, PARALLELDIMS);
+    auto paraDims = getArrayStrAttr(kernel, PARALLELDIMS);  // 获取可并行维度
     auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
     auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
     // split & reorder & parallel 上一步做完必然会有fory和forx一一对应，大小相等

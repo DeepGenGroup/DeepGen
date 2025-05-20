@@ -1,8 +1,8 @@
 module {
   func.func public @attention1(%arg0: memref<1x1x128x128xf32, 1>, %arg1: memref<1x1x128x128xf32, 1>, %arg2: memref<1x1x128x128xf32, 1>, %arg3: memref<1x1x128x128xf32, 1>) attributes {arg.tran = [true, false, false], func.op.type = "FlashAttn", func.output.arg.num = 1 : i32, func.state = "gpu", parallel.dim = ["y"]} {
     affine.parallel (%arg4, %arg5, %arg6) = (0, 0, 0) to (2, 1, 1) {
-      %alloc = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smQ"} : memref<16x64xf32, 3>
-      %alloc_0 = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smK"} : memref<16x64xf32, 3>
+      %alloc = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smQ"} : memref<2x16x64xf32, 3>
+      %alloc_0 = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smK"} : memref<2x16x64xf32, 3>
       %alloc_1 = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smV"} : memref<16x128xf32, 3>
       %alloc_2 = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smP"} : memref<64x64xf32, 3>
       %alloc_3 = memref.alloc() {alignment = 16 : i64, kcg.bufDesc = "smFactor"} : memref<64xf32, 3>
@@ -39,8 +39,8 @@ module {
           %alloca_10 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "tempQ"} : memref<4xf32>
           %alloca_11 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "tempK"} : memref<4xf32>
           %alloca_12 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "tempV"} : memref<8xf32>
-          %alloca_13 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regQ"} : memref<2xf32>
-          %alloca_14 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regK"} : memref<8xf32>
+          %alloca_13 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regQ"} : memref<2x2xf32>
+          %alloca_14 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regK"} : memref<2x8xf32>
           %alloca_15 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regP"} : memref<4xf32>
           %alloca_16 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "regV"} : memref<8xf32>
           %alloca_17 = memref.alloca() {alignment = 16 : i64, kcg.bufDesc = "tileP"} : memref<2x8xf32>
@@ -50,48 +50,90 @@ module {
               affine.store %cst, %alloca_17[%arg9, %arg10] : memref<2x8xf32>
             }
           } {for.desc = "initBuf"}
-          affine.for %arg9 = 0 to 128 step 16 {
-            gpu.barrier
+          affine.for %arg9 = 0 to 1 {
+            %1 = affine.vector_load %arg0[%arg6, %arg5, %arg9 * 16 + (%arg7 * 4) floordiv 64, %0 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
+            affine.vector_store %1, %alloca_10[%arg9 * 4] : memref<4xf32>, vector<4xf32>
+          }
+          affine.for %arg9 = 0 to 1 {
+            %1 = affine.vector_load %arg1[%arg6, %arg5, %arg9 * 16 + (%arg7 * 4) floordiv 64, %arg8 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
+            affine.vector_store %1, %alloca_11[%arg9 * 4] : memref<4xf32>, vector<4xf32>
+          }
+          affine.for %arg9 = 0 to 1 {
+            %1 = affine.vector_load %alloca_10[%arg9 * 4] : memref<4xf32>, vector<4xf32>
+            affine.vector_store %1, %alloc[0, %arg9 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<2x16x64xf32, 3>, vector<4xf32>
+          }
+          affine.for %arg9 = 0 to 1 {
+            %1 = affine.vector_load %alloca_11[%arg9 * 4] : memref<4xf32>, vector<4xf32>
+            affine.vector_store %1, %alloc_0[0, %arg9 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<2x16x64xf32, 3>, vector<4xf32>
+          }
+          gpu.barrier
+          affine.for %arg9 = 16 to 144 step 16 {
+            affine.if affine_set<(d0) : (-d0 + 112 >= 0)>(%arg9) {
+              affine.for %arg10 = 0 to 1 {
+                %1 = affine.vector_load %arg0[%arg6, %arg5, %arg9 + %arg10 * 16 + (%arg7 * 4) floordiv 64, %0 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
+                affine.vector_store %1, %alloca_10[%arg10 * 4] : memref<4xf32>, vector<4xf32>
+              }
+              affine.for %arg10 = 0 to 1 {
+                %1 = affine.vector_load %arg1[%arg6, %arg5, %arg9 + %arg10 * 16 + (%arg7 * 4) floordiv 64, %arg8 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
+                affine.vector_store %1, %alloca_11[%arg10 * 4] : memref<4xf32>, vector<4xf32>
+              }
+            }
             affine.for %arg10 = 0 to 1 {
-              %1 = affine.vector_load %arg0[%arg6, %arg5, %arg9 + %arg10 * 16 + (%arg7 * 4) floordiv 64, %0 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
-              affine.vector_store %1, %alloca_10[%arg10 * 4] : memref<4xf32>, vector<4xf32>
-            } {for.desc = ""}
-            affine.for %arg10 = 0 to 1 {
-              %1 = affine.vector_load %arg1[%arg6, %arg5, %arg9 + %arg10 * 16 + (%arg7 * 4) floordiv 64, %arg8 + (%arg7 * 4) mod 64] : memref<1x1x128x128xf32, 1>, vector<4xf32>
-              affine.vector_store %1, %alloca_11[%arg10 * 4] : memref<4xf32>, vector<4xf32>
-            } {for.desc = ""}
-            affine.for %arg10 = 0 to 1 {
-              %1 = affine.vector_load %alloca_10[%arg10 * 4] : memref<4xf32>, vector<4xf32>
-              affine.vector_store %1, %alloc[%arg10 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<16x64xf32, 3>, vector<4xf32>
-            } {for.desc = ""}
-            affine.for %arg10 = 0 to 1 {
-              %1 = affine.vector_load %alloca_11[%arg10 * 4] : memref<4xf32>, vector<4xf32>
-              affine.vector_store %1, %alloc_0[%arg10 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<16x64xf32, 3>, vector<4xf32>
-            } {for.desc = ""}
-            gpu.barrier
-            affine.for %arg10 = 0 to 16 {
-              affine.for %arg11 = 0 to 0 {
+              affine.for %arg11 = 0 to 2 {
+                %1 = affine.vector_load %alloc[(%arg9 floordiv 16 - 1) mod 2, 0, (%arg10 * 8 + %arg7 floordiv 32) * 8 + %arg11 * 4 + (%arg7 mod 32) floordiv 8] : memref<2x16x64xf32, 3>, vector<1xf32>
+                affine.vector_store %1, %alloca_13[0, %arg10 * 2 + %arg11] : memref<2x2xf32>, vector<1xf32>
+              }
+            }
+            affine.for %arg10 = 0 to 4 {
+              affine.for %arg11 = 0 to 2 {
+                %1 = affine.vector_load %alloc_0[(%arg9 floordiv 16 - 1) mod 2, 0, %arg10 * 16 + %arg11 * 8 + %arg7 mod 8] : memref<2x16x64xf32, 3>, vector<1xf32>
+                affine.vector_store %1, %alloca_14[0, %arg10 * 2 + %arg11] : memref<2x8xf32>, vector<1xf32>
+              }
+            }
+            affine.for %arg10 = 0 to 15 {
+              affine.for %arg11 = 0 to 1 {
                 affine.for %arg12 = 0 to 2 {
-                  %1 = affine.vector_load %alloc[%arg10, (%arg11 * 8 + %arg7 floordiv 32) * 16 + (%arg12 * 4 + (%arg7 mod 32) floordiv 8) * 2] : memref<16x64xf32, 3>, vector<2xf32>
-                  affine.vector_store %1, %alloca_13[%arg11 * 4 + %arg12 * 2] : memref<2xf32>, vector<2xf32>
+                  %1 = affine.vector_load %alloc[(%arg9 floordiv 16 - 1) mod 2, %arg10 + 1, (%arg11 * 8 + %arg7 floordiv 32) * 8 + %arg12 * 4 + (%arg7 mod 32) floordiv 8] : memref<2x16x64xf32, 3>, vector<1xf32>
+                  affine.vector_store %1, %alloca_13[(%arg10 + 1) mod 2, %arg11 * 2 + %arg12] : memref<2x2xf32>, vector<1xf32>
                 }
-              } {for.desc = ""}
+              }
               affine.for %arg11 = 0 to 4 {
                 affine.for %arg12 = 0 to 2 {
-                  %1 = affine.vector_load %alloc_0[%arg10, %arg11 * 16 + %arg12 * 8 + %arg7 mod 8] : memref<16x64xf32, 3>, vector<1xf32>
-                  affine.vector_store %1, %alloca_14[%arg11 * 2 + %arg12] : memref<8xf32>, vector<1xf32>
+                  %1 = affine.vector_load %alloc_0[(%arg9 floordiv 16 - 1) mod 2, %arg10 + 1, %arg11 * 16 + %arg12 * 8 + %arg7 mod 8] : memref<2x16x64xf32, 3>, vector<1xf32>
+                  affine.vector_store %1, %alloca_14[(%arg10 + 1) mod 2, %arg11 * 2 + %arg12] : memref<2x8xf32>, vector<1xf32>
                 }
-              } {for.desc = ""}
+              }
               affine.for %arg11 = 0 to 2 {
                 affine.for %arg12 = 0 to 8 {
                   %1 = affine.load %alloca_17[%arg11, %arg12] : memref<2x8xf32>
-                  %2 = affine.load %alloca_13[%arg11] : memref<2xf32>
-                  %3 = affine.load %alloca_14[%arg12] : memref<8xf32>
+                  %2 = affine.load %alloca_13[%arg10 mod 2, %arg11] : memref<2x2xf32>
+                  %3 = affine.load %alloca_14[%arg10 mod 2, %arg12] : memref<2x8xf32>
                   %4 = arith.mulf %2, %3 : f32
                   %5 = arith.addf %4, %1 : f32
                   affine.store %5, %alloca_17[%arg11, %arg12] : memref<2x8xf32>
                 } {for.desc = "ttilex"}
               } {for.desc = "ttiley"}
+            }
+            affine.for %arg10 = 0 to 2 {
+              affine.for %arg11 = 0 to 8 {
+                %1 = affine.load %alloca_17[%arg10, %arg11] : memref<2x8xf32>
+                %2 = affine.load %alloca_13[1, %arg10] : memref<2x2xf32>
+                %3 = affine.load %alloca_14[1, %arg11] : memref<2x8xf32>
+                %4 = arith.mulf %2, %3 : f32
+                %5 = arith.addf %4, %1 : f32
+                affine.store %5, %alloca_17[%arg10, %arg11] : memref<2x8xf32>
+              } {for.desc = "ttilex"}
+            } {for.desc = "ttiley"}
+            affine.if affine_set<(d0) : (-d0 + 112 >= 0)>(%arg9) {
+              affine.for %arg10 = 0 to 1 {
+                %1 = affine.vector_load %alloca_10[%arg10 * 4] : memref<4xf32>, vector<4xf32>
+                affine.vector_store %1, %alloc[(%arg9 floordiv 16) mod 2, %arg10 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<2x16x64xf32, 3>, vector<4xf32>
+              }
+              affine.for %arg10 = 0 to 1 {
+                %1 = affine.vector_load %alloca_11[%arg10 * 4] : memref<4xf32>, vector<4xf32>
+                affine.vector_store %1, %alloc_0[(%arg9 floordiv 16) mod 2, %arg10 * 16 + (%arg7 * 4) floordiv 64, (%arg7 * 4) mod 64] : memref<2x16x64xf32, 3>, vector<4xf32>
+              }
+              gpu.barrier
             }
           }
           affine.for %arg9 = 0 to 2 {
@@ -159,12 +201,12 @@ module {
             affine.store %30, %alloca_9[%arg9] : memref<2xf32>
           }
           affine.if affine_set<(d0) : (d0 mod 8 == 0)>(%arg7) {
-            affine.for %arg9 = 0 to 2 step 4 {
-              affine.for %arg10 = 0 to 4 step 2 {
-                affine.for %arg11 = 0 to 2 {
-                  %1 = affine.load %alloc_4[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg10 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg11] : memref<64xf32, 3>
+            affine.for %arg9 = 0 to 2 step 2 {
+              affine.for %arg10 = 0 to 2 {
+                affine.for %arg11 = 0 to 1 {
+                  %1 = affine.load %alloc_4[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg10 * 4 + (%arg7 mod 32) floordiv 8 + %arg11] : memref<64xf32, 3>
                   %2 = affine.load %alloca_8[%arg9 + %arg10 + %arg11] : memref<2xf32>
-                  %3 = affine.load %alloc_5[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg10 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg11] : memref<64xf32, 3>
+                  %3 = affine.load %alloc_5[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg10 * 4 + (%arg7 mod 32) floordiv 8 + %arg11] : memref<64xf32, 3>
                   %4 = affine.load %alloca_9[%arg9 + %arg10 + %arg11] : memref<2xf32>
                   %5 = arith.maxnumf %2, %1 : f32
                   %6 = arith.subf %2, %5 : f32
@@ -174,9 +216,9 @@ module {
                   %10 = arith.mulf %4, %7 : f32
                   %11 = arith.mulf %3, %9 : f32
                   %12 = arith.addf %10, %11 : f32
-                  affine.store %5, %alloc_4[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg10 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg11] : memref<64xf32, 3>
-                  affine.store %12, %alloc_5[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg10 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg11] : memref<64xf32, 3>
-                  affine.store %9, %alloc_3[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg10 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg11] : memref<64xf32, 3>
+                  affine.store %5, %alloc_4[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg10 * 4 + (%arg7 mod 32) floordiv 8 + %arg11] : memref<64xf32, 3>
+                  affine.store %12, %alloc_5[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg10 * 4 + (%arg7 mod 32) floordiv 8 + %arg11] : memref<64xf32, 3>
+                  affine.store %9, %alloc_3[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg10 * 4 + (%arg7 mod 32) floordiv 8 + %arg11] : memref<64xf32, 3>
                   affine.store %5, %alloca_8[%arg9 + %arg10 + %arg11] : memref<2xf32>
                 }
               }
@@ -198,14 +240,14 @@ module {
               affine.store %4, %alloca_17[%arg9, %arg10] : memref<2x8xf32>
             } {for.desc = "ttilex"}
           } {for.desc = "ttiley"}
-          affine.for %arg9 = 0 to 2 step 4 {
+          affine.for %arg9 = 0 to 2 step 2 {
             affine.for %arg10 = 0 to 8 step 2 {
-              affine.for %arg11 = 0 to 4 step 2 {
+              affine.for %arg11 = 0 to 2 {
                 affine.for %arg12 = 0 to 2 {
-                  affine.for %arg13 = 0 to 2 {
+                  affine.for %arg13 = 0 to 1 {
                     affine.for %arg14 = 0 to 1 {
                       %1 = affine.vector_load %alloca_17[%arg9 + %arg11 + %arg13, %arg10 + %arg12 + %arg14] : memref<2x8xf32>, vector<1xf32>
-                      affine.vector_store %1, %alloc_2[(%arg9 * 8 + (%arg7 floordiv 32) * 4) * 4 + %arg11 * 4 + ((%arg7 mod 32) floordiv 8) * 2 + %arg13, %arg10 * 8 + %arg12 * 8 + %arg7 mod 8 + %arg14] : memref<64x64xf32, 3>, vector<1xf32>
+                      affine.vector_store %1, %alloc_2[(%arg9 * 8 + (%arg7 floordiv 32) * 2) * 4 + %arg11 * 4 + (%arg7 mod 32) floordiv 8 + %arg13, %arg10 * 8 + %arg12 * 8 + %arg7 mod 8 + %arg14] : memref<64x64xf32, 3>, vector<1xf32>
                     }
                   }
                 }

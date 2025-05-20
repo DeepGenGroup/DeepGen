@@ -112,29 +112,23 @@ std::vector<std::vector<mlir::affine::AffineForOp>> get_write(mlir::affine::Affi
 
 void unrollAttribute(mlir::ModuleOp module, int unrollNum=16);
 
-std::pair<std::map<mlir::Value, mlir::Value, BufferCompare>, 
-std::pair<std::vector<mlir::affine::AffineForOp>, 
-std::vector<mlir::affine::AffineForOp>>>
-  sharedPrefetch(mlir::affine::AffineForOp &forOp, 
-                 std::vector<mlir::affine::AffineForOp> &loadRegForOps, 
-                 std::vector<mlir::affine::AffineForOp> &loadSharedForOps, 
-                 mlir::affine::AffineForOp &calculateForOp, 
-                 std::vector<mlir::Value> buffers);
+std::pair<std::vector<mlir::affine::AffineForOp>, std::vector<mlir::affine::AffineForOp>>
+  sharedMemroyPrefetch(mlir::affine::AffineForOp &forKOp, 
+                       std::vector<mlir::affine::AffineForOp> &ldRegForOps, 
+                       std::vector<mlir::affine::AffineForOp> &ldSMForOps, 
+                       mlir::affine::AffineForOp &calForOp, 
+                       std::vector<mlir::Value> &buffers);
 
-std::pair<std::map<mlir::Value, mlir::Value, BufferCompare>, 
-std::pair<std::vector<mlir::affine::AffineForOp>, 
-mlir::affine::AffineForOp>>
-  registersPrefetch(mlir::affine::AffineForOp &forOp, 
-                    std::vector<mlir::affine::AffineForOp> &loadRegForOps, 
-                    mlir::affine::AffineForOp &calculateForOp,
-                    std::vector<mlir::Value> buffers);
+std::pair<std::vector<mlir::affine::AffineForOp>, mlir::affine::AffineForOp>
+  registersPrefetch(mlir::affine::AffineForOp &forBKOp,
+                    std::vector<mlir::affine::AffineForOp> &ldRegForOps, 
+                    mlir::affine::AffineForOp &calForOp, 
+                    std::vector<mlir::Value> &buffers);
 
-void doublePerfetchAdjust(std::vector<mlir::affine::AffineForOp> &shShPerfetchForOps, 
-                          std::vector<mlir::affine::AffineForOp> &shRegPerfetchForOps, 
-                          std::vector<mlir::affine::AffineForOp> &regPerfetchForOps, 
-                          mlir::affine::AffineForOp &rearForOp, 
-                          std::vector<mlir::Value> smBufs, 
-                          std::vector<mlir::Value> regBufs);
+void doubleBufferAdjust(std::vector<mlir::affine::AffineForOp> &pfLdSMForOps, 
+                          std::vector<mlir::affine::AffineForOp> &pfLdRegForOps, 
+                          std::vector<mlir::affine::AffineForOp> &regPfLdRegForOps, 
+                          mlir::affine::AffineForOp &rearForOp);
 
 }  // rewriter
 

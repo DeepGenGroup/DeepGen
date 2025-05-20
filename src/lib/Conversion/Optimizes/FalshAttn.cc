@@ -722,8 +722,46 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   updateTileO(tyds.back(), smSum, tileO[0], "ORegSum");
   LOG_DEBUG("===== update last TileO =======\n",module);
 
-  // Rewriter::unrollAttribute(module, cfg["UNROLL_NUM"]);
-  // LOG_DEBUG("===== unrollAttribute =======\n",module);
+  mlir::affine::AffineForOp regRearForOp, regRearForOp_;
+  std::vector<mlir::affine::AffineForOp> pfLdRegForOps, pfLdSMForOps, pfLdRegForOps_, pfLdRegForOps__;
+  if (cfg["SHARED_PREFETCH_P"]) {
+    std::vector<mlir::affine::AffineForOp> LdRegForOps{loadTileQ, loadTileK}, ldSMForOps{storeTileQ, storeTileK};
+    std::vector<mlir::Value> smBufs{smQ, smK};
+    auto smResult = Rewriter::sharedMemroyPrefetch(k1_outer, LdRegForOps, ldSMForOps, k1_inner, smBufs);
+    smQ = smBufs[0], smK = smBufs[1];
+    loadTileQ = LdRegForOps[0], loadTileK = LdRegForOps[1];
+    storeTileQ = ldSMForOps[0], storeTileK = ldSMForOps[1];
+    pfLdRegForOps = smResult.first; pfLdSMForOps = smResult.second;
+    LOG_DEBUG("===== sharedMemroyPrefetch =======\n",module);
+  }
+
+  if (cfg["REG_PREFETCH_P"]) {
+    std::vector<mlir::affine::AffineForOp> regLdRegForOps{loadFragQ, loadFragK};
+    std::vector<mlir::Value> regBufs{regQ, regK};
+    auto regResult = Rewriter::registersPrefetch(k1_inner, regLdRegForOps, yTileForOps[0], regBufs);
+    regQ = regBufs[0], regK = regBufs[1];
+    loadFragQ = regLdRegForOps[0], loadFragK = regLdRegForOps[1];
+    pfLdRegForOps_ = regResult.first; regRearForOp = regResult.second;
+    LOG_DEBUG("===== registersPrefetch =======\n",module);
+  }
+
+  if (cfg["SHARED_PREFETCH_P"] && cfg["REG_PREFETCH_P"]) {
+    Rewriter::doubleBufferAdjust(pfLdSMForOps, pfLdRegForOps, pfLdRegForOps_, regRearForOp);
+    LOG_DEBUG("===== doublePerfetchAdjust =======\n",module);
+  }
+
+  if (cfg["REG_PREFETCH_O"]) {
+    std::vector<mlir::affine::AffineForOp> regLdRegForOps{loadFragP, loadFragV};
+    std::vector<mlir::Value> regBufs{regP, regV};
+    auto regResult = Rewriter::registersPrefetch(k2_inner, regLdRegForOps, yTileForOps[2], regBufs);
+    regP = regBufs[0], regV = regBufs[1];
+    loadFragP = regLdRegForOps[0], loadFragV = regLdRegForOps[1];
+    pfLdRegForOps__ = regResult.first; regRearForOp_ = regResult.second;
+    LOG_DEBUG("===== registersPrefetch =======\n",module);
+  }
+
+  Rewriter::unrollAttribute(module, cfg["UNROLL_NUM"]);
+  LOG_DEBUG("===== unrollAttribute =======\n",module);
 }
 
 }
