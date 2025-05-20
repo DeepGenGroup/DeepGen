@@ -133,12 +133,15 @@ class CreateConfig:
     #   if oldResult[31] == 1 and oldResult[0][0] * oldResult[0][1] >= oldResult[1] and oldResult[0][0] * oldResult[0][1] >= oldResult[2]:
     #     if oldResult[32] == 1 and oldResult[0][2] * oldResult[0][3] >= oldResult[3]:
     #       results.append(oldResult)
-      if oldResult[0][0] * oldResult[0][1] <= 256:
+      thread_num = int(oldResult[0][0] * oldResult[0][1])
+      if thread_num <= 256:
         LDS_SZIE = oldResult[1] * oldResult[4] + oldResult[2] * oldResult[4] + oldResult[1] * oldResult[2] + oldResult[3] * oldResult[5] + 3 * oldResult[1]
         if oldResult[33] == 1:
           LDS_SZIE += oldResult[1] * oldResult[4] + oldResult[2] * oldResult[4]
         if LDS_SZIE <= 96 * 1024 / 4:
-          results.append(oldResult[1:])
+          item = oldResult[1:].copy()
+          item.append((thread_num, LDS_SZIE * 4))
+          results.append(item)
     return results
 
   def main(self):
@@ -163,6 +166,32 @@ if __name__ == "__main__":
   shape = [1, 32, 2048, 128]
   cc = CreateConfig(path, shape)
   cfgs = cc.main()
-  print(len(cfgs))
-  # for cfg in cfgs:
-  #   print(cfg)
+  for cfg in cfgs:
+    config = {
+      "attention1": {
+        "Br": cfg[0], "Bc": cfg[1], "Hd": cfg[2], "Slice1": cfg[3], "Slice2": cfg[4], 
+        "PTr": cfg[5], "PTc": cfg[6], "OTr": cfg[7], "OTc": cfg[8],
+        # global to shared
+        "GLOB_LOAD_WIDTH_Q": cfg[9], "GLOB_LOAD_WIDTH_K": cfg[10], "GLOB_LOAD_WIDTH_V": cfg[11],
+        # P = Q * K
+        "BLOCK_LAYOUT_P_Y": cfg[12], "BLOCK_LAYOUT_P_X": cfg[13], "WARP_LAYOUT_P_Y": cfg[14], "WARP_LAYOUT_P_X": cfg[15],
+        "BLOCK_SCATTER_WIDTH_Q": cfg[16], "BLOCK_SCATTER_WIDTH_K": cfg[17], "WARP_SCATTER_WIDTH_Q": cfg[18], "WARP_SCATTER_WIDTH_K": cfg[19],
+        # O = P * V
+        "BLOCK_LAYOUT_O_Y": cfg[20], "BLOCK_LAYOUT_O_X": cfg[21], "WARP_LAYOUT_O_Y": cfg[22], "WARP_LAYOUT_O_X": cfg[23], 
+        "BLOCK_SCATTER_WIDTH_P": cfg[24], "BLOCK_SCATTER_WIDTH_V": cfg[25], "WARP_SCATTER_WIDTH_P": cfg[26], "WARP_SCATTER_WIDTH_V": cfg[27],
+
+        "UNROLL_NUM": cfg[28], "WARP_SIZE": cfg[29], 
+        "LOAD_CONTINUOUS_P": cfg[30], "LOAD_CONTINUOUS_O": cfg[31], 
+        # prefecth
+        "SHARED_PREFETCH_P": cfg[32], "REG_PREFETCH_P": cfg[33], "REG_PREFETCH_O": cfg[34],
+      }
+    }
+  
+    gridSize = [int(shape[2]/cfg[1]), shape[1], shape[0]]  # bx, by, bz
+    blockSize = [cfg[-1][0]]  # tx
+    sharedSize = cfg[-1][1]  # shared memroy size
+
+    print(config)
+    print("gridSize: ", gridSize)
+    print("blockSize: ", blockSize)
+    print(f"sharedSize: {sharedSize} byte")
