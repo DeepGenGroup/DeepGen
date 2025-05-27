@@ -34,7 +34,7 @@ class CacheManager(ABC):
     def put_group(self, filename: str, group: Dict[str, str]):
         pass
 
-
+from Utils import PathManager
 class FileCacheManager(CacheManager):
     def __init__(self, key, override=False, dump=False):
         self.key = key

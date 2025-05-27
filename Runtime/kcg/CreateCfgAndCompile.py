@@ -1,10 +1,9 @@
 import json
 import importlib.util
 
-from kcg.CompiledKernelFactory import UserInputs, EnumOperator, CompiledKernelFactory
-from kcg.Operators.matmul import KernelArgMatmul, ConfigKeywords
+from kcg.Operators.matmul import MatmulTuningArgs, ConfigKeywords
 from kcg.Utils import PathManager
-from kcg.Operators.matmul import TuningSpaceEncoder_Matmul
+from kcg.Operators.matmul import TuningSpaceEncoder
 from typing import List
 
 
@@ -23,7 +22,7 @@ class CreateMatmulConfig:
     self.word_width = word_width  # 一个字 4 byte
     self.max_reg_size = 256 * self.word_width   # byte
     self.max_sm_size = 64 * 1024  # byte
-    self.encoder = TuningSpaceEncoder_Matmul(self.cfg_dict)
+    self.encoder = TuningSpaceEncoder(self.cfg_dict)
 
   def getThreadTile(self, halfTag=True, squareTag=True):
     # 获取线程tile的大小，halfTag为是tile只是用一般，另一半对称的不使用，squareTag且尽量方形
@@ -197,9 +196,11 @@ class CreateMatmulConfig:
 
     kams = []
     for tal in temp_tals:
-      kam = KernelArgMatmul(
+      kam = MatmulTuningArgs(
         self.cfg_dict[ConfigKeywords.KEY_M][0], self.cfg_dict[ConfigKeywords.KEY_N][0], self.cfg_dict[ConfigKeywords.KEY_K][0],self.cfg_dict[ConfigKeywords.KEY_BATCH][0],  # M, N, K,batch
-        self.cfg_dict[ConfigKeywords.KEY_DTYPE_A][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_B][0], self.cfg_dict[ConfigKeywords.KEY_DTYPE_C][0]) # typeA, typeB, typeC
+        self.cfg_dict[ConfigKeywords.KEY_DTYPE_A][0]) 
+        # self.cfg_dict[ConfigKeywords.KEY_DTYPE_B][0], 
+        # self.cfg_dict[ConfigKeywords.KEY_DTYPE_C][0]) # typeA, typeB, typeC
       config = (
         tal[0][0], tal[0][1], tal[0][2],  # block_size
         tal[1][0], tal[1][1],             # thread_size

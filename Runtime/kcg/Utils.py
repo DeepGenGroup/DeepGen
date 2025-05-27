@@ -188,14 +188,13 @@ class EnumBackendType(IntEnum):
         return f'{self.name}'
 
 class EnumRunMode(IntEnum):
-    # 在本机执行生成调优空间、编译kernel以及benchmark
-    GetTuneSpace_Compile_Benchmark_Local = 1  
     # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
-    AsRemotePerftester = 2
-    # 只在本地生产调优空间，不进行编译以及benchmark
-    GetTuneSpace_Local_Only = 3
+    AsRemotePerftester = 3
     # 只在本地进行编译，将 benchmark任务所需文件推送到远程
-    CallRemotePerftester = 4
+    CallRemotePerftester = 5
+    # 只在本地生产调优空间，不进行编译以及benchmark
+    GetTuneSpace_Local_Only = 4
+    
     def __str__(self):
         return f'{self.name}'
     
@@ -204,6 +203,7 @@ class EnumOperator:
     Matmul = "MATMUL"
     Convolution = "CONV"
     Poll = "POLL"
+    Attention = "ATTENTION"
     def __str__(self):
         return f'{self.name}'
 
@@ -341,7 +341,12 @@ class PathManager :
     
     @staticmethod
     def cuda_install_dir()->str:
-        assert PathManager._s_path_obj is not None
+        if PathManager._s_path_obj is None :
+            userPathConfigfile = str(PathManager.project_dir()) + "/thirdPartyPath.json"
+            assert os.path.exists(userPathConfigfile)
+            with open(userPathConfigfile) as f:
+                import json
+                PathManager._s_path_obj = json.load(f)
         if len(PathManager._s_path_obj['cuda_install_dir']) > 1:
             return PathManager._s_path_obj['cuda_install_dir']
         if len(PathManager._s_cuda_install_dir) <= 0 :
@@ -394,6 +399,11 @@ class PathManager :
         # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
     
     @staticmethod
+    def kcg_compiler_attention_path()->str:
+        return os.path.join(PathManager.project_dir(),"bin/libdeepgen.so")
+        # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
+    
+    @staticmethod
     def init(clearPkl = False, clearDump = False, clearOverride = False, clearCache = False, clearTmp = False) :
         # print("PathManager initializing ... ",flush=True)
         os.makedirs(PathManager.pikle_dir(),exist_ok=True)
@@ -401,16 +411,19 @@ class PathManager :
         os.makedirs(PathManager.default_override_dir(),exist_ok=True)
         os.makedirs(PathManager.default_dump_dir(),exist_ok=True)
         os.makedirs(PathManager.tmp_dir(),exist_ok=True)
-        if clearPkl :
-            delete_files_in_directory(PathManager.pikle_dir())
-        if clearCache :
-            delete_files_in_directory(PathManager.default_cache_dir())
-        if clearOverride :
-            delete_files_in_directory(PathManager.default_override_dir())
-        if clearDump :
-            delete_files_in_directory(PathManager.default_dump_dir())
-        if clearTmp :
-            delete_files_in_directory(PathManager.tmp_dir())
+        try:
+            if clearPkl :
+                delete_files_in_directory(PathManager.pikle_dir())
+            if clearCache :
+                delete_files_in_directory(PathManager.default_cache_dir())
+            if clearOverride :
+                delete_files_in_directory(PathManager.default_override_dir())
+            if clearDump :
+                delete_files_in_directory(PathManager.default_dump_dir())
+            if clearTmp :
+                delete_files_in_directory(PathManager.tmp_dir())
+        except OSError as e :
+            ...
         userPathConfigfile = str(PathManager.project_dir()) + "/thirdPartyPath.json"
         assert os.path.exists(userPathConfigfile)
         with open(userPathConfigfile) as f:
@@ -419,6 +432,7 @@ class PathManager :
         
 #  关键字
 class ConfigKeywords :
+    # gemm
     KEY_BLOCK_SIZE_M =         "BLOCK_SIZE_M"
     KEY_BLOCK_SIZE_N =         "BLOCK_SIZE_N"
     KEY_BLOCK_SIZE_K =         "BLOCK_SIZE_K"
@@ -451,6 +465,40 @@ class ConfigKeywords :
     KEY_SHARED_PREFETCH =       "SHARED_PREFETCH"
     KEY_LOAD_CONTINUOUS =       "LOAD_CONTINUOUS"
     KEY_REDUCE_C_CONTINUOUS =   "REDUCE_C_CONTINUOUS"
+    # attention
+    KEY_Br = "Br"
+    KEY_Bc = "Bc"
+    KEY_Hd = "Hd"
+    KEY_Slice1 = "Slice1"
+    KEY_Slice2 = "Slice2"
+    KEY_PTr = "PTr"
+    KEY_PTc = "PTc"
+    KEY_OTr = "OTr"
+    KEY_OTc = "OTc"
+    KEY_GLOB_LOAD_WIDTH_Q = "GLOB_LOAD_WIDTH_Q"
+    KEY_GLOB_LOAD_WIDTH_K = "GLOB_LOAD_WIDTH_K"
+    KEY_GLOB_LOAD_WIDTH_V = "GLOB_LOAD_WIDTH_V"
+    KEY_BLOCK_LAYOUT_P_Y = "BLOCK_LAYOUT_P_Y"
+    KEY_BLOCK_LAYOUT_P_X = "BLOCK_LAYOUT_P_X"
+    KEY_WARP_LAYOUT_P_Y = "WARP_LAYOUT_P_Y"
+    KEY_WARP_LAYOUT_P_X = "WARP_LAYOUT_P_X"
+    KEY_BLOCK_SCATTER_WIDTH_Q = "BLOCK_SCATTER_WIDTH_Q"
+    KEY_BLOCK_SCATTER_WIDTH_K = "BLOCK_SCATTER_WIDTH_K"
+    KEY_WARP_SCATTER_WIDTH_Q = "WARP_SCATTER_WIDTH_Q"
+    KEY_WARP_SCATTER_WIDTH_K = "WARP_SCATTER_WIDTH_K"
+    KEY_BLOCK_LAYOUT_O_Y = "BLOCK_LAYOUT_O_Y"
+    KEY_BLOCK_LAYOUT_O_X = "BLOCK_LAYOUT_O_X"
+    KEY_WARP_LAYOUT_O_Y = "WARP_LAYOUT_O_Y"
+    KEY_WARP_LAYOUT_O_X = "WARP_LAYOUT_O_X"
+    KEY_BLOCK_SCATTER_WIDTH_P = "BLOCK_SCATTER_WIDTH_P"
+    KEY_BLOCK_SCATTER_WIDTH_V = "BLOCK_SCATTER_WIDTH_V"
+    KEY_WARP_SCATTER_WIDTH_P = "WARP_SCATTER_WIDTH_P"
+    KEY_WARP_SCATTER_WIDTH_V = "WARP_SCATTER_WIDTH_V"
+    KEY_LOAD_CONTINUOUS_P = "LOAD_CONTINUOUS_P"
+    KEY_LOAD_CONTINUOUS_O = "LOAD_CONTINUOUS_O"
+    KEY_SHARED_PREFETCH_P = "SHARED_PREFETCH_P"
+    KEY_REG_PREFETCH_P = "REG_PREFETCH_P"
+    KEY_REG_PREFETCH_O = "REG_PREFETCH_O"
     
 def get_dtype_from_int(dtype : int) :
     if dtype == int( EnumKernelDType.float8) :
@@ -473,50 +521,53 @@ def get_dtype_from_int(dtype : int) :
         return EnumKernelDType.int64
     return None
 
-class OperatorBaseArgs :
-    def __init__(self):
-        self.operatorKind = EnumOperator.Invalid
-        self.argList = []  # arglist 中的参数为int类型 （int,torch.dtype）
-        self._innerDict = {
-            "kind" : self.operatorKind,
-            "b" : 0,
-            "m" : 0,
-            "n" : 0,
-            "k" : 0,
-            "dtype" : 0
-        }
-    def parseFromJsonfile(self,path : str):
-        import json
-        obj = None
-        with open(path) as f :
-            obj = json.load(f)
-        self.argList = [obj['b'],obj['m'],obj['n'],obj['k'],obj['dtype']]
-        self.operatorKind = obj['kind']
-        
-    def dumpToJson(self,path : str):
-        import json
-        self._innerDict["kind"] = self.operatorKind
-        self._innerDict["b"] = self.argList[0]
-        self._innerDict["m"] = self.argList[1]
-        self._innerDict["n"] = self.argList[2]
-        self._innerDict["k"] = self.argList[3]
-        self._innerDict["dtype"] = self.argList[4]
-        with open(path,'w') as f:
-            json.dump(self._innerDict,f)
-        
-    
-class GEMMBaseArgs(OperatorBaseArgs) :
-    def __init__(self):
-        super().__init__()
-        self.operatorKind = EnumOperator.Matmul
-    def getDetailedInfo(self) :
-        batch = int(self.argList[1])
-        m = int(self.argList[2])
-        n = int(self.argList[3])
-        k = int(self.argList[4])
-        dtype = ToTorchType(EnumKernelDType(int(self.argList[5])))
-        return (batch,m,n,k,dtype)
 
-if __name__ == '__main__' :
-    # PathManager.init()
-    pass
+
+# kernel运行时的二进制层面信息
+class KernelRuntimeInfo :
+    def __init__(self,module,func,regs,spills):
+        self.m_module = module
+        self.m_function = func
+        self.m_nRegs = regs
+        self.m_nSpills = spills
+
+
+class KernelLibFile :
+    def __init__(self,
+        filePath : str,  # hsaco文件路径
+        backendType : EnumBackendType,   # 后端类型（CUDA | HIP）
+        kernelFuncName ,  # 核函数名字
+        sharedMemSize,   # shm大小
+        signature,   # kernel signature
+        gridDims : list,
+        blockDims : list,
+        device= 0): # device号
+        
+        self.m_filePath = filePath
+        self.m_backendType : EnumBackendType = backendType
+        self.m_kernelInfo : KernelRuntimeInfo = None  # loader解析得到的地址等信息
+        self.m_signature = signature  
+        self.m_kernelFuncName = kernelFuncName
+        self.m_shmSize = sharedMemSize
+        self.m_device = device
+        self.m_gridDims = gridDims
+        self.m_blockDims = blockDims
+    
+    def __hash__(self) -> int:
+        return calculate_file_hash(self.m_filePath) 
+    
+    @functools.lru_cache
+    def hash(self)->int :
+        return calculate_file_hash(self.m_filePath) 
+
+    def signature_str(self) -> str :
+        ret = ''
+        for v in self.m_signature.values() :
+            ret += str(v)
+        return ret
+        
+
+
+# if __name__ == '__main__' :
+#     # PathManager.init()
+#     pass

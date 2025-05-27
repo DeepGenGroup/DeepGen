@@ -6,6 +6,8 @@ import sys
 from RemoteUtils import *
 from RunManager import StartParam
 
+from Operators.matmul import MatmulOp
+
 def main_process(
     runMode,
     tuning_param_file,cacheTuningSPaceFile,tuningSpaceGenMode,
@@ -13,10 +15,11 @@ def main_process(
     remoteTesterIP,
     remoteTesterSSHPort,
     remoteTesterUsername,
-    remoteTesterPwd
+    remoteTesterPwd,
+    needClearDir : bool
 ):    
     # 路径管理器初始化 & 清理缓存数据（可选）
-    PathManager.init(clearPkl=True, clearTmp=True, clearCache=True,clearDump=True)
+    PathManager.init(clearPkl=needClearDir, clearTmp=needClearDir, clearCache=needClearDir,clearDump=needClearDir)
     ######################################################################################
     st = time.time()
 
@@ -44,8 +47,9 @@ def main_process(
             need_compile = True
             isAsRemoteTester = False
             assert remoteBenchmarker is not None
-            
+        
         tm =  ParallelTaskManager(
+            runMode,
             gpu_devices,
             totalLen, cacheTuningSPaceFile, perfPathPrefix, 
             benchmarkcnt=10,  # 单个case执行次数
@@ -57,6 +61,9 @@ def main_process(
             rtol=1e-3,   # 相对误差
             remoteTestser = remoteBenchmarker
         )
+        op = MatmulOp()
+        tm.setTargetOp(op)
+        print("===== set target op ===========")
         tm.run(
             backendType ,  # 后端类型
             archInfo=arch,
@@ -67,7 +74,7 @@ def main_process(
             isAsRemoteTester=isAsRemoteTester
         )
         et = time.time()
-        print(f"====== Total Time Costs : {(et-st)/3600} Hours")
+        print(f">>>> ====== Total Time Costs : {(et-st)/3600} Hours")
     return
     
 if __name__ == '__main__' :
@@ -106,6 +113,8 @@ if __name__ == '__main__' :
     param = StartParam()
     if len(sys.argv) > 1 :
         startParamJsonPath = sys.argv[1]
+        needClearDir = int(sys.argv[2]) > 0
+        print(f"[D] needClearDir = {needClearDir}")
         param.parseFromJson(startParamJsonPath)
         # Tuning 参数空间配置文件
         tuning_param_file_list =  param.tuning_param_file
@@ -143,6 +152,7 @@ if __name__ == '__main__' :
             runMode,
             tuning_param_file,cacheTuningSPaceFile,tuningSpaceGenMode,
             gpu_devices,perfPathPrefix,backendType,keepTopNum,
-            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd
+            remoteTesterIP,remoteTesterSSHPort,remoteTesterUsername,remoteTesterPwd,
+            needClearDir
         )
     

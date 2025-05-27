@@ -7,7 +7,6 @@
 from typing import List,Type
 from kcg.Utils import *
 from kcg.Kernel import *
-from kcg.CompiledKernelFactory import *
 from kcg.Operators import matmul
 import sys
 import numpy as np
@@ -17,7 +16,7 @@ from kcg.KCGCompiler import KCGCompiler
 ############### User config ###############
 
 
-def case_normal_0(kp_matmul: KernelArgMatmul) :
+def case_normal_0(kp_matmul: MatmulTuningArgs) :
     #   {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 48}, {KEY_BLOCK_SIZE_K, 32}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 6}, 
     #   {KEY_GLOB_LOAD_WIDTH_A, 2}, {KEY_GLOB_LOAD_WIDTH_B, 2}, 
     #   {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 1}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
@@ -57,7 +56,7 @@ def case_normal_0(kp_matmul: KernelArgMatmul) :
     kp_matmul.K = 1024
 
 
-def case_normal_1(kp_matmul: KernelArgMatmul) :
+def case_normal_1(kp_matmul: MatmulTuningArgs) :
     #   {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 48}, {KEY_BLOCK_SIZE_K, 32}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 6}, 
     #   {KEY_GLOB_LOAD_WIDTH_A, 2}, {KEY_GLOB_LOAD_WIDTH_B, 2}, 
     #   {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 1}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
@@ -94,7 +93,7 @@ def case_normal_1(kp_matmul: KernelArgMatmul) :
     kp_matmul.K = 1024
 
 
-def case_bad_0(kp_matmul: KernelArgMatmul) :
+def case_bad_0(kp_matmul: MatmulTuningArgs) :
     # Cijk_Ailk_Bljk_SB_MT256x32x8_SN_APM1_AF0EM1_AF1EM1_AMAS3_ASAE01_ASCE01_ASEM1_BL1_DTL0_ETSP_EPS1_FL0_GRVW4_GSU1_GSUAMB_ISA906_IU1_K1_KLA_LPA0_LPB0_LDL1_LRVW4_MAC_MDA2_NLCA1_NLCB1_ONLL1_PK0_PGR1_PLR1_RK0_SU32_SUM0_SUS256_SVW4_SNLL0_TT8_4_USFGROn1_VAW1_VSn1_VW4_WG32_8_1_WGM1
     kp_matmul.BLOCK_SIZE_M= 256  # 256
     kp_matmul.BLOCK_SIZE_N= 32 # 32
@@ -112,10 +111,10 @@ def case_bad_0(kp_matmul: KernelArgMatmul) :
 m_len=1024  # 16 blocks
 n_len=1024  # 16 blocks
 k_len=1024   # 8 blocks
-kp_matmul = KernelArgMatmul(m_len,n_len,k_len,
-    EnumKernelDType.float32 ,
-    EnumKernelDType.float32 ,
-    EnumKernelDType.float32
+kp_matmul = MatmulTuningArgs(m_len,n_len,k_len,
+    EnumKernelDType.float32 
+    # EnumKernelDType.float32 ,
+    # EnumKernelDType.float32
     )
 
 # case_normal_1(kp_matmul)
@@ -132,7 +131,7 @@ def compare_with_error(tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
     max_error = torch.max(torch.abs(tensor1 - tensor2))
     return diff_elements, max_error
 
-def test_correctness(kpm : KernelArgMatmul):
+def test_correctness(kpm : MatmulTuningArgs):
     kernelCompiler = KCGCompiler()
     kernelCompiler.set_config_json_path('/home/xushilong/CodeGenDemo/.vscode/c_cpp_properties.json')
     hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ = kernelCompiler.compileKernel(kpm)
@@ -153,11 +152,11 @@ def test_correctness(kpm : KernelArgMatmul):
     # funName = 'Matmul_m1024n1024k1024'
     # kernelName = 'GEMM_mnk1024x1024x512_f32f32f32_TTmn4x4_BTmnk64x64x16'
 
-    inConfig = UserInputs(hsacoPath,kernelName,kpm)
+    inConfig = KernelConfigs(hsacoPath,kernelName)
     inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
     inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
     inConfig.operatorKind = EnumOperator.Matmul
-    packedKernel = CompiledKernelFactory.getKernel(inConfig)
+    # packedKernel = CompiledKernelFactory.getKernel(inConfig)
     
     a = torch.randn(kpm.M,kpm.K,dtype=inConfig.kernelParam.dtypeTorch('A'),device='cuda:0')
     b = torch.randn(kpm.K,kpm.N,dtype=inConfig.kernelParam.dtypeTorch('B'),device='cuda:0')

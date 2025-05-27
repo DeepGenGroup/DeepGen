@@ -5,9 +5,9 @@ import os
 import tempfile
 from pathlib import Path
 
-from kcg.Utils import build
+from kcg.Utils import *
 from kcg.Cache import *
-from kcg.Kernel import *
+# from kcg.Kernel import KernelLibFile
 
 
 class CudaLoaderST(object):

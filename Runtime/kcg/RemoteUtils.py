@@ -55,7 +55,11 @@ class RemoteSSHConnect :
             for i in range(0,len(local_path)):
                 lp = local_path[i]
                 rp = remote_path[i]
-                shutil.copy2(lp,rp)
+                localDir = lp[0:lp.rfind("/")]
+                if localDir != rp :
+                    shutil.copy2(lp,rp)
+                else:
+                    ...  # skip when destPath == srcPath on same PC
         else:
             with SCPClient(self.ssh.get_transport()) as scp:
                 for i in range(0,len(local_path)):
@@ -64,6 +68,12 @@ class RemoteSSHConnect :
                     scp.put(lp, rp)
                 
     def upload_file(self,local_path : str, remote_path : str):
+        if self._isLocalIP :
+            localDir = local_path[0:local_path.rfind("/")]
+            if localDir == remote_path:
+                # when dest src are equal and both on same PC, skip 
+                return True
+        isErrorOccured = False
         try:
             if self._isLocalIP :
                 shutil.copy2(local_path,remote_path)
@@ -71,9 +81,13 @@ class RemoteSSHConnect :
                 with SCPClient(self.ssh.get_transport()) as scp:
                     scp.put(local_path, remote_path)
         except Exception as e :
-            print("[RemoteSSHConnect] Exception : ",e)
-            return False
-        return True
+            # print("[RemoteSSHConnect] Exception : ",e)
+            isErrorOccured = True
+        finally :
+            if isErrorOccured :
+                return False
+            else:
+                return True
     
     def download_file(self,local_path : str, remote_path : str):
         if self._isLocalIP :
@@ -167,7 +181,7 @@ class MyTCPClient :
                 # 连接到服务器
             self.socket_client.connect((destip, destport))
         except Exception as e :
-            print("[W] tcpclient error : ",e)
+            print(f"[W] tcpclient connect error at {destip}:{destport} : ",e)
             return False
         print(f"[I] tcpclient connect {destip}:{destport} success! ")
         return True

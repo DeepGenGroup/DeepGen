@@ -66,8 +66,6 @@ class StartParam :
             self.runMode = EnumRunMode.CallRemotePerftester
         elif obj['runMode'] == "AsRemotePerftester" :
             self.runMode = EnumRunMode.AsRemotePerftester
-        elif obj['runMode'] == "GetTuneSpace_Compile_Benchmark_Local" :
-            self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
         else:
             assert False, f"illegal runmode {obj['runMode']}"
             
@@ -212,18 +210,26 @@ class _WorkGroup :
             return com
         com = __get_object()
         tester = __get_object()
-        if self.m_isUseRemoteBenchmark :
+        if self.m_isUseRemoteBenchmark : # compile and benchmark process on different PC
             com.runMode = EnumRunMode.CallRemotePerftester
             tester.runMode = EnumRunMode.AsRemotePerftester
             return (com,tester)
-        else:
-            com.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
-            return (com,com)
+        else: # compile and benchmark process on same PC
+            com.runMode = EnumRunMode.CallRemotePerftester
+            tester.runMode = EnumRunMode.AsRemotePerftester
+            return (com,tester)
     
     def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
         c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
         t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
         return (c,t)
+    
+    
+    def getStartCmd(self, wd : str ,shortfname : str, needClearDir = 1) -> str :
+        return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_tmp/{shortfname} {needClearDir}"
+    
+    def getClearCmd(self, wd : str ) -> str :
+        return f"cd {wd} ; ./scripts/ClearRuntimeDir.sh "
     
     # start compiler and perftester :
     def start(self) :
@@ -238,20 +244,25 @@ class _WorkGroup :
         fname_c ,fname_t = self.getCompilerTesterParamfileNames()
         shortname_c = fname_c.split('/')[-1]
         shortname_t = fname_t.split('/')[-1]
+        if self.m_sshToCompiler.host == self.m_sshToTester.host : 
+            self.m_sshToCompiler.execute_cmd_on_remote( self.getClearCmd(self.m_compiler.cwd))
         with open(fname_c, 'w') as f:
             json.dump(param_c.toJson(),f)
         with open(fname_t, 'w') as f:
             json.dump(param_t.toJson(),f)
-        
         # connect to compiler and tester, execute startup shell command
         if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
             self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_tmp")
             self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_tmp")
-            def getStartCmd(wd : str ,shortfname : str) -> str :
-                return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_tmp/{shortfname}"
             
-            self.m_sshToCompiler.execute_cmd_on_remote( getStartCmd(self.m_compiler.cwd, shortname_c))
-            self.m_sshToTester.execute_cmd_on_remote( getStartCmd(self.m_perfTester.cwd, shortname_t))
+            if self.m_sshToCompiler.host == self.m_sshToTester.host : 
+                self.m_sshToCompiler.execute_cmd_on_remote( self.getStartCmd(self.m_compiler.cwd, shortname_c, 0))
+                self.m_sshToTester.execute_cmd_on_remote( self.getStartCmd(self.m_perfTester.cwd, shortname_t, 0))
+            else:
+                self.m_sshToCompiler.execute_cmd_on_remote( self.getStartCmd(self.m_compiler.cwd, shortname_c, 1))
+                self.m_sshToTester.execute_cmd_on_remote( self.getStartCmd(self.m_perfTester.cwd, shortname_t, 1))
+            
+            
         
         
 # 集群运行管理器，用于读取用户配置的批量信息 建立compile-test任务集群 初始化各个机器的分工

@@ -7,7 +7,7 @@ from Operators.matmul import *
 from NewCfgTest import CreateMatmulConfig
 
 
-def _process_cfg(encoder : TuningSpaceEncoder_Matmul, cfgs : List[Dict], check_funcs : List[callable], tempfilename:str ) :
+def _process_cfg(encoder : TuningSpaceEncoder, cfgs : List[Dict], check_funcs : List[callable], tempfilename:str ) :
     ret = {'results':[]}
     for config in cfgs :
         isOK = True
@@ -40,7 +40,7 @@ class TuningSpaceManager :
     
     def generateSpaceParallel(self, maxProcess) -> int:
         param_options = self._read_params(self.m_tuningConfigFileName)
-        self.m_encoder = TuningSpaceEncoder_Matmul(param_options)
+        self.m_encoder = TuningSpaceEncoder(param_options)
         # 获取所有参数名和对应的可选值
         keys = list(param_options.keys())
         values = list(param_options.values())
@@ -163,7 +163,7 @@ def ParseTuningSpace(fname : str) :
     space = None
     with open(fname) as f :
         space = json.load(f)
-    te = TuningSpaceEncoder_Matmul(space['template'])
+    te = TuningSpaceEncoder(space['template'])
     cfgs = []
     for cfgstr in space['cfgs'] :
         cfgs.append(te.decode(cfgstr))

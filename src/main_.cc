@@ -344,20 +344,7 @@ std::vector< KernelInfo> _compile(MatmulParams& config) {
 }
 
 
-#ifdef COMPILE_AS_PYMODULE
-static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
-  MatmulParams config;
-  assert(config.parse(args));
-  // std::cout << config << std::endl;
-  std::vector<KernelInfo> kernels;
-  std::string hsacoPath;
-  Py_BEGIN_ALLOW_THREADS;
-  // std::cout << "[pymod] start _compile" << std::endl;
-  kernels = _compile(config);
-  // std::cout << "[pymod] _compile success" << std::endl;
-  Py_END_ALLOW_THREADS;
-  Py_INCREF(Py_None);
-  // return Py_None;
+static PyObject* packResultsToPythonObject(std::vector<KernelInfo>& kernels){
   PyObject *retArr;
   retArr = PyTuple_New(kernels.size());
     // 填充元组
@@ -386,8 +373,26 @@ static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
     }
     PyTuple_SetItem(retArr, i, item);  // 将每个元素插入元组
   }
-  // std::cout << "[pymod] ======== compile_kernel_matmul return " << std::endl;
   return retArr;
+  // std::cout << "[pymod] ======== compile_kernel_matmul return " << std::endl;
+}
+
+#ifdef COMPILE_AS_PYMODULE
+static PyObject* compile_kernel_matmul(PyObject* self, PyObject* args) {
+  MatmulParams config;
+  assert(config.parse(args));
+  // std::cout << config << std::endl;
+  std::vector<KernelInfo> kernels;
+  std::string hsacoPath;
+  Py_BEGIN_ALLOW_THREADS;
+  // std::cout << "[pymod] start _compile" << std::endl;
+  kernels = _compile(config);
+  // std::cout << "[pymod] _compile success" << std::endl;
+  Py_END_ALLOW_THREADS;
+  Py_INCREF(Py_None);
+  // return Py_None;
+
+  return packResultsToPythonObject(kernels);
 }
 
 static PyObject* set_platform(PyObject* self, PyObject* args) {

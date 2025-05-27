@@ -11,6 +11,41 @@ using namespace KernelCodeGen;
 
 using TuneConfig = std::map<std::string, std::map<std::string, int64_t>>;
 
+
+static PyObject* packResultsToPythonObject(std::vector<KernelInfo>& kernels){
+  PyObject *retArr;
+  retArr = PyTuple_New(kernels.size());
+    // 填充元组
+  for (int i=0;i<kernels.size();++i) {
+    // 假设元素数组元素是以字符串和整数对的方式存在
+    // 这里你需要将每一对 (ss, i...) 插入
+    const auto& kernel = kernels[i];
+    std::vector<int> gridDims = {1,1,1};
+    std::vector<int> blockDims = {1,1,1};
+    for(int i=0;i<kernel.m_gridDims.size();++i){
+      gridDims[i] = kernel.m_gridDims[i];
+    }
+    for(int i=0;i<kernel.m_blockDims.size();++i){
+      blockDims[i] = kernel.m_blockDims[i];
+    }
+    PyObject* item = Py_BuildValue("(ssiiiiiii)",
+      kernel.m_binaryPath.c_str(),
+      kernel.m_kernelName.c_str(),
+      gridDims[0],gridDims[1],gridDims[2],
+      blockDims[0],blockDims[1],blockDims[2],
+      kernel.m_shmBytes
+    );
+    if (item == NULL) {
+      Py_DECREF(retArr);
+      return NULL;  // 如果构建某个元素失败，释放资源并返回NULL
+    }
+    PyTuple_SetItem(retArr, i, item);  // 将每个元素插入元组
+  }
+  return retArr;
+  // std::cout << "[pymod] ======== compile_kernel_matmul return " << std::endl;
+}
+
+
 std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   auto attn = config.at("attention1");
   std::map<std::string, std::map<std::string, int64_t>> tileConfig = {
@@ -85,6 +120,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   result = generator.mapping(module, tileConfig);
   // optimize
   generator.optimize(module, config);
+  llvm::outs() << "=========== after optimize ===========\n"; llvm::outs().flush();module->dump();
   // lowering
   generator.lowering(module);
   // translate

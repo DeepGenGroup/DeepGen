@@ -1,5 +1,6 @@
 import json
 import importlib.util
+from typing import List
 
 class CreateConfig:
   def __init__(self, json_path, shape):
@@ -155,22 +156,22 @@ class CreateConfig:
     results = self.h(results)
     return results
 
-# def compile():
-#   spec = importlib.util.spec_from_file_location("KCGCompiler", )
-#   mod = importlib.util.module_from_spec(spec)
-#   spec.loader.exec_module(mod)
-#   self.__compile_kernel_matmul = mod.compile_kernel_matmul
 
+spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
+mod = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(mod)
+compile_kernel_FA = mod.compile_attn
 
-def main() :
+def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
   path = "/home/xushilong/DeepGen/_TempCodes/config.json"
-  shape = [1, 32, 2048, 128]
   cc = CreateConfig(path, shape)
   cfgs = cc.main()
-  spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
-  mod = importlib.util.module_from_spec(spec)
-  spec.loader.exec_module(mod)
-  compile_kernel_FA = mod.compile_attn
+  return cfgs
+
+def compile(shape : List[int] , cfgs : List):
+  # shape = [1, 32, 2048, 128]
+  if len(cfgs) <= 0:
+    cfgs = get_cfgs(shape)
   for cfg in cfgs:
     config = {
       "attention1": {
@@ -200,9 +201,6 @@ def main() :
     print("gridSize: ", gridSize)
     print("blockSize: ", blockSize)
     print(f"sharedSize: {sharedSize} byte")
-
-    compile_kernel_FA(shape,config)
-    return
     
-if __name__ == "__main__":
-  main()
+    compile_kernel_FA(shape,config)
+

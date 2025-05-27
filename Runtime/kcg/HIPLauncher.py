@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, Callable
 from kcg.Cache import *
 
 # from kcg.common.backend import BaseBackend, register_backend, compute_core_version_key
@@ -13,7 +13,6 @@ from kcg.Cache import *
 # from kcg.Launcher.make_launcher import get_cache_manager, make_so_cache_key
 from kcg.Cache import *
 from kcg.Utils import *
-from kcg.Kernel import *
 from kcg.Loader import HIPLoaderST
 import importlib.util
 # HIP_BACKEND_MODE = False

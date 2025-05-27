@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, Callable
 from kcg.Cache import *
 
 # from kcg.common.backend import BaseBackend, register_backend, compute_core_version_key
@@ -347,11 +347,12 @@ class CUDALauncher :
         enterHookFunc = None
         exitHookFunc = None
         numCTAs = gridDims[0]*gridDims[1]*gridDims[2]
-        # print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ")
+        print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ")
         numWarps = int(blockDims[0]*blockDims[1]*blockDims[2] / 32)
-        # print(f'[R] shm={self.m_kernelLib.m_shmSize}',flush=True)
+        print(f'[Runtime] shm={self.m_kernelLib.m_shmSize}',flush=True)
         if numWarps < 1 :
           numWarps = 1
+        print(f'[Runtime] warps={numWarps}',flush=True)
         wrapper(gridDims[0],gridDims[1],gridDims[2], numWarps,
                 numCTAs,
                 clusterDims[0],clusterDims[1],clusterDims[2],
