@@ -6,11 +6,11 @@ set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/llvm-install")
+set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 # set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
 # After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available
-set(USER_LLD_PATH "/home/xushilong/llvm-install/bin/ld.lld") 
+set(USER_LLD_PATH "/home/xushilong/rocm-llvm-install/bin/ld.lld") 
 set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas") 
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
