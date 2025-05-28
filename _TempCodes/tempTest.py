@@ -1,6 +1,7 @@
 import multiprocessing
 import os
 import torch
+from typing import List
 
 envname = 'TEST_ENV'
 
@@ -28,8 +29,95 @@ def main() :
     print('====== main stopped ')
     return
 
+def is_hip():
+    import torch
+    return torch.version.hip is not None
+
+class DeviceInfo :
+    @staticmethod
+    def get_cuda_stream(idx=None):
+        if idx is None:
+            idx = DeviceInfo.get_current_device()
+        try:
+            # print(f"[D]--------- DeviceInfo.get_current_device() is {idx}")
+            from torch._C import _cuda_getCurrentRawStream
+            return _cuda_getCurrentRawStream(idx)
+        except ImportError:
+            import torch
+            return torch.cuda.current_stream(idx).cuda_stream
+
+    @staticmethod
+    def get_current_device():
+        import torch
+        return torch.cuda.current_device()
+
+    @staticmethod
+    def set_current_device(idx):
+        import torch
+        torch.cuda.set_device(idx)
+
+    @staticmethod
+    def set_visible_devices(devids : List):
+        import torch
+        import os
+        envname = 'CUDA_VISIBLE_DEVICES'
+        if is_hip() :
+            envname = 'HIP_VISIBLE_DEVICES'
+        # if DeviceInfo.get_visible_devices() is None:
+        expr = ''
+        for id in devids:
+            expr += str(id) + ','
+        os.environ[envname] = expr[0:-1]
+        print(f"==== set {envname}={os.environ[envname]}  =====",flush=True)
+
+    
+    @staticmethod
+    def get_visible_devices():
+        import os
+        envname = 'CUDA_VISIBLE_DEVICES'
+        if is_hip() :
+            envname = 'HIP_VISIBLE_DEVICES'
+        return os.environ.get(envname) 
+    
+    @staticmethod
+    def get_device_capability(idx):
+        import torch
+        return torch.cuda.get_device_capability(idx)
+    
+    @staticmethod
+    def get_warp_size():
+        if is_hip():
+            return 64
+        else:
+            return 32
+
+def init_cuda(_devId) :
+    DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
+    print("init_cuda devid=",_devId)
+    DeviceInfo.set_visible_devices([_devId])
+    DeviceInfo.set_current_device(_devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
+    if not torch.cuda.is_available() :
+        torch.cuda.init()
+        torch.cuda.empty_cache()
+
+
 if __name__ == '__main__':
-    main()
+    dev = 7
+    init_cuda(dev)
+    a = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    b = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    c = torch.empty(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    st = torch.Event(enable_timing=True)
+    et = torch.Event(enable_timing=True)
+    d = torch.matmul(a,b)
+    st.record()
+    c = torch.matmul(a,b)
+    torch.cuda.synchronize()
+    et.record()
+    if torch.allclose(c,d):
+        print("test correct")
+    else:
+        print("test error")
 
 
 

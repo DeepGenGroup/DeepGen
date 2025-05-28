@@ -74,7 +74,7 @@ class KernelTestResult :
 
 
 class PerfTester :
-    def __init__(self,devId:int,atol:float,rtol:float,nTorchEpsInitTest = 50, OpTy : OpInterface = None):
+    def __init__(self,devId:int,atol:float,rtol:float,nTorchEpsInitTest = 50, OpInstance : OpInterface = None):
         self.inputTensors_baseline = []
         self.inputTensors_kcg = []
         self.outputTensor = None
@@ -95,7 +95,7 @@ class PerfTester :
         self.initArgJsonName = f"init_arg_{self._devId}.json"
 
         self.Process = ParallelTaskManager.Process
-        self.OpTy = OpTy
+        self.OpInstance = OpInstance
     
     @staticmethod
     def _controllerRemote(workflag,finishflag,perflogPath : str) :
@@ -140,7 +140,7 @@ class PerfTester :
         return diff_elements, max_error
     
     def inner_test_torch(self) -> Tuple[torch.Tensor,float]:
-        self.result_baseline, eps = self.OpTy.Test_baseline()
+        self.result_baseline, eps = self.OpInstance.Test_baseline()
         return (self.result_baseline, eps)
     
     def _init_torch_eps(self) :
@@ -172,17 +172,17 @@ class PerfTester :
                    benchmarkCount = 5, warmupCount = 1 ) -> KernelTestResult:
         # self.init_cuda()
         self.init_cuda()
-        self.OpTy.InitInputTensorsWithDatalist(self._devId)
-        for mat in self.OpTy.InputTensors_Benchmark :
+        self.OpInstance.InitInputTensorsWithDatalist(self._devId)
+        for mat in self.OpInstance.InputTensors_Benchmark :
             print('InputTensors_Benchmark shape : ', mat.shape)
         
-        for mat in self.OpTy.InputTensors_Baseline :
+        for mat in self.OpInstance.InputTensors_Baseline :
             print('InputTensors_Baseline shape : ', mat.shape)
         
         # self.OpTy.InitInputTensors(inConfig, self._devId)
-        resultContainer = KernelTestResult(self.OpTy.TuningArgs)
+        resultContainer = KernelTestResult(self.OpInstance.TuningArgs)
         packedKernel.setDevice(0)  # when __init__, env has been set to actual device id. set 0 here
-        self.OpTy.InitBaselineOutputTensor( self._devId)
+        self.OpInstance.InitBaselineOutputTensor( self._devId)
         
         print(f"packed: blockdim ={packedKernel.m_launcher.m_kernelLib.m_blockDims} ")
         print(f"packed: griddim ={packedKernel.m_launcher.m_kernelLib.m_gridDims} ")
@@ -200,21 +200,20 @@ class PerfTester :
             self._init_torch_eps()
 
         # warmup
-        self.OpTy.Test_warmup(self.outputTensor, packedKernel, warmupCount)
-                
+        self.OpInstance.Test_warmup(self.outputTensor, packedKernel, warmupCount)
         # benchmark
         res = []
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
         for i in range(0,benchmarkCount) :
+            start_event = torch.cuda.Event(enable_timing=True)
+            end_event = torch.cuda.Event(enable_timing=True)
             # outputTensor = self.OpTy.GetBenchmarkOutputTensor( self._devId)
             outputTensor = torch.empty(1024,1024,dtype=torch.float32, device="cuda:7")
             print(f"out shape = {outputTensor.shape}")
-            (resultTensor, eps) = self.OpTy.Test_benchmark(packedKernel,outputTensor,start_event,end_event)
+            (resultTensor, eps) = self.OpInstance.Test_benchmark(packedKernel,outputTensor,start_event,end_event)
             res.append(eps)
             if self.mat_kcg is None :
                 self.mat_kcg = resultTensor
-        print("c=",self.mat_kcg)
+        # print("c=",self.mat_kcg)
 
         if torch.allclose(self.mat_kcg, self.result_baseline, atol=self._atol, rtol=self._rtol):
             print('test correct!')
@@ -264,9 +263,9 @@ class PerfTester :
     
     def runPerfTests(self, runMode : EnumRunMode , pathLock, endsignal,finishflag ,outputPAth = None, benchmarkCount = 5, warmupCount = 1, topNum = 6, torchDynamicLogPath = '', nTorchEpsInitTest = 50, remoteTesterSSH : RemoteSSHConnect = None, isAsRemoteTester = False) : 
         # collect kernels from pkl         
-        assert self.OpTy is not None
-        assert self.OpTy.BaseArgs is not None
-        assert self.OpTy.TuningArgs is not None
+        assert self.OpInstance is not None
+        assert self.OpInstance.BaseArgs is not None
+        assert self.OpInstance.TuningArgs is not None
         valid_kernels = [] # List[Tuple[KernelArgMatmul,UserInputs,CompiledKernel]]
         total_kernel_count = 0
         dyTorchCounter = 0
@@ -281,9 +280,9 @@ class PerfTester :
             # use remote benchmark, connect remoteTester and send initializer args of different tasks
             if remoteTesterSSH.connect():
                 print(f"connect remotePerfTester success : destip={remoteTesterSSH.host}")
-                if self.OpTy is not None and self.OpTy.BaseArgs.operatorKind != EnumOperator.Invalid :
+                if self.OpInstance is not None and self.OpInstance.BaseArgs.operatorKind != EnumOperator.Invalid :
                     initargJsonPath = PathManager.default_cache_dir() + "/" + self.initArgJsonName
-                    self.OpTy.BaseArgs.dumpToJson(initargJsonPath)
+                    self.OpInstance.BaseArgs.dumpToJson(initargJsonPath)
                     remoteTesterSSH.upload_file(initargJsonPath, PathManager.default_cache_dir())
             socket_client = MyTCPClient()
             connected = False
@@ -310,7 +309,7 @@ class PerfTester :
             #         break
             # self.OpTy.BaseArgs.parseFromJsonfile(argfile[0])
             self.init_cuda()
-            self.OpTy.InitInputTensorsWithDatalist(self._devId)
+            self.OpInstance.InitInputTensorsWithDatalist(self._devId)
             self._init_torch_eps()
         
         while startFlag:
@@ -448,10 +447,10 @@ class ParallelTaskManager :
         for devid in self.devIds :
             lock = ParallelTaskManager.ctx.Lock()
             self.locks.append(lock)
-        self.OpTy : OpInterface = None
+        self.OpTy : Type[OpInterface] = None
         
         
-    def setTargetOp(self,op : OpInterface) :
+    def setTargetOp(self,op : Type[OpInterface] ) :
         self.OpTy = op
     
     def __del__(self) :
@@ -460,7 +459,7 @@ class ParallelTaskManager :
         #     lk.release()
     
     @staticmethod
-    def _innerCreateTesterProc(Op : OpInterface, runMode : EnumRunMode,
+    def _innerCreateTesterProc(Op : Type[OpInterface], runMode : EnumRunMode,
         dev,
         lock,
         endSignal,
@@ -470,13 +469,17 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList) :
+        nTorchEpsInitTest,atol,rtol,remotesender, isAsRemoteTester, baselineInitList, baseArgFile) :
         
+        OpInstance = Op()
+        if baseArgFile is not None and len(baseArgFile) > 0 :
+            OpInstance.BaseArgs.parseFromJsonfile(baseArgFile)
+        # baselineInitList = OpInstance.BaseArgs.getIntDatalist()
         if len(baselineInitList) > 0 :
-            Op.InitBaseArgs(baselineInitList)
+            OpInstance.InitBaseArgs(baselineInitList)
             # OpType.operatorKind = EnumOperator.Matmul
             # OpType.values = baselineInitList
-        tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest,Op)
+        tester = PerfTester(dev,atol,rtol,nTorchEpsInitTest,OpInstance)
         
         parsedBests = []
         try:
@@ -484,7 +487,7 @@ class ParallelTaskManager :
                 with open(outfilename) as f :
                     obj = json.load(f)
                     for cfg in obj['results'] :
-                        ktr = KernelTestResult(Op.TuningArgs)
+                        ktr = KernelTestResult(OpInstance.TuningArgs)
                         ktr.parseFromJson(cfg)
                         parsedBests.append(ktr)
                         # tester.torch_eps = ktr.torch_elapseTimeMs
@@ -499,7 +502,7 @@ class ParallelTaskManager :
             endSignal.value = 1
         
     @staticmethod
-    def _perfMonitorFunc(Op : OpInterface,
+    def _perfMonitorFunc(Op : Type[OpInterface],
         runMode : EnumRunMode,
         devId, 
         lock,
@@ -510,12 +513,12 @@ class ParallelTaskManager :
         nWarmup,
         topNum,
         torchDynamicLogPath,
-        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester,initializerList) :
+        nTorchEpsInitTest,atol,rtol, remotesender,isAsRemoteTester,initializerList, baseArgFile : str = "") :
         perfLog = f"{perf_out_path}_card{devId}.json"
         worker = ParallelTaskManager.Process(
             target= ParallelTaskManager._innerCreateTesterProc, 
             args=(Op,runMode, devId, lock, endSignal,finishflag ,perfLog,nBenchMark,nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,
-                  initializerList))
+                  initializerList, baseArgFile))
         worker.start()
         lastDeathTime = 0
         deadtime = 0
@@ -523,7 +526,7 @@ class ParallelTaskManager :
         while True:
             worker.join()
             if endSignal.value == 1 :  # 进程收到结束信号正常结束
-                print(f"======= PerfTester {devId} Stopped OK ==========")
+                print(f">>>> ======= PerfTester {devId} Stopped OK ==========")
                 return
             else:
                 deadtime = time.time()
@@ -534,13 +537,13 @@ class ParallelTaskManager :
                     time.sleep(3)
                     worker = ParallelTaskManager.Process(target= ParallelTaskManager._innerCreateTesterProc, 
                         args=(Op,runMode, devId, lock, endSignal,perfLog, nBenchMark, nWarmup, topNum, torchDynamicLogPath, nTorchEpsInitTest,atol,rtol,remotesender,isAsRemoteTester,
-                              initializerList))
+                              initializerList, baseArgFile))
                     worker.start()
                 else:
                     print(f"======= [Fatal] PerfTester {devId} crash too frequently(<30s). No Restart! ==========")
                     return
         
-    def _initPerfMonitors(self,isAsRemoteTester,initArgList) :
+    def _initPerfMonitors(self,isAsRemoteTester,initArgList, baseArgFile) :
         for i in range(len(self.devIds)) :
             devid = self.devIds[i]
             lock = self.locks[i]
@@ -563,7 +566,8 @@ class ParallelTaskManager :
                     self.atol,self.rtol,
                     self.sender,
                     isAsRemoteTester,
-                    initArgList
+                    initArgList,
+                    baseArgFile
                 ))  # 创建perfTest守护进程。当perftest进程意外挂掉，由守护进程重启之
             monitor.start()
             self.perfProcMonitors.append(monitor)
@@ -628,20 +632,21 @@ class ParallelTaskManager :
             tse = None
             cfgstrs = []
             print(f'[D] needCompile={needCompile}, needPerfTest={needPerfTest},isAsRemoteTester={isAsRemoteTester},archInfo={archInfo}')
-
+            OpInstance = self.OpTy()
             # batch = None; m = None; n = None; k = None; dtype = None
             if needCompile and not isAsRemoteTester:
                 with open(self.tuningSpaceJson) as f :
                     obj = json.load(f)
                     tse = TuningSpaceEncoder(obj['template'])
                     cfgstrs = obj['cfgs']
-                    self.OpTy.BaseArgs.parseFromTemplateDict(obj['template'])
+                    OpInstance.BaseArgs.parseFromTemplateDict(obj['template'])
                     
+            baseArgInitFileName = ""
             if needPerfTest:
                 init_arg_list = []
                 if not isAsRemoteTester :
                     # init_arg_list = [batch,m,n,k,dtype]
-                    init_arg_list = self.OpTy.BaseArgs.getIntDatalist()
+                    init_arg_list = OpInstance.BaseArgs.getIntDatalist()
                 else:
                     # when act as remotetestser, RunManager may upload serveral init_arg files corresponding to several gpu cards to us. This need to be considered in future
                     print("== waiting for cache/init_arg_  files  ")
@@ -650,18 +655,21 @@ class ParallelTaskManager :
                         init_f = glob.glob(str(PathManager.default_cache_dir()) + f"/init_arg_*.json")
                         if len(init_f) > 0:
                             for file in init_f:
-                                self.OpTy.BaseArgs.parseFromJsonfile(file)
                                 # with open(file) as f:
                                 #     o = json.load(f)
                                 #     init_arg_list = [ o['b'],o['m'],o['n'],o['k'],o['dtype'] ]
-                                os.remove(file)
-                                print(f"[D] deleted initArgFile: {file}")
+                                # os.remove(file)
+                                pathAfterMove = shutil.move(file, PathManager.tmp_dir())
+                                print(f"[D] founded initArgFile: {pathAfterMove}")
+                                if baseArgInitFileName is None :
+                                    baseArgInitFileName = pathAfterMove
+                                OpInstance.BaseArgs.parseFromJsonfile(pathAfterMove)
                             break
                         else:
                             time.sleep(3)
                 print('============ start init perf monitors ==============')
-                init_arg_list = self.OpTy.BaseArgs.getIntDatalist()
-                self._initPerfMonitors(isAsRemoteTester,init_arg_list)
+                init_arg_list = OpInstance.BaseArgs.getIntDatalist()
+                self._initPerfMonitors(isAsRemoteTester,init_arg_list, baseArgInitFileName)
             # start compiling processes
             if needCompile :
                 print(f"[D] start compiling. self.CFG_COUNT={self.CFG_COUNT}=======")
@@ -675,8 +683,8 @@ class ParallelTaskManager :
                 for i in range(startFrom,len(cfgstrs)) :
                     selectDevID = dealed % len(self.devIds)
                     # print(f"=========== Dealing : cfgstrs[{i}] ================")
-                    self.OpTy.TuningArgs.assignWithEncoder(cfgstrs[i],tse)
-                    self._createCompileTask(sct.compile_kernels,self.locks[selectDevID], self.OpTy,i,i+1,'deepgen', self.devIds[selectDevID], backendtype, archInfo)
+                    OpInstance.TuningArgs.assignWithEncoder(cfgstrs[i],tse)
+                    self._createCompileTask(sct.compile_kernels,self.locks[selectDevID], OpInstance,i,i+1,'deepgen', self.devIds[selectDevID], backendtype, archInfo)
                     procCount += 1; dealed += 1
                     if procCount >= maxProcess or i == self.CFG_COUNT-1:
                         print(f"========= Wating for Compile tasks [{dealed}/{self.CFG_COUNT}]  ============",flush=True)

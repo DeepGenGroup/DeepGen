@@ -21,6 +21,7 @@ def main_process(
     # 路径管理器初始化 & 清理缓存数据（可选）
     PathManager.init(clearPkl=needClearDir, clearTmp=needClearDir, clearCache=needClearDir,clearDump=needClearDir)
     ######################################################################################
+    print("[D] start main_process")
     st = time.time()
 
     # 调优空间生成
@@ -35,7 +36,7 @@ def main_process(
     # 编译及benchmark启动
     isAsRemoteTester = False
     remoteBenchmarker = RemoteSSHConnect(remoteTesterIP, remoteTesterSSHPort, remoteTesterUsername,remoteTesterPwd)
-
+    print("[D] RemoteSSHConnect ctor ok")
     if runMode.value != EnumRunMode.GetTuneSpace_Local_Only.value :
         need_compile = True
         need_bencmark = True
@@ -48,6 +49,7 @@ def main_process(
             isAsRemoteTester = False
             assert remoteBenchmarker is not None
         
+        print("[D] start build ParallelTaskManager")
         tm =  ParallelTaskManager(
             runMode,
             gpu_devices,
@@ -61,9 +63,9 @@ def main_process(
             rtol=1e-3,   # 相对误差
             remoteTestser = remoteBenchmarker
         )
-        op = MatmulOp()
-        tm.setTargetOp(op)
-        print("===== set target op ===========")
+        OpTy = MatmulOp
+        tm.setTargetOp(OpTy)
+        print(f"===== set target op to {OpTy.__name__}===========")
         tm.run(
             backendType ,  # 后端类型
             archInfo=arch,

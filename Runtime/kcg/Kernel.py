@@ -1,7 +1,7 @@
 # 存放 Kernel 相关的类
 from dataclasses import dataclass
 import inspect
-from Loader import CudaLoaderST, HIPLoaderST
+from Loader import *
 from CUDALauncher import CUDALauncher
 from HIPLauncher import HIPLauncher
 from kcg.Utils import *
@@ -14,6 +14,7 @@ import textwrap
 from collections import defaultdict, namedtuple
 from typing import Callable, Generic, Iterable, List, Optional, TypeVar, Union, cast, overload
 from abc import ABC, abstractmethod
+from kcg.Cache import *
 # from kcg.CompiledKernel import CompiledKernel
 
 
