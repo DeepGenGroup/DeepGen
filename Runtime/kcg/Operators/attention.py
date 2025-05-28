@@ -5,15 +5,15 @@ from kcg.Utils import *
 
 
 @kcg_kernel
-def _matmul_kernel(
+def _attention_kernel(
         # Pointers to matrices
-        a_ptr, b_ptr, c_ptr
+        a_ptr, b_ptr, c_ptr, d_ptr
 ):
     'DUMP CODES'
     pass
  
 # Call hook. 在这里带入实参并调用
-def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
+def _attention(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor, out : torch.tensor):
     dimsizeA = len(a.shape) 
     dimsizeB = len(b.shape)
     dimsizeC = len(c.shape)
@@ -24,21 +24,18 @@ def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
         assert a.shape[0] == b.shape[0] == c.shape[0], "ABC must have same batch"
     assert a.is_contiguous(), "Matrix A must be contiguous"
     assert b.is_contiguous(), "Matrix B must be contiguous"
-    return _matmul_kernel(
-        a, b, c
+    return _attention_kernel(
+        a, b, c, out
     )
 
 # 基础参数
-class MatmulBaseArgs(OpBaseArgs) :
+class AttentionBaseArgs(OpBaseArgs) :
     def __init__(self):
         super().__init__()
-        self.operatorKind = EnumOperator.Matmul
+        self.operatorKind = EnumOperator.Attention
         self.argDict = {
             "kind" : self.operatorKind,
-            "b" : 0,
-            "m" : 0,
-            "n" : 0,
-            "k" : 0,
+            "shape" : [0,0,0,0],
             "dtype" : 0
         }
         # self.intValues : [b,m,n,k, dtypeInt]
@@ -48,7 +45,7 @@ class MatmulBaseArgs(OpBaseArgs) :
         return ToTorchType(EnumKernelDType(dtInt))        
     
     def getIntDatalist(self) -> List[int] :
-        return self.intValues[0:4] + [self.intValues[-1]]
+        return self.intValues[0:4]
     
     def parseFromTemplateDict(self,templateDict : Dict):
         batch = templateDict[ConfigKeywords.KEY_BATCH][0]
@@ -326,7 +323,7 @@ class MatmulOp(OpInterface) :
     def __init__(self):
         super().__init__()
         self.TuningArgs = MatmulTuningArgs()
-        self.BaseArgs = MatmulBaseArgs()
+        self.BaseArgs = AttentionBaseArgs()
         self.CompileKernelMatmul = None
         self.SetPlatform = None
 
@@ -466,7 +463,7 @@ class MatmulOp(OpInterface) :
         K, N = b.shape
         c = torch.empty((M, N), device='cpu', dtype=dtypeC)
         # get function signature
-        outSignature = _matmul(a, b, c)
+        outSignature = _attention(a, b, c)
         return outSignature
     
     def SetTuningArgs(self, tuningArgs : List) :
@@ -519,7 +516,7 @@ class MatmulOp(OpInterface) :
         assert self.BaseArgs is not None
         assert self.TuningArgs is not None
         assert isinstance(self.TuningArgs, MatmulTuningArgs)
-        assert isinstance(self.BaseArgs , MatmulBaseArgs)
+        assert isinstance(self.BaseArgs , AttentionBaseArgs)
         # init baseline inputs
         matA = None; matB = None
         if self.InputTensors_Baseline is None :

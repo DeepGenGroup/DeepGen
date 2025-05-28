@@ -2,6 +2,8 @@ import json
 import importlib.util
 from typing import List
 
+from kcg.Kernel import *
+
 class CreateConfig:
   def __init__(self, json_path, shape):
     f = open(json_path, "r")
@@ -172,7 +174,10 @@ def compile(shape : List[int] , cfgs : List):
   # shape = [1, 32, 2048, 128]
   if len(cfgs) <= 0:
     cfgs = get_cfgs(shape)
+  tse = TuningSpaceEncoder(cfgs[0]['attention1'])
+  
   for cfg in cfgs:
+    kam = 
     config = {
       "attention1": {
         "Br": cfg[0], "Bc": cfg[1], "Hd": cfg[2], "Slice1": cfg[3], "Slice2": cfg[4], 
@@ -192,7 +197,42 @@ def compile(shape : List[int] , cfgs : List):
         "SHARED_PREFETCH_P": cfg[32], "REG_PREFETCH_P": cfg[33], "REG_PREFETCH_O": cfg[34],
       }
     }
-  
+    
+  # def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256) -> List[int]:
+  #   # main
+  #   ttiles = self.getThreadTile(halfTag=thalfTag, squareTag=tsquareTag)
+  #   btiles = self.getBlockTile(halfTag=bhalfTag, squareTag=bsquareTag)
+  #   tals = self.getSplitUAndLayout(ttiles, btiles, max_thread_num=max_thread_num)
+  #   temp_tals = self.getBlockK(tals)
+  #   temp_tals = self.getScatterWidth(temp_tals)
+  #   temp_tals = self.getPrefetchAndContinuous(temp_tals)
+  #   temp_tals = self.getOther(temp_tals)
+  #   kams = []
+  #   for tal in temp_tals:
+  #     kam = MatmulTuningArgs(self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0], self.cfg_dict[kw.KEY_BATCH][0] ,            # M, N, K, batch
+  #                           self.cfg_dict[kw.KEY_DTYPE_A][0]) 
+  #                           # self.cfg_dict[kw.KEY_DTYPE_B][0], 
+  #                           # self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
+  #     config = (
+  #       tal[0][0], tal[0][1], tal[0][2],  # block_size
+  #       tal[1][0], tal[1][1],             # thread_size
+  #       tal[2][0], tal[2][1],             # load_width
+  #       tal[3][0], tal[3][1],             # block_layout
+  #       tal[4][0], tal[4][1],             # warp_layout
+  #       tal[5][0], tal[5][1],             # warp_scatter
+  #       tal[6][0], tal[6][1],             # thread_scatter
+  #       tal[7][0], tal[7][1], tal[7][2],  # sm_prefatch, reg_prefatch, load_continuous
+  #       tal[8][0], tal[8][1], tal[8][2],  # splitU, store_width, store_continuos
+  #       tal[9][0], tal[9][1],             # block_mapping, unroll
+  #       self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
+  #     )
+  #     kam.setArgs(*config)
+  #     kamEncodedStr = self.encoder.encode(kam.jsonfy())
+  #     kams.append(int(kamEncodedStr))
+  #   return kams
+    
+    tse.encode(config['attention1'])
+    
     gridSize = [int(shape[2]/cfg[1]), shape[1], shape[0]]  # bx, by, bz
     blockSize = [cfg[-1][0]]  # tx
     sharedSize = cfg[-1][1]  # shared memroy size
