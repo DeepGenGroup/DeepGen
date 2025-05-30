@@ -18,12 +18,6 @@ def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
     dimsizeB = len(b.shape)
     dimsizeC = len(c.shape)
     assert dimsizeA == dimsizeB == dimsizeC, "ABC must with same dim size"
-    if dimsizeA==3:
-        assert a.shape[1] == b.shape[0], "AB have Incompatible shape"
-    if dimsizeA==4:
-        assert a.shape[0] == b.shape[0] == c.shape[0], "ABC must have same batch"
-    assert a.is_contiguous(), "Matrix A must be contiguous"
-    assert b.is_contiguous(), "Matrix B must be contiguous"
     return _matmul_kernel(
         a, b, c
     )
@@ -43,9 +37,9 @@ class MatmulBaseArgs(OpBaseArgs) :
         }
         # self.intValues : [b,m,n,k, dtypeInt]
     
-    def getTorchDType(self) -> torch.dtype:
+    def getEnumDType(self) -> EnumKernelDType:
         dtInt = self.intValues[-1]
-        return ToTorchType(EnumKernelDType(dtInt))        
+        return EnumKernelDType(dtInt)        
     
     def getIntDatalist(self) -> List[int] :
         return self.intValues[0:4] + [self.intValues[-1]]
@@ -117,7 +111,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.LOAD_CONTINUOUS : int = 0
         self.REDUCE_C_CONTINUOUS : int = 0
     
-    def setArgs(self, *args):
+    def assignWithList(self, *args):
         self.BLOCK_SIZE_M = args[0]
         self.BLOCK_SIZE_N = args[1]
         self.BLOCK_SIZE_K = args[2]
@@ -275,51 +269,13 @@ class MatmulTuningArgs(TuningArgsInterface) :
             return self.__dataType_B
         if index=='C':
             return self.__dataType_C
-    
-    def dtypeTorch(self,index:str)->torch.dtype:
-        if index=='A':
-            return ToTorchType(self.__dataType_A)
-        if index=='B':
-            return ToTorchType(self.__dataType_B)
-        if index=='C':
-            return ToTorchType(self.__dataType_C)
-    
+        
+    def getGridDims(self) -> List[int]: ...
+    def getBlockDims(self) -> List[int]: ...
+    def getShmBytes(self) -> int : ...
+
     def __str__(self):
-        retstr = '{\n'
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_M)}\" :  {str(self.BLOCK_SIZE_M)} , \n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_N)}\"  :  {str(self.BLOCK_SIZE_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_K)}\"  :  {str(self.BLOCK_SIZE_K)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SIZE_M)}\"  :  {str(self.THREAD_SIZE_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SIZE_N)}\"  :  {str(self.THREAD_SIZE_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SIZE)}\"  :  {str(self.WARP_SIZE)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_LAYOUT_M)}\"  :  {str(self.BLOCK_LAYOUT_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_LAYOUT_N)}\"  :  {str(self.BLOCK_LAYOUT_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_LAYOUT_M)}\"  :  {str(self.WARP_LAYOUT_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_LAYOUT_N)}\"  :  {str(self.WARP_LAYOUT_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_A)}\"  :  {self.__dataType_A} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_B)}\"  :  {self.__dataType_B} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_C)}\"  :  {self.__dataType_C} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_M)}\"  :  {str(self.M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_N)}\"  :  {str(self.N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_K)}\"  :  {str(self.K)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BATCH)}\"  :  {str(self.batch)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_IS_A_TRANSPOSE)}\"  :  {str(self.isATranspose)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A)}\"  :  {str(self.GLOB_LOAD_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B)}\"  :  {str(self.GLOB_LOAD_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A)}\"  :  {str(self.WARP_SCATTER_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B)}\"  :  {str(self.WARP_SCATTER_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A)}\"  :  {str(self.THREAD_SCATTER_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B)}\"  :  {str(self.THREAD_SCATTER_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_LOCAL_SPLIT_U)}\"  :  {str(self.LOCAL_SPLIT_U)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_MAPPING)}\"  :  {str(self.BLOCK_MAPPING)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_STORE_WIDTH)}\"  :  {str(self.GLOB_STORE_WIDTH )} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_UNROLL_NUM)}\"  :  {str(self.UNROLL_NUM)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_REG_PREFETCH)}\"  :  {str(self.REG_PREFETCH)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_SHARED_PREFETCH)}\"  :  {str(self.SHARED_PREFETCH)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_LOAD_CONTINUOUS)}\"  :  {str(self.LOAD_CONTINUOUS)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_REDUCE_C_CONTINUOUS)}\"  :  {str(self.REDUCE_C_CONTINUOUS)} \n"
-        retstr += '}'
-        return retstr
+        return str(self.jsonfy())
 
 # 算子生成逻辑
 class MatmulOp(OpInterface) :
@@ -394,6 +350,8 @@ class MatmulOp(OpInterface) :
         self.SetPlatform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         ta = self.TuningArgs
+        ba = self.BaseArgs
+        enumDtype = ba.getEnumDType()
         res = self.CompileKernelMatmul(
             ta.BLOCK_SIZE_M,
             ta.BLOCK_SIZE_N,
@@ -419,9 +377,9 @@ class MatmulOp(OpInterface) :
             ta.SHARED_PREFETCH,
             ta.LOAD_CONTINUOUS,
             ta.REDUCE_C_CONTINUOUS,
-            ta.dtype('A'),
-            ta.dtype('B'),
-            ta.dtype('C'),
+            enumDtype, # A
+            enumDtype, # B
+            enumDtype, # C
             ta.M, ta.N, ta.K, ta.batch,
             ta.isATranspose
         )
@@ -432,7 +390,7 @@ class MatmulOp(OpInterface) :
         Print("========= kernelName = ",kernelName)
         print(f"==== backend is {backendtype}")
         print(f"==== shmBytes is {shmBytes}")
-        inConfig = KernelConfigs(hsacoPath,kernelName, [ta.dtypeTorch('A'),ta.dtypeTorch('B'),ta.dtypeTorch('C')], backendtype)
+        inConfig = KernelConfigs(hsacoPath,kernelName, [ba.getTorchDType(),ba.getTorchDType(),ba.getTorchDType()], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Matmul
@@ -441,7 +399,6 @@ class MatmulOp(OpInterface) :
         return (ta,inConfig,packedKernel)  # 
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
-        # signature = getMatmulSignature(info.kernelParam.dtypeTorch('A'),info.kernelParam.dtypeTorch('B'),info.kernelParam.dtypeTorch('C'))
         signature = self.GetSignature(info.dtypes)
         return CompiledKernel(
             info.backend,
@@ -455,22 +412,19 @@ class MatmulOp(OpInterface) :
         )
     
     def GetSignature(self, dtypes : List[torch.dtype]) -> dict :
-            # signature只和输入的dtype有关，尺寸无关
+        # signature只和输入的dtype有关，尺寸无关
         dtypeA = dtypes[0]
         dtypeB = dtypes[1]
         dtypeC = dtypes[2]
-        a = torch.randn((1024, 1024), device='cpu', dtype=dtypeA)
-        b = torch.randn((1024, 1024), device='cpu', dtype=dtypeB)
-        # Allocates output.
-        M, K = a.shape
-        K, N = b.shape
-        c = torch.empty((M, N), device='cpu', dtype=dtypeC)
+        a = torch.randn((2, 2), device='cpu', dtype=dtypeA)
+        b = torch.randn((2, 2), device='cpu', dtype=dtypeB)
+        c = torch.empty((2, 2), device='cpu', dtype=dtypeC)
         # get function signature
         outSignature = _matmul(a, b, c)
         return outSignature
     
     def SetTuningArgs(self, tuningArgs : List) :
-        self.TuningArgs.setArgs(*tuningArgs)
+        self.TuningArgs.assignWithList(*tuningArgs)
 
     def InitBaseArgs(self, args : List[int]) :
         batch, m, n, k, dtypeInt = args

@@ -1,0 +1,201 @@
+{
+    "template": {
+        "Br": [
+            64,
+            128
+        ],
+        "Bc": [
+            64,
+            128
+        ],
+        "Hd": [
+            128
+        ],
+        "Slice1": [
+            16,
+            8
+        ],
+        "Slice2": [
+            8,
+            16
+        ],
+        "PTr": [
+            4,
+            8
+        ],
+        "PTc": [
+            4,
+            8
+        ],
+        "OTr": [
+            4,
+            8
+        ],
+        "OTc": [
+            8,
+            4
+        ],
+        "GLOB_LOAD_WIDTH_Q": [
+            4
+        ],
+        "GLOB_LOAD_WIDTH_K": [
+            4
+        ],
+        "GLOB_LOAD_WIDTH_V": [
+            4
+        ],
+        "BLOCK_LAYOUT_P_Y": [
+            1,
+            2,
+            4,
+            8
+        ],
+        "BLOCK_LAYOUT_P_X": [
+            1
+        ],
+        "WARP_LAYOUT_P_Y": [
+            16,
+            8,
+            4,
+            2,
+            1,
+            32
+        ],
+        "WARP_LAYOUT_P_X": [
+            16,
+            8,
+            32
+        ],
+        "BLOCK_SCATTER_WIDTH_Q": [
+            2,
+            4
+        ],
+        "BLOCK_SCATTER_WIDTH_K": [
+            2,
+            4
+        ],
+        "WARP_SCATTER_WIDTH_Q": [
+            2,
+            4
+        ],
+        "WARP_SCATTER_WIDTH_K": [
+            2,
+            4
+        ],
+        "BLOCK_LAYOUT_O_Y": [
+            2,
+            4
+        ],
+        "BLOCK_LAYOUT_O_X": [
+            2,
+            4
+        ],
+        "WARP_LAYOUT_O_Y": [
+            8,
+            4,
+            2
+        ],
+        "WARP_LAYOUT_O_X": [
+            8,
+            4,
+            16
+        ],
+        "BLOCK_SCATTER_WIDTH_P": [
+            2,
+            4
+        ],
+        "BLOCK_SCATTER_WIDTH_V": [
+            2,
+            4
+        ],
+        "WARP_SCATTER_WIDTH_P": [
+            2,
+            4
+        ],
+        "WARP_SCATTER_WIDTH_V": [
+            2,
+            4
+        ],
+        "UNROLL_NUM": [
+            8,
+            16
+        ],
+        "WARP_SIZE": [
+            32
+        ],
+        "LOAD_CONTINUOUS_P": [
+            0,
+            1
+        ],
+        "LOAD_CONTINUOUS_O": [
+            0,
+            1
+        ],
+        "SHARED_PREFETCH_P": [
+            0,
+            1
+        ],
+        "REG_PREFETCH_P": [
+            0,
+            1
+        ],
+        "REG_PREFETCH_O": [
+            0,
+            1
+        ],
+        "blockDim.x": [
+            256,
+            128
+        ],
+        "blockDim.y": [
+            1
+        ],
+        "blockDim.z": [
+            1
+        ],
+        "shmBytes": [
+            29440,
+            37632,
+            33536,
+            41728,
+            25344,
+            49920,
+            62208,
+            54016,
+            66304,
+            43776,
+            47872,
+            50688,
+            62976,
+            54784,
+            67072,
+            79360,
+            87552,
+            83456,
+            91648
+        ],
+        "gridDim.x": [
+            32,
+            16
+        ],
+        "gridDim.y": [
+            32
+        ],
+        "gridDim.z": [
+            1
+        ]
+    },
+    "cfgs": [
+        0,
+        10000000,
+        100000000,
+        110000000,
+        1000001000,
+        1010001000,
+        1100001000,
+        1110001000,
+        10000000000,
+        10010000000,
+        10100000000
+    ]
+}

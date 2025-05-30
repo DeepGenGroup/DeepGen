@@ -547,6 +547,14 @@ class PathManager :
         
 #  关键字
 class ConfigKeywords :
+    # common
+    KEY_BLOCK_DIM_X =   "blockDim.x"
+    KEY_BLOCK_DIM_Y =   "blockDim.y"
+    KEY_BLOCK_DIM_Z =   "blockDim.z"
+    KEY_GRID_DIM_X =   "gridDim.x"
+    KEY_GRID_DIM_Y =   "gridDim.y"
+    KEY_GRID_DIM_Z =   "gridDim.z"
+    KEY_SHM_BYTES =   "shmBytes"
     # gemm
     KEY_BLOCK_SIZE_M =         "BLOCK_SIZE_M"
     KEY_BLOCK_SIZE_N =         "BLOCK_SIZE_N"

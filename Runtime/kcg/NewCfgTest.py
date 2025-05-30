@@ -213,7 +213,7 @@ class CreateMatmulConfig:
         tal[9][0], tal[9][1],             # block_mapping, unroll
         self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
       )
-      kam.setArgs(*config)
+      kam.assignWithList(*config)
       kamEncodedStr = self.encoder.encode(kam.jsonfy())
       kams.append(int(kamEncodedStr))
     return kams

@@ -256,7 +256,7 @@ class TuningSpaceEncoder :
         self.m_tuningCfg = tuning_config
         self.m_keyLists = list(tuning_config.keys())
         
-    def _valEncode(self,config : Dict, kw : str) -> str:
+    def _valEncode(self,config : Dict, kw : str, enrichDict = False) -> str:
         inputVal = config[kw]
         index = 0
         for val in self.m_tuningCfg[kw] :
@@ -265,12 +265,15 @@ class TuningSpaceEncoder :
             index+=1
         if kw == ConfigKeywords.KEY_GLOB_STORE_WIDTH :
             return '0'
+        if enrichDict : # 如果字典不完备，是否使用当前遍历到的config[kw] 补充之
+            self.m_tuningCfg[kw].append(inputVal)
+            return str(index)            
         assert False , f"Invalid Keyword {kw} or Invalid input val {inputVal}"
     
-    def encode(self,config : Dict) -> str :
+    def encode(self,config : Dict, enrichDict = False) -> str :
         ret = ''
         for key in self.m_keyLists :
-            ret += self._valEncode(config,key)
+            ret += self._valEncode(config,key, enrichDict)
         return ret
     
     def decode(self, code:int ) -> Dict :
@@ -290,7 +293,9 @@ class TuningSpaceEncoder :
                 i-=1
                 
         return retDict
-
+    
+    def getDict(self) :
+        return self.m_tuningCfg
 
 
 class CompiledKernel:
@@ -345,10 +350,12 @@ class OpBaseArgs(ABC) :
     # 问题规模的参数列表
     def getIntDatalist(self) -> List[int] : ...
     
-    @abstractmethod
-    # 数据类型列表
-    def getTorchDType(self) -> torch.dtype : ...
+    def getTorchDType(self) -> torch.dtype:
+        return ToTorchType(self.getEnumDType())    
     
+    @abstractmethod
+    def getEnumDType(self) -> EnumKernelDType : ...
+  
     @abstractmethod
     # 从json反序列化
     def parseFromJsonfile(self,path : str): ...
@@ -360,8 +367,19 @@ class OpBaseArgs(ABC) :
     def dumpToJson(self,path : str): ...
         
 class TuningArgsInterface(ABC) :
+    def __init__(self):
+        super().__init__()
+        # 可以根据不同Op的实现，选择是否使用以下三个基本参数，以便生成TuneSpace时直接计算得到不同配置的基础参数
+        self.blockDimX = 0
+        self.blockDimY = 0
+        self.blockDimZ = 0
+        self.gridDimX = 0
+        self.gridDimY = 0
+        self.gridDimZ = 0
+        self.shmBytes = 0
+        
     @abstractmethod
-    def setArgs(self, *args) :  ...
+    def assignWithList(self, *args) :  ...
     @abstractmethod
     def jsonfy(self) :  ...
     @abstractmethod
@@ -372,10 +390,6 @@ class TuningArgsInterface(ABC) :
     def assignWithDict(self, config : Dict) : ...
     @abstractmethod
     def check(self) :  ...
-    @abstractmethod
-    def dtype(self,index:str)->EnumKernelDType : ...
-    @abstractmethod
-    def dtypeTorch(self,index:str)->torch.dtype: ...
     @abstractmethod
     def __str__(self): ...
 

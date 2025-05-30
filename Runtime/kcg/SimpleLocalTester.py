@@ -2,8 +2,9 @@ import glob
 from kcg.Utils import *
 from kcg.HIPLauncher import *
 from kcg.CUDALauncher import *
-from kcg.Operators import matmul
+from kcg.Operators import matmul, attention
 import multiprocessing
+import attn_FP32_test as ATT
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process
@@ -15,7 +16,8 @@ def GetTuneSpaceDict(Op : OpInterface, tuingSpaceJsonPath : str) :
             tse = TuningSpaceEncoder(obj['template'])
             cfgstrs = obj['cfgs']
             for cfgString in cfgstrs :
-                yield tse.decode(cfgString)
+                decodedRes = tse.decode(cfgString)
+                yield decodedRes
     else:
         ...
 
@@ -87,10 +89,15 @@ def init_cuda(_devId) :
         torch.cuda.init()
         torch.cuda.empty_cache()
         
-def compile_matmul() :
+def compile_matmul(tuneSpaceJson : str) :
     batch, m, n, k, dtypeInt = [1, 1024,1024,1024, 4]
     args = [batch, m, n, k, dtypeInt]
     CompileKernelWithSapceJson(matmul.MatmulOp, 7, EnumBackendType.CUDA, "80", "/home/xushilong/DeepGen/TuningCombs/ts_1.json", args )
+
+def compile_att(tuneSpaceJson : str) :
+    shape, dtypeInt = [[1, 32, 2048, 128], 4]
+    args = [shape, dtypeInt]
+    CompileKernelWithSapceJson(attention.AttentionOp, 7, EnumBackendType.CUDA, "80", tuneSpaceJson, args )
 
 def benchmark_mm(OpTy : Type[OpInterface], devId : int):
     init_cuda(devId)
@@ -105,10 +112,26 @@ def benchmark_mm(OpTy : Type[OpInterface], devId : int):
             op.GetBaselineInputTensor(devId)
             config : KernelConfigs = deserialize_from_file(pkl) 
             RunKernelWithKernelConfig(op,config, devId)
-            
+
+def benchmark_att(OpTy : Type[OpInterface], devId : int):
+    init_cuda(devId)
+    shape, dtypeInt = [[1, 32, 2048, 128] , 4]
+    args = [shape, dtypeInt]
+    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
+    pkls = glob.glob(name_format)
+    op = OpTy()
+    if len(pkls) > 0 :
+        for pkl in pkls :
+            op.InitBaseArgs(args)
+            op.GetBaselineInputTensor(devId)
+            config : KernelConfigs = deserialize_from_file(pkl) 
+            RunKernelWithKernelConfig(op,config, devId)
+
+def get_tuning_space(outJsonPath : str) :
+    ATT.getTuneSpace([1, 32, 2048, 128],[],outJsonPath)
     
 if __name__ == '__main__' :
-
+    
     # binPath = "/tmp/compile-ptx-src-b27d15.cubin"
     # kernelName = "GEMM_bMNK1x1024x1024x1024_DTabcfloat32xfloat32xfloat32_AT1_TTmn4x4_BTmnk32x32x8_BLmn1x1_WLmn8x8_GLWab4x4_GSW2_WSWab2x2_TSWab2x1_LSU1_BM16_UNROLL4_REGP0_SHMP0_LC0_RC0_"
     # gDims = [1024, 1, 1]
@@ -122,5 +145,9 @@ if __name__ == '__main__' :
     # gDims = [256,1,1]
     # bDims = [128,1,1]
     # shmBytes = 8192*4
-    benchmark_mm(matmul.MatmulOp, 7 )
+    tsJson = "/home/xushilong/DeepGen/TuningCombs/ts_3.json"
+    # get_tuning_space(tsJson)
+    # compile_att(tsJson)
+    # benchmark_mm(attention.AttentionOp, 7 )
+    benchmark_att(attention.AttentionOp, 7)
     # test_matmul(7,binPath, kernelName, gDims, bDims, shmBytes)
