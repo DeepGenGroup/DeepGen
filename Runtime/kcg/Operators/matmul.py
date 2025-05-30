@@ -87,9 +87,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.BLOCK_LAYOUT_N : int = 1
         self.WARP_LAYOUT_M : int = 16
         self.WARP_LAYOUT_N : int = 4
-        self.__dataType_A : EnumKernelDType = enumDType
-        self.__dataType_B : EnumKernelDType = enumDType
-        self.__dataType_C : EnumKernelDType = enumDType
+        self.dtA : EnumKernelDType = enumDType
+        self.dtB : EnumKernelDType = enumDType
+        self.dtC : EnumKernelDType = enumDType
         self.M : int = m
         self.N : int = n
         self.K : int = k
@@ -151,9 +151,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
             str(ConfigKeywords.KEY_BLOCK_LAYOUT_N) : (self.BLOCK_LAYOUT_N),
             str(ConfigKeywords.KEY_WARP_LAYOUT_M) : (self.WARP_LAYOUT_M),
             str(ConfigKeywords.KEY_WARP_LAYOUT_N) : (self.WARP_LAYOUT_N),
-            str(ConfigKeywords.KEY_DTYPE_A) : int(self.__dataType_A),
-            str(ConfigKeywords.KEY_DTYPE_B) : int(self.__dataType_B), 
-            str(ConfigKeywords.KEY_DTYPE_C) : int(self.__dataType_C), 
+            str(ConfigKeywords.KEY_DTYPE_A) : int(self.dtA),
+            str(ConfigKeywords.KEY_DTYPE_B) : int(self.dtB), 
+            str(ConfigKeywords.KEY_DTYPE_C) : int(self.dtC), 
             str(ConfigKeywords.KEY_M) : (self.M) ,
             str(ConfigKeywords.KEY_N) : (self.N) ,
             str(ConfigKeywords.KEY_K) : (self.K) ,
@@ -179,7 +179,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
     def assignWithDict(self, config : Dict) :
         kw = ConfigKeywords    
         self.M , self.N, self.K , self.batch = config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K],config[kw.KEY_BATCH]
-        self.__dataType_A, self.__dataType_B, self.__dataType_C = EnumKernelDType(config[kw.KEY_DTYPE_A]), EnumKernelDType(config[kw.KEY_DTYPE_B]),EnumKernelDType(config[kw.KEY_DTYPE_C])
+        self.dtA, self.dtB, self.dtC = EnumKernelDType(config[kw.KEY_DTYPE_A]), EnumKernelDType(config[kw.KEY_DTYPE_B]),EnumKernelDType(config[kw.KEY_DTYPE_C])
         self.BLOCK_SIZE_M = config[kw.KEY_BLOCK_SIZE_M]
         self.BLOCK_SIZE_N = config[kw.KEY_BLOCK_SIZE_N]
         self.BLOCK_SIZE_K = config[kw.KEY_BLOCK_SIZE_K]
@@ -206,9 +206,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.LOAD_CONTINUOUS = config[kw.KEY_LOAD_CONTINUOUS]
         self.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
     
-    def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) : 
-        config = tse.decode(cfgstr)
-        self.assignWithDict(config)
+    # def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) : 
+    #     config = tse.decode(cfgstr)
+    #     self.assignWithDict(config)
     
     def assignWithJson(self, jsonObj) : 
         self.BLOCK_SIZE_M = jsonObj[ConfigKeywords.KEY_BLOCK_SIZE_M] 
@@ -221,9 +221,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.BLOCK_LAYOUT_N = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_N] 
         self.WARP_LAYOUT_M = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_M] 
         self.WARP_LAYOUT_N = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_N] 
-        self.__dataType_A=  int(jsonObj[ConfigKeywords.KEY_DTYPE_A])
-        self.__dataType_B = int(jsonObj[ConfigKeywords.KEY_DTYPE_B])
-        self.__dataType_C = int(jsonObj[ConfigKeywords.KEY_DTYPE_C])
+        self.dtA=  int(jsonObj[ConfigKeywords.KEY_DTYPE_A])
+        self.dtB = int(jsonObj[ConfigKeywords.KEY_DTYPE_B])
+        self.dtC = int(jsonObj[ConfigKeywords.KEY_DTYPE_C])
         self.M  = jsonObj[ConfigKeywords.KEY_M]
         self.N  = jsonObj[ConfigKeywords.KEY_N]
         self.K  = jsonObj[ConfigKeywords.KEY_K]
@@ -264,11 +264,11 @@ class MatmulTuningArgs(TuningArgsInterface) :
     
     def dtype(self,index:str)->EnumKernelDType :
         if index=='A':
-            return self.__dataType_A
+            return self.dtA
         if index=='B':
-            return self.__dataType_B
+            return self.dtB
         if index=='C':
-            return self.__dataType_C
+            return self.dtC
         
     def getGridDims(self) -> List[int]: ...
     def getBlockDims(self) -> List[int]: ...
@@ -281,7 +281,6 @@ class MatmulTuningArgs(TuningArgsInterface) :
 class MatmulOp(OpInterface) :
     def __init__(self):
         super().__init__()
-        self.TuningArgs = MatmulTuningArgs()
         self.BaseArgs = MatmulBaseArgs()
         self.CompileKernelMatmul = None
         self.SetPlatform = None
@@ -333,11 +332,8 @@ class MatmulOp(OpInterface) :
         # attn_spec.loader.exec_module(attn_mod)
         # self.__compile_kernel_FA = attn_mod.compile_attn
     
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo) -> Tuple[List,KernelConfigs,CompiledKernel] :
         Print = print
-        # compile kernel
-        # Print("===== KCGCompiler ctor ========")
-        assert isinstance(self.TuningArgs, MatmulTuningArgs)
         _backend = 0
         if backendtype.value == EnumBackendType.CUDA.value :
             _backend = 1
@@ -345,44 +341,13 @@ class MatmulOp(OpInterface) :
             _backend = 2
         else:
             assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
-        
+        print("compiling matmul",flush=True)
+        print("ta=",*info.tsArgs,flush=True)
+        print("ba=",info.baseArgs,flush=True)
         self.InitLibInterface()
         self.SetPlatform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
-        ta = self.TuningArgs
-        ba = self.BaseArgs
-        enumDtype = ba.getEnumDType()
-        res = self.CompileKernelMatmul(
-            ta.BLOCK_SIZE_M,
-            ta.BLOCK_SIZE_N,
-            ta.BLOCK_SIZE_K,
-            ta.THREAD_SIZE_M,
-            ta.THREAD_SIZE_N,
-            ta.WARP_SIZE,
-            ta.BLOCK_LAYOUT_M,
-            ta.BLOCK_LAYOUT_N,
-            ta.WARP_LAYOUT_M,
-            ta.WARP_LAYOUT_N,
-            ta.GLOB_LOAD_WIDTH_A,
-            ta.GLOB_LOAD_WIDTH_B,
-            ta.WARP_SCATTER_WIDTH_A,
-            ta.WARP_SCATTER_WIDTH_B,
-            ta.THREAD_SCATTER_WIDTH_A,
-            ta.THREAD_SCATTER_WIDTH_B,
-            ta.LOCAL_SPLIT_U,
-            ta.BLOCK_MAPPING,
-            ta.GLOB_STORE_WIDTH,
-            ta.UNROLL_NUM,
-            ta.REG_PREFETCH,
-            ta.SHARED_PREFETCH,
-            ta.LOAD_CONTINUOUS,
-            ta.REDUCE_C_CONTINUOUS,
-            enumDtype, # A
-            enumDtype, # B
-            enumDtype, # C
-            ta.M, ta.N, ta.K, ta.batch,
-            ta.isATranspose
-        )
+        res = self.CompileKernelMatmul( *info.tsArgs)
         hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
         print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
         print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
@@ -390,13 +355,14 @@ class MatmulOp(OpInterface) :
         Print("========= kernelName = ",kernelName)
         print(f"==== backend is {backendtype}")
         print(f"==== shmBytes is {shmBytes}")
-        inConfig = KernelConfigs(hsacoPath,kernelName, [ba.getTorchDType(),ba.getTorchDType(),ba.getTorchDType()], backendtype)
+        dt = info.dataType
+        inConfig = KernelConfigs(hsacoPath, kernelName, [ dt,dt,dt ], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Matmul
         inConfig.shmBytes = shmBytes
         packedKernel = self.GetCompiledKernel(inConfig,deviceId)
-        return (ta,inConfig,packedKernel)  # 
+        return (info.baseArgs, inConfig, packedKernel)  # 
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)

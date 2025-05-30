@@ -295,8 +295,9 @@ std::vector<KernelInfo> generateKernels(
 #endif
         gemmDims =  std::vector<int64_t>{ batch, M, N, K};
       }
+      auto mod = generator.createModule();
       auto kernel = generator.create<Operators::Matmul>(
-        gemmDims,
+        mod, gemmDims,
         std::vector<std::string>{dtypeA,dtypeB,dtypeC},
         name,isATranspose
       );

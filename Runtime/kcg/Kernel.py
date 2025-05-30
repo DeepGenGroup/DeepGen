@@ -249,54 +249,6 @@ def kcg_kernel(
     else:
         return decorator
 
-    
-# 以 tuning_config 为模板，生成config的字符串编码
-class TuningSpaceEncoder :
-    def __init__(self, tuning_config : Dict):
-        self.m_tuningCfg = tuning_config
-        self.m_keyLists = list(tuning_config.keys())
-        
-    def _valEncode(self,config : Dict, kw : str, enrichDict = False) -> str:
-        inputVal = config[kw]
-        index = 0
-        for val in self.m_tuningCfg[kw] :
-            if inputVal == val :
-                return str(index)
-            index+=1
-        if kw == ConfigKeywords.KEY_GLOB_STORE_WIDTH :
-            return '0'
-        if enrichDict : # 如果字典不完备，是否使用当前遍历到的config[kw] 补充之
-            self.m_tuningCfg[kw].append(inputVal)
-            return str(index)            
-        assert False , f"Invalid Keyword {kw} or Invalid input val {inputVal}"
-    
-    def encode(self,config : Dict, enrichDict = False) -> str :
-        ret = ''
-        for key in self.m_keyLists :
-            ret += self._valEncode(config,key, enrichDict)
-        return ret
-    
-    def decode(self, code:int ) -> Dict :
-        retDict = {}
-        for k,v in self.m_tuningCfg.items() :
-            retDict[k] = v
-        codestr = str(code)
-        i=len(codestr)-1
-        tempList = self.m_keyLists.copy()
-        tempList.reverse()
-        for key in tempList :
-            if i < 0 :
-                retDict[key] = self.m_tuningCfg[key][0]
-            else:
-                index = int(codestr[i])
-                retDict[key] = self.m_tuningCfg[key][index]
-                i-=1
-                
-        return retDict
-    
-    def getDict(self) :
-        return self.m_tuningCfg
-
 
 class CompiledKernel:
     def __init__(self,
@@ -384,8 +336,8 @@ class TuningArgsInterface(ABC) :
     def jsonfy(self) :  ...
     @abstractmethod
     def assignWithJson(self, jsonObj) :  ...
-    @abstractmethod
-    def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) :  ...
+    # @abstractmethod
+    # def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) :  ...
     @abstractmethod
     def assignWithDict(self, config : Dict) : ...
     @abstractmethod
@@ -396,16 +348,15 @@ class TuningArgsInterface(ABC) :
 # 算子接口
 class OpInterface(ABC) :
     def __init__(self):
-        self.TuningArgs : TuningArgsInterface = None  # 调优空间参数，随调优空间的遍历而变化
+        super().__init__()
         self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，如dtypes，问题形状等（如M,N,K,batch）。为问题的基本属性
         self.InputTensors_Baseline : List[torch.Tensor] = None
         self.InputTensors_Benchmark : List[torch.Tensor] = None
         self.OutputTensor_Baseline : torch.Tensor = None
-        super().__init__()
     
     @abstractmethod
-    # define how to compile kernel
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] : ...
+    ### [basearg, kernelRunINfo, packedKernel]
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo) -> Tuple[List, KernelConfigs, CompiledKernel] : ...
     @abstractmethod
     def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : ...
     @abstractmethod

@@ -244,9 +244,9 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.gridDimY = config[kw.KEY_GRID_DIM_Y]
         self.gridDimZ = config[kw.KEY_GRID_DIM_Z]
     
-    def assignWithEncoder(self, cfgstr, tse : TuningSpaceEncoder):
-        config = tse.decode(cfgstr)
-        self.assignWithDict(config)
+    # def assignWithEncoder(self, cfgstr, tse : TuningSpaceEncoder):
+    #     config = tse.decode(cfgstr)
+    #     self.assignWithDict(config)
     
     def assignWithJson(self, jsonObj) : 
         kw = ConfigKeywords    
@@ -343,7 +343,7 @@ class AttentionOp(OpInterface) :
             self.CompileKernel = mod.compile_attn
 
     
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -360,20 +360,17 @@ class AttentionOp(OpInterface) :
         # self.SetPlatform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         ta = self.TuningArgs
-        config = {'attention1' : ta.jsonfy()}
-        shape = self.BaseArgs.getIntDatalist()
+        shape, config = info.tsArgs
         res = self.CompileKernel(shape , config)
         # blockSize = [cfg[-1][0]]  # tx
         # sharedSize = cfg[-1][1]  # shared memroy size
 
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
         hsacoPath = res
-        blockDimX = ta.blockDimX
-        blockDimY = ta.blockDimY
-        blockDimZ = ta.blockDimZ
-        gridDimX,gridDimY,gridDimZ = [ta.gridDimX, ta.gridDimY, ta.gridDimZ]
+        blockDimX ,blockDimY ,blockDimZ = info.blockDims
+        gridDimX,gridDimY,gridDimZ = info.gridDims
         kernelName = 'attention1'
-        shmBytes = ta.shmBytes
+        shmBytes = info.shmBytes
         print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
         print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         Print("========= hsacoPath = ",hsacoPath)

@@ -15,7 +15,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
-from typing import List, Optional,Type
+from typing import Any, Generator, List, Optional,Type
 import setuptools
 import torch
 from typing import List,Tuple,Dict
@@ -544,7 +544,16 @@ class PathManager :
         with open(userPathConfigfile) as f:
             import json
             PathManager._s_path_obj = json.load(f)
-        
+
+class CompileNeededInfo :
+    def __init__(self):
+        self.baseArgs : List = []  # 问题定义（ 基础不变量，各个算子自定义.如对于matmul，其为 mnk ）
+        self.tsArgs : List = []
+        self.dataType : torch.dtype = None
+        self.blockDims : List[int] = None # optional. If needed, we can assign ans use
+        self.gridDims : List[int] = None # optional. If needed, we can assign ans use
+        self.shmBytes : int = None # optional. If needed, we can assign ans use
+
 #  关键字
 class ConfigKeywords :
     # common
@@ -688,7 +697,8 @@ class KernelLibFile :
         for v in self.m_signature.values() :
             ret += str(v)
         return ret
-        
+
+TsGeneratorType = Generator[CompileNeededInfo, Any, None]         
 
 
 # if __name__ == '__main__' :

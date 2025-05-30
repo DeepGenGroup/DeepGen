@@ -61,7 +61,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   mlir::ModuleOp module = generator.createModule();
   std::vector<KernelData> kds;
   std::vector<FuseKernelData> fkds;
-
+  KernelInfo info;
 // ======  kernel  ======
   KernelData kd1, kd2, kd3;
   // matmul1

@@ -171,7 +171,7 @@ def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
   cfgs = cc.main()
   return cfgs
 
-def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType : 
+def getTuneSpace(shape : List[int] , cfgs : List, saveToJson : str):  # 改为生产迭代器？
   # shape = [1, 32, 2048, 128]
   kw = ConfigKeywords
   if len(cfgs) <= 0:
@@ -202,15 +202,20 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
         kw.KEY_GRID_DIM_Z : shape[0]
       }
     }
-    ret = CompileNeededInfo()
-    ret.baseArgs = [shape]
-    ret.tsArgs = [shape,config]
-    ret.blockDims = [cfg[-1][0], 1, 1]  # tx
-    ret.gridDims = [int(shape[2]/cfg[1]), shape[1], shape[0]]
-    ret.shmBytes = cfg[-1][1] 
-    yield ret
+
+    gridSize = [int(shape[2]/cfg[1]), shape[1], shape[0]]  # bx, by, bz
+    blockSize = [cfg[-1][0]]  # tx
+    sharedSize = cfg[-1][1]  # shared memroy size
+    compileInfo = CompileNeededInfo()
+    compileInfo.tsArgs = [shape, config]
+    yield compileInfo
+    # print(config)
+    # print("gridSize: ", gridSize)
+    # print("blockSize: ", blockSize)
+    # print(f"sharedSize: {sharedSize} byte")
     
     # compile_kernel_FA(shape,config)
+
 
 # if __name__ == '__main__' :
 #   compile([1, 32, 2048, 128],[])
