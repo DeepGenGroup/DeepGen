@@ -307,19 +307,6 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
                        n_spills);
 }
 
-static PyObject *unloadBinary(PyObject *self, PyObject *args) {
-  CUmodule mod;
-  PyArg_ParseTuple(args,"K",&mod);
-  if(cuModuleUnload(mod) == CUDA_SUCCESS){
-    printf("unload cudaModule success\n");
-  }
-  else{
-    printf("unload cudaModule failed\n");
-    return NULL;
-  }
-  return Py_None;
-}
-
 static PyObject *memAlloc(PyObject *self, PyObject *args) {
   size_t bytesize;
   CUdeviceptr dptr;
@@ -472,9 +459,10 @@ static PyObject *tensorMapEncodeTiled(PyObject *self, PyObject *args) {
 }
 
 static PyMethodDef ModuleMethods[] = {
-    {"load_binary", loadBinary, METH_VARARGS,"Load provided cubin into CUDA driver"},
-    {"unload_binary", unloadBinary, METH_VARARGS,"unload provided cubin in cuda driver"},
-    {"get_device_properties", getDeviceProperties, METH_VARARGS, "Get the properties for a given device"},
+    {"load_binary", loadBinary, METH_VARARGS,
+     "Load provided cubin into CUDA driver"},
+    {"get_device_properties", getDeviceProperties, METH_VARARGS,
+     "Get the properties for a given device"},
     {"cuMemAlloc", memAlloc, METH_VARARGS},
     {"cuMemcpyHtoD", memcpyHtoD, METH_VARARGS},
     {"cuMemFree", memFree, METH_VARARGS},

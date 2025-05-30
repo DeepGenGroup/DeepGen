@@ -1,87 +1,83 @@
+import numpy as np
 import torch
-from kcg.Kernel import kcg_kernel
+from kcg.CompiledKernel import *
+from kcg.Kernel import *
 from kcg.Utils import *
 
-# # 核函数stub. 用于提供 Kernel 形参列表
-# @kcg_kernel
-# def _matmul_kernel_triton(
-#         # Pointers to matrices
-#         a_ptr, b_ptr, c_ptr,
-#         # # Matrix dimensions
-#         M, N, K,
-#         # The stride variables represent how much to increase the ptr by when moving by 1
-#         # element in a particular dimension. E.g. `stride_am` is how much to increase `a_ptr`
-#         # by to get the element one row down (A has M rows).
-#         stride_am, stride_ak,
-#         stride_bk, stride_bn,
-#         stride_cm, stride_cn,
-#         # Meta-parameters
-#         # BLOCK_SIZE_M: tl.constexpr, BLOCK_SIZE_N: tl.constexpr, BLOCK_SIZE_K: tl.constexpr,
-#         # EVEN_K: tl.constexpr,
-#         # GROUP_SIZE_M: tl.constexpr,
-#         # ACTIVATION: tl.constexpr,
-# ):
-#     pass
 
 @kcg_kernel
 def _matmul_kernel(
         # Pointers to matrices
         a_ptr, b_ptr, c_ptr
 ):
-    '''
-    Dump code here
-    '''
+    'DUMP CODES'
     pass
-
+ 
 # Call hook. 在这里带入实参并调用
-
 def _matmul(a : torch.Tensor, b : torch.Tensor, c : torch.Tensor):
-    # Check constraints.
     dimsizeA = len(a.shape) 
     dimsizeB = len(b.shape)
     dimsizeC = len(c.shape)
     assert dimsizeA == dimsizeB == dimsizeC, "ABC must with same dim size"
-    if dimsizeA==3:
-        assert a.shape[1] == b.shape[0], "AB have Incompatible shape"
-    if dimsizeA==4:
-        assert a.shape[0] == b.shape[0] == c.shape[0], "ABC must have same batch"
-    
-    assert a.is_contiguous(), "Matrix A must be contiguous"
-    assert b.is_contiguous(), "Matrix B must be contiguous"
-
-
-    # 1D launch kernel where each block gets its own program.
-    
-    # grid = lambda META: (triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']), )
     return _matmul_kernel(
         a, b, c
     )
-    # return _matmul_kernel_triton(
-    #     a, b, c,  #
-    #     M, N, K,  #
-    #     a.stride(0), a.stride(1),  #
-    #     b.stride(0), b.stride(1),  #
-    #     c.stride(0), c.stride(1),  #
-    # )
 
+# 基础参数
+class MatmulBaseArgs(OpBaseArgs) :
+    def __init__(self):
+        super().__init__()
+        self.operatorKind = EnumOperator.Matmul
+        self.argDict = {
+            "kind" : self.operatorKind,
+            "b" : 0,
+            "m" : 0,
+            "n" : 0,
+            "k" : 0,
+            "dtype" : 0
+        }
+        # self.intValues : [b,m,n,k, dtypeInt]
+    
+    def getEnumDType(self) -> EnumKernelDType:
+        dtInt = self.intValues[-1]
+        return EnumKernelDType(dtInt)        
+    
+    def getIntDatalist(self) -> List[int] :
+        return self.intValues[0:4] + [self.intValues[-1]]
+    
+    def parseFromTemplateDict(self,templateDict : Dict):
+        batch = templateDict[ConfigKeywords.KEY_BATCH][0]
+        m = templateDict[ConfigKeywords.KEY_M][0]
+        n = templateDict[ConfigKeywords.KEY_N][0]
+        k = templateDict[ConfigKeywords.KEY_K][0]
+        dtype : int = templateDict[ConfigKeywords.KEY_DTYPE_C][0]
+        self.intValues = [batch,m,n,k,dtype]
+        
+    def parseFromJsonfile(self,path : str):
+        import json
+        obj = None
+        with open(path) as f :
+            obj = json.load(f)
+        self.intValues = [obj['b'],obj['m'],obj['n'],obj['k'], obj['dtype']]
+        print(f"[ matmul ] b,m,n,k,dt = {self.intValues}")
+        # self.operatorKind = obj['kind']
+        
+    def dumpToJson(self,path : str):
+        import json
+        self.argDict["kind"] = self.operatorKind
+        self.argDict["b"] = self.intValues[0]
+        self.argDict["m"] = self.intValues[1]
+        self.argDict["n"] = self.intValues[2]
+        self.argDict["k"] = self.intValues[3]
+        self.argDict["dtype"] = self.intValues[4]
+        with open(path,'w') as f:
+            json.dump(self.argDict,f)
+        
 
-# public interface:
-def getMatmulSignature(dtypeA: torch.dtype, dtypeB : torch.dtype, dtypeC : torch.dtype) -> dict:
-    # signature只和输入的dtype有关，尺寸无关
-    a = torch.randn((1024, 1024), device='cpu', dtype=dtypeA)
-    b = torch.randn((1024, 1024), device='cpu', dtype=dtypeB)
-    # Allocates output.
-    M, K = a.shape
-    K, N = b.shape
-    c = torch.empty((M, N), device='cpu', dtype=dtypeC)
-    # get function signature
-    outSignature = _matmul(a, b, c)
-    # print(f"[D] mm signature = {outSignature}, type =  {type(outSignature.values())}",)
-    return outSignature
-
-
-class KernelArgMatmul :
-    def __init__(self,m,n,k,batch,typeA : EnumKernelDType,typeB : EnumKernelDType,typeC : EnumKernelDType):
+# 调优参数
+class MatmulTuningArgs(TuningArgsInterface) :
+    def __init__(self,batch = 1, m = 0,n = 0,k = 0, enumDType : EnumKernelDType = EnumKernelDType.float32):
+        super().__init__()
         self.BLOCK_SIZE_M : int = 64
         self.BLOCK_SIZE_N : int = 64
         self.BLOCK_SIZE_K : int = 16
@@ -92,9 +88,9 @@ class KernelArgMatmul :
         self.BLOCK_LAYOUT_N : int = 1
         self.WARP_LAYOUT_M : int = 16
         self.WARP_LAYOUT_N : int = 4
-        self.__dataType_A : EnumKernelDType = typeA
-        self.__dataType_B : EnumKernelDType = typeB
-        self.__dataType_C : EnumKernelDType = typeC
+        self.dtA : EnumKernelDType = enumDType
+        self.dtB : EnumKernelDType = enumDType
+        self.dtC : EnumKernelDType = enumDType
         self.M : int = m
         self.N : int = n
         self.K : int = k
@@ -116,7 +112,7 @@ class KernelArgMatmul :
         self.LOAD_CONTINUOUS : int = 0
         self.REDUCE_C_CONTINUOUS : int = 0
     
-    def setArgs(self, *args):
+    def assignWithList(self, *args):
         self.BLOCK_SIZE_M = args[0]
         self.BLOCK_SIZE_N = args[1]
         self.BLOCK_SIZE_K = args[2]
@@ -156,9 +152,9 @@ class KernelArgMatmul :
             str(ConfigKeywords.KEY_BLOCK_LAYOUT_N) : (self.BLOCK_LAYOUT_N),
             str(ConfigKeywords.KEY_WARP_LAYOUT_M) : (self.WARP_LAYOUT_M),
             str(ConfigKeywords.KEY_WARP_LAYOUT_N) : (self.WARP_LAYOUT_N),
-            str(ConfigKeywords.KEY_DTYPE_A) : int(self.__dataType_A),
-            str(ConfigKeywords.KEY_DTYPE_B) : int(self.__dataType_B), 
-            str(ConfigKeywords.KEY_DTYPE_C) : int(self.__dataType_C), 
+            str(ConfigKeywords.KEY_DTYPE_A) : int(self.dtA),
+            str(ConfigKeywords.KEY_DTYPE_B) : int(self.dtB), 
+            str(ConfigKeywords.KEY_DTYPE_C) : int(self.dtC), 
             str(ConfigKeywords.KEY_M) : (self.M) ,
             str(ConfigKeywords.KEY_N) : (self.N) ,
             str(ConfigKeywords.KEY_K) : (self.K) ,
@@ -181,6 +177,40 @@ class KernelArgMatmul :
         }
         return obj
     
+    def assignWithDict(self, config : Dict) :
+        kw = ConfigKeywords    
+        self.M , self.N, self.K , self.batch = config[kw.KEY_M],config[kw.KEY_N],config[kw.KEY_K],config[kw.KEY_BATCH]
+        self.dtA, self.dtB, self.dtC = EnumKernelDType(config[kw.KEY_DTYPE_A]), EnumKernelDType(config[kw.KEY_DTYPE_B]),EnumKernelDType(config[kw.KEY_DTYPE_C])
+        self.BLOCK_SIZE_M = config[kw.KEY_BLOCK_SIZE_M]
+        self.BLOCK_SIZE_N = config[kw.KEY_BLOCK_SIZE_N]
+        self.BLOCK_SIZE_K = config[kw.KEY_BLOCK_SIZE_K]
+        self.THREAD_SIZE_M = config[kw.KEY_THREAD_SIZE_M]
+        self.THREAD_SIZE_N = config[kw.KEY_THREAD_SIZE_N]
+        self.WARP_SIZE = config[kw.KEY_WARP_SIZE]
+        self.BLOCK_LAYOUT_M = config[kw.KEY_BLOCK_LAYOUT_M]
+        self.BLOCK_LAYOUT_N = config[kw.KEY_BLOCK_LAYOUT_N]
+        self.WARP_LAYOUT_M = config[kw.KEY_WARP_LAYOUT_M]
+        self.WARP_LAYOUT_N = config[kw.KEY_WARP_LAYOUT_N]
+        self.isATranspose = config[kw.KEY_IS_A_TRANSPOSE]
+        self.GLOB_LOAD_WIDTH_A = config[kw.KEY_GLOB_LOAD_WIDTH_A]
+        self.GLOB_LOAD_WIDTH_B = config[kw.KEY_GLOB_LOAD_WIDTH_B]
+        self.WARP_SCATTER_WIDTH_A = config[kw.KEY_WARP_SCATTER_WIDTH_A]
+        self.WARP_SCATTER_WIDTH_B = config[kw.KEY_WARP_SCATTER_WIDTH_B]
+        self.THREAD_SCATTER_WIDTH_A = config[kw.KEY_THREAD_SCATTER_WIDTH_A]
+        self.THREAD_SCATTER_WIDTH_B = config[kw.KEY_THREAD_SCATTER_WIDTH_B]
+        self.LOCAL_SPLIT_U = config[kw.KEY_LOCAL_SPLIT_U]
+        self.BLOCK_MAPPING = config[kw.KEY_BLOCK_MAPPING]
+        self.GLOB_STORE_WIDTH = config[kw.KEY_GLOB_STORE_WIDTH]
+        self.UNROLL_NUM = config[kw.KEY_UNROLL_NUM]
+        self.REG_PREFETCH = config[kw.KEY_REG_PREFETCH]
+        self.SHARED_PREFETCH = config[kw.KEY_SHARED_PREFETCH]
+        self.LOAD_CONTINUOUS = config[kw.KEY_LOAD_CONTINUOUS]
+        self.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
+    
+    # def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) : 
+    #     config = tse.decode(cfgstr)
+    #     self.assignWithDict(config)
+    
     def assignWithJson(self, jsonObj) : 
         self.BLOCK_SIZE_M = jsonObj[ConfigKeywords.KEY_BLOCK_SIZE_M] 
         self.BLOCK_SIZE_N = jsonObj[ConfigKeywords.KEY_BLOCK_SIZE_N] 
@@ -192,9 +222,9 @@ class KernelArgMatmul :
         self.BLOCK_LAYOUT_N = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_N] 
         self.WARP_LAYOUT_M = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_M] 
         self.WARP_LAYOUT_N = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_N] 
-        self.__dataType_A=  int(jsonObj[ConfigKeywords.KEY_DTYPE_A])
-        self.__dataType_B = int(jsonObj[ConfigKeywords.KEY_DTYPE_B])
-        self.__dataType_C = int(jsonObj[ConfigKeywords.KEY_DTYPE_C])
+        self.dtA=  int(jsonObj[ConfigKeywords.KEY_DTYPE_A])
+        self.dtB = int(jsonObj[ConfigKeywords.KEY_DTYPE_B])
+        self.dtC = int(jsonObj[ConfigKeywords.KEY_DTYPE_C])
         self.M  = jsonObj[ConfigKeywords.KEY_M]
         self.N  = jsonObj[ConfigKeywords.KEY_N]
         self.K  = jsonObj[ConfigKeywords.KEY_K]
@@ -235,56 +265,238 @@ class KernelArgMatmul :
     
     def dtype(self,index:str)->EnumKernelDType :
         if index=='A':
-            return self.__dataType_A
+            return self.dtA
         if index=='B':
-            return self.__dataType_B
+            return self.dtB
         if index=='C':
-            return self.__dataType_C
-    
-    def dtypeTorch(self,index:str)->torch.dtype:
-        if index=='A':
-            return ToTorchType(self.__dataType_A)
-        if index=='B':
-            return ToTorchType(self.__dataType_B)
-        if index=='C':
-            return ToTorchType(self.__dataType_C)
-    
+            return self.dtC
+        
+    def getGridDims(self) -> List[int]: ...
+    def getBlockDims(self) -> List[int]: ...
+    def getShmBytes(self) -> int : ...
+
     def __str__(self):
-        retstr = '{\n'
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_M)}\" :  {str(self.BLOCK_SIZE_M)} , \n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_N)}\"  :  {str(self.BLOCK_SIZE_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_SIZE_K)}\"  :  {str(self.BLOCK_SIZE_K)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SIZE_M)}\"  :  {str(self.THREAD_SIZE_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SIZE_N)}\"  :  {str(self.THREAD_SIZE_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SIZE)}\"  :  {str(self.WARP_SIZE)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_LAYOUT_M)}\"  :  {str(self.BLOCK_LAYOUT_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_LAYOUT_N)}\"  :  {str(self.BLOCK_LAYOUT_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_LAYOUT_M)}\"  :  {str(self.WARP_LAYOUT_M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_LAYOUT_N)}\"  :  {str(self.WARP_LAYOUT_N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_A)}\"  :  {self.__dataType_A} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_B)}\"  :  {self.__dataType_B} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_DTYPE_C)}\"  :  {self.__dataType_C} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_M)}\"  :  {str(self.M)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_N)}\"  :  {str(self.N)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_K)}\"  :  {str(self.K)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BATCH)}\"  :  {str(self.batch)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_IS_A_TRANSPOSE)}\"  :  {str(self.isATranspose)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A)}\"  :  {str(self.GLOB_LOAD_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B)}\"  :  {str(self.GLOB_LOAD_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A)}\"  :  {str(self.WARP_SCATTER_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B)}\"  :  {str(self.WARP_SCATTER_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A)}\"  :  {str(self.THREAD_SCATTER_WIDTH_A)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B)}\"  :  {str(self.THREAD_SCATTER_WIDTH_B)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_LOCAL_SPLIT_U)}\"  :  {str(self.LOCAL_SPLIT_U)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_BLOCK_MAPPING)}\"  :  {str(self.BLOCK_MAPPING)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_GLOB_STORE_WIDTH)}\"  :  {str(self.GLOB_STORE_WIDTH )} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_UNROLL_NUM)}\"  :  {str(self.UNROLL_NUM)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_REG_PREFETCH)}\"  :  {str(self.REG_PREFETCH)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_SHARED_PREFETCH)}\"  :  {str(self.SHARED_PREFETCH)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_LOAD_CONTINUOUS)}\"  :  {str(self.LOAD_CONTINUOUS)} ,\n"
-        retstr += f" \"{str(ConfigKeywords.KEY_REDUCE_C_CONTINUOUS)}\"  :  {str(self.REDUCE_C_CONTINUOUS)} \n"
-        retstr += '}'
-        return retstr
+        return str(self.jsonfy())
+
+# 算子生成逻辑
+class MatmulOp(OpInterface) :
+    def __init__(self):
+        super().__init__()
+        self.BaseArgs = MatmulBaseArgs()
+        self.CompileKernelMatmul = None
+        self.SetPlatform = None
+
+    def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : 
+        if self.InputTensors_Baseline is None :
+            [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
+            ety = ToTorchType(EnumKernelDType(dtypeInt))
+            if batch > 1 :
+                a = torch.rand((batch, m,k),dtype=ety, device=f"cuda:{devId}" )
+                b = torch.rand((batch, k,n),dtype=ety, device=f"cuda:{devId}" )
+            else:
+                a = torch.rand((m,k),dtype=ety, device=f"cuda:{devId}" )
+                b = torch.rand((k,n),dtype=ety, device=f"cuda:{devId}" )
+            self.InputTensors_Baseline = [a,b]
+        return self.InputTensors_Baseline
+            
+    def GetBenchmarkInputTensor(self,devId : int) -> List[torch.Tensor] : 
+        if self.InputTensors_Benchmark is None :
+            [a,b] = self.GetBaselineInputTensor(devId)
+            [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
+            print(f"self.BaseArgs.intValues = {self.BaseArgs.intValues}" )
+            ety = ToTorchType(EnumKernelDType(dtypeInt))
+            if batch > 1 :
+                aa = a.transpose(1,2).contiguous()
+                c = torch.empty((batch,m,n), dtype=ety, device=f"cuda:{devId}")
+            else :
+                aa = a.transpose(0,1).contiguous()
+                c = torch.empty((m,n), dtype=ety, device=f"cuda:{devId}")
+            self.InputTensors_Benchmark = [aa,b,c]
+        return self.InputTensors_Benchmark
+    
+    # def GetBenchmarkOutputTensor(self,devId : int) -> List[torch.Tensor] : 
+    #     return self.GetBenchmarkInputTensor(devId)[-1]
+    
+    # def GetBaselineOutputTensor(self) -> List[torch.Tensor] : 
+    #     return self.OutputTensor_Baseline
+    
+    def InitLibInterface(self) :
+        if self.CompileKernelMatmul is None or self.SetPlatform is None :
+            import importlib.util
+            print(f"PathManager.kcg_compiler_path() = {PathManager.kcg_compiler_path()}",flush=True)
+            spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.CompileKernelMatmul = mod.compile_kernel_matmul
+            self.SetPlatform = mod.set_platform
+
+        # attn_spec = importlib.util.spec_from_file_location("attention", PathManager.kcg_compiler_attention_path())
+        # attn_mod = importlib.util.module_from_spec(attn_spec)
+        # attn_spec.loader.exec_module(attn_mod)
+        # self.__compile_kernel_FA = attn_mod.compile_attn
+    
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo) -> Tuple[List,KernelConfigs,CompiledKernel] :
+        Print = print
+        _backend = 0
+        if backendtype.value == EnumBackendType.CUDA.value :
+            _backend = 1
+        elif backendtype.value == EnumBackendType.HIP.value :
+            _backend = 2
+        else:
+            assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
+        print("compiling matmul",flush=True)
+        print("ta=",*info.tsArgs,flush=True)
+        print("ba=",info.baseArgs,flush=True)
+        self.InitLibInterface()
+        self.SetPlatform(_backend,arch)
+        # Print("===== call compileKernel(kpm)[0] ========")
+        res = self.CompileKernelMatmul( *info.tsArgs)
+        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
+        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        Print("========= hsacoPath = ",hsacoPath)
+        Print("========= kernelName = ",kernelName)
+        print(f"==== backend is {backendtype}")
+        print(f"==== shmBytes is {shmBytes}")
+        dt = info.torchDataType
+        inConfig = KernelConfigs(hsacoPath, kernelName, [ dt,dt,dt ], backendtype)
+        inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
+        inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
+        inConfig.operatorKind = EnumOperator.Matmul
+        inConfig.shmBytes = shmBytes
+        packedKernel = self.GetCompiledKernel(inConfig,deviceId)
+        return (info.baseArgs, inConfig, packedKernel)  # 
+  
+    def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
+        signature = self.GetSignature(info.dtypes)
+        return CompiledKernel(
+            info.backend,
+            info.binaryPath,
+            info.kernelFuncName,
+            info.sharedMem(),
+            signature,
+            info.gridDims(),
+            info.blockDims(),
+            deviceId
+        )
+    
+    def GetSignature(self, dtypes : List[torch.dtype]) -> dict :
+        # signature只和输入的dtype有关，尺寸无关
+        dtypeA = dtypes[0]
+        a = torch.rand(100, 100, device='cpu', dtype=dtypeA)
+        b = torch.rand(100, 100, device='cpu', dtype=dtypeA)
+        c = torch.empty(100, 100, device='cpu', dtype=dtypeA)
+        # get function signature
+        outSignature = _matmul(a, b, c)
+        return outSignature
+    
+    def SetTuningArgs(self, tuningArgs : List) :
+        self.TuningArgs.assignWithList(*tuningArgs)
+
+    def InitBaseArgs(self, args : List[int]) :
+        batch, m, n, k , dtypeInt = args
+        self.BaseArgs.intValues = [batch, m,n,k, dtypeInt]
+        ety = EnumKernelDType(dtypeInt)
+        self.TuningArgs = MatmulTuningArgs(batch,m,n,k,ety)  
+    
+    def Test_warmup(self, packedKernel : CompiledKernel, warmupCount : int, devId : int) :
+        [a0,b0] = self.GetBaselineInputTensor(devId)
+        [a,b,c] = self.GetBenchmarkInputTensor(devId)
+        torchMM = torch.matmul
+        if self.TuningArgs.batch > 1:
+            assert len(a0.shape) == 3, f"shape not match : len(a0.shape)={len(a0.shape)}, TuningArgs.batch={self.TuningArgs.batch}" 
+            torchMM = torch.bmm
+        for i in range(0,warmupCount) : 
+            torchMM(a0,b0)
+            packedKernel.run(a,b,c)
+
+    def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
+        [matrixA, matrixB] = self.GetBaselineInputTensor(devId)
+        torchMM = torch.matmul
+        if len(matrixA.shape) > 2 :
+            torchMM = torch.bmm
+        ev_start = torch.cuda.Event(enable_timing=True)
+        ev_end = torch.cuda.Event(enable_timing=True)
+        ev_start.record()
+        self.OutputTensor_Baseline = torchMM(matrixA, matrixB)
+        ev_end.record()
+        torch.cuda.synchronize()
+        eps = ev_start.elapsed_time(ev_end)
+        return (self.OutputTensor_Baseline, eps)
+    
+    def Test_benchmark(self, packedKernel : CompiledKernel,benchmarkCount : int , devId : int) -> Tuple[torch.Tensor,float] : 
+        assert self.InputTensors_Benchmark  is not None, "error benchmark"
+        eps = []
+        for i in range(benchmarkCount):
+            a,b,c = self.GetBenchmarkInputTensor(devId)
+            st = torch.cuda.Event(enable_timing=True)
+            et = torch.cuda.Event(enable_timing=True)
+            st.record()
+            packedKernel.run(a,b,c)
+            et.record()
+            torch.cuda.synchronize()
+            elapsed_time = st.elapsed_time(et)
+            eps.append(elapsed_time)
+        t = np.median(eps)
+        return (c,t)
+    
+    def InitInputTensorsWithDatalist(self,  devId) -> None:
+        assert self.BaseArgs is not None
+        assert self.TuningArgs is not None
+        assert isinstance(self.TuningArgs, MatmulTuningArgs)
+        assert isinstance(self.BaseArgs , MatmulBaseArgs)
+        # init baseline inputs
+        matA = None; matB = None
+        if self.InputTensors_Baseline is None :
+            batch, m,n,k , dtypeInt = self.BaseArgs.getIntDatalist()
+            datatype = ToTorchType(EnumKernelDType(dtypeInt))
+            if batch > 1:
+                matA = torch.randn(batch,m,k, dtype= datatype, device=f'cuda:{devId}')
+                matB = torch.randn(batch,k,n, dtype= datatype, device=f'cuda:{devId}')
+            else:
+                matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{devId}')
+                matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{devId}')
+            self.InputTensors_Baseline = [matA ,matB]
+        else:
+            matA, matB = self.InputTensors_Baseline
+        # init benchmark inputs
+        if self.InputTensors_Benchmark is None:
+            aUse = None
+            if self.TuningArgs.isATranspose :
+                d0,d1 = 0,1
+                if len(matA.shape) == 3 :
+                    d0,d1 = 1,2
+                atrans = torch.transpose(matA,d0,d1).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
+                assert(matA.is_contiguous())
+                assert(matB.is_contiguous())
+                assert(atrans.is_contiguous())
+                aUse = atrans
+            else:
+                aUse = matA
+            self.InputTensors_Benchmark = [aUse,matB]
+
+    
+    def InitBaselineOutputTensor(self,  devId : int) -> None :
+        # batch,m,n,k = self.BaseArgs.intValues[0:4]
+        if self.OutputTensor_Baseline is None :
+            b,m,n,k,dtypeInt = self.BaseArgs.getIntDatalist()
+            dt = ToTorchType(EnumKernelDType(dtypeInt))
+            if b > 1:
+                ret = torch.empty(b,m,n,dtype=dt, device=f'cuda:{devId}')
+            else:
+                ret = torch.empty(m,n,dtype=dt, device=f'cuda:{devId}')
+            self.OutputTensor_Baseline = ret
+
+    
+    # def GetBenchmarkOutputTensor(self,  devId : int) -> torch.Tensor :
+    #     b,m,n,k,dtypeInt = self.BaseArgs.getIntDatalist()
+    #     dt = ToTorchType(EnumKernelDType(dtypeInt))
+    #     if b > 1:
+    #         ret = torch.empty(b,m,n,dtype=dt, device=f'cuda:{devId}')
+    #     else:
+    #         ret = torch.empty(m,n,dtype=dt, device=f'cuda:{devId}')
+    #     return ret
+
     
     
 class TuningSpaceChecker_Matmul :
@@ -368,45 +580,4 @@ class TuningSpaceChecker_Matmul :
         if bn * bk / nThreads < 1 :
             return False
         return True
-        
-# 以 tuning_config 为模板，生成config的字符串编码
-class TuningSpaceEncoder_Matmul :
-    def __init__(self, tuning_config : Dict):
-        self.m_tuningCfg = tuning_config
-        self.m_keyLists = list(tuning_config.keys())
-        
-    def _valEncode(self,config : Dict, kw : str) -> str:
-        inputVal = config[kw]
-        index = 0
-        for val in self.m_tuningCfg[kw] :
-            if inputVal == val :
-                return str(index)
-            index+=1
-        if kw == ConfigKeywords.KEY_GLOB_STORE_WIDTH :
-            return '0'
-        assert False , f"Invalid Keyword {kw} or Invalid input val {inputVal}"
     
-    def encode(self,config : Dict) -> str :
-        ret = ''
-        for key in self.m_keyLists :
-            ret += self._valEncode(config,key)
-        return ret
-    
-    def decode(self, code:int ) -> Dict :
-        retDict = {}
-        for k,v in self.m_tuningCfg.items() :
-            retDict[k] = v
-        codestr = str(code)
-        i=len(codestr)-1
-        tempList = self.m_keyLists.copy()
-        tempList.reverse()
-        for key in tempList :
-            if i < 0 :
-                retDict[key] = self.m_tuningCfg[key][0]
-            else:
-                index = int(codestr[i])
-                retDict[key] = self.m_tuningCfg[key][index]
-                i-=1
-                
-        return retDict
-            

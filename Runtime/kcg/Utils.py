@@ -1,22 +1,137 @@
 # 公共函数和基本类
 
+from abc import ABC, abstractmethod
 import hashlib
 from enum import Enum, IntEnum
 import contextlib
 import functools
 import io
+import json
 import os
 from pathlib import Path
 import pickle
+import random
 import shutil
 import subprocess
 import sys
 import sysconfig
-from typing import List,Type
+from typing import Any, Generator, List, Optional,Type
 import setuptools
 import torch
 from typing import List,Tuple,Dict
 from datetime import datetime
+
+
+class CacheManager(ABC):
+    def __init__(self, key):
+        pass
+    @abstractmethod
+    def get_file(self, filename) -> Optional[str]:
+        pass
+
+    @abstractmethod
+    def has_file(self, filename) -> bool:
+        pass
+
+    @abstractmethod
+    def put(self, data, filename, binary=True) -> str:
+        pass
+
+    @abstractmethod
+    def get_group(self, filename: str) -> Optional[Dict[str, str]]:
+        pass
+
+    @abstractmethod
+    def put_group(self, filename: str, group: Dict[str, str]):
+        pass
+
+
+class FileCacheManager(CacheManager):
+    def __init__(self, key, override=False, dump=False):
+        self.key = key
+        self.lock_path = None
+        PathManager.init()
+        if dump:
+            self.cache_dir = PathManager.default_dump_dir()
+            # self.cache_dir = os.path.join(self.cache_dir, self.key)
+            self.lock_path = os.path.join(self.cache_dir, "lock")
+            os.makedirs(self.cache_dir, exist_ok=True)
+        elif override:
+            self.cache_dir = PathManager.default_override_dir()
+            # self.cache_dir = os.path.join(self.cache_dir, self.key)
+        else:
+            # create cache directory if it doesn't exist
+            self.cache_dir = PathManager.default_cache_dir()
+            if self.cache_dir:
+                # self.cache_dir = os.path.join(self.cache_dir, str(self.key))
+                self.lock_path = os.path.join(self.cache_dir, "lock")
+                os.makedirs(self.cache_dir, exist_ok=True)
+            else:
+                raise RuntimeError("Could not create or locate cache dir")
+    
+    def _make_path(self, filename) -> str:
+        return os.path.join(self.cache_dir, filename)
+
+    def has_file(self, filename) -> bool:
+        if not self.cache_dir:
+            raise RuntimeError("Could not create or locate cache dir")
+        return os.path.exists(self._make_path(filename))
+
+    def get_file(self, filename) -> Optional[str]:
+        if self.has_file(filename):
+            return self._make_path(filename)
+        else:
+            return None
+
+    def get_group(self, filename: str) -> Optional[Dict[str, str]]:
+        grp_filename = f"__grp__{filename}"
+        if not self.has_file(grp_filename):
+            return None
+        grp_filepath = self._make_path(grp_filename)
+        with open(grp_filepath) as f:
+            grp_data = json.load(f)
+        child_paths = grp_data.get("child_paths", None)
+        # Invalid group data.
+        if child_paths is None:
+            return None
+        result = {}
+        for c in child_paths:
+            p = self._make_path(c)
+            if os.path.exists(p):
+                result[c] = p
+        return result
+
+    # Note a group of pushed files as being part of a group
+    def put_group(self, filename: str, group: Dict[str, str]) -> str:
+        if not self.cache_dir:
+            raise RuntimeError("Could not create or locate cache dir")
+        grp_contents = json.dumps({"child_paths": sorted(list(group.keys()))})
+        grp_filename = f"__grp__{filename}"
+        return self.put(grp_contents, grp_filename, binary=False)
+
+    def put(self, data, filename, binary=True) -> str:
+        if not self.cache_dir:
+            raise RuntimeError("Could not create or locate cache dir")
+        binary = isinstance(data, bytes)
+        if not binary:
+            data = str(data)
+        assert self.lock_path is not None
+        filepath = self._make_path(filename)
+        # Random ID to avoid any collisions
+        rnd_id = random.randint(0, 1000000)
+        # we use the PID incase a bunch of these around so we can see what PID made it
+        pid = os.getpid()
+        # use tempfile to be robust against program interruptions
+        temp_path = f"{filepath}.tmp.pid_{pid}_{rnd_id}"
+        mode = "wb" if binary else "w"
+        with open(temp_path, mode) as f:
+            f.write(data)
+        # Replace is guaranteed to be atomic on POSIX systems if it succeeds
+        # so filepath cannot see a partial write
+        os.replace(temp_path, filepath)
+        return filepath
+
+
 
 # TODO: is_hip shouldn't be here
 def is_hip():
@@ -32,18 +147,14 @@ def serialize_to_file(pkl_path, obj) :
         print('[E] generatePklError : ',e)
         
 def deserialize_from_file(pkl_path) :
-    try:
-        with open(pkl_path, 'rb') as f:
-            try:
-                temp = pickle.load(f)  # 进行反序列化
-            except EOFError as e:
-                print("EOF Error!")
-                return []
-            return temp
-    except Exception as e:
-        print("[dsError]",e)
-    return None
-    
+    with open(pkl_path, 'rb') as f:
+        try:
+            temp = pickle.load(f)  # 进行反序列化
+        except EOFError as e:
+            print("EOF Error!")
+            return []
+        return temp
+
 def delete_files_in_directory(directory):
     # 确保目录存在
     if os.path.exists(directory) and os.path.isdir(directory):
@@ -192,14 +303,13 @@ class EnumBackendType(IntEnum):
         return f'{self.name}'
 
 class EnumRunMode(IntEnum):
-    # 在本机执行生成调优空间、编译kernel以及benchmark
-    GetTuneSpace_Compile_Benchmark_Local = 1  
     # 本地只作为Perftester运行kernel的benchmark。编译&调优空间生成&文件传输由其他host承担
-    AsRemotePerftester = 2
-    # 只在本地生产调优空间，不进行编译以及benchmark
-    GetTuneSpace_Local_Only = 3
+    AsRemotePerftester = 3
     # 只在本地进行编译，将 benchmark任务所需文件推送到远程
-    CallRemotePerftester = 4
+    CallRemotePerftester = 5
+    # 只在本地生产调优空间，不进行编译以及benchmark
+    GetTuneSpace_Local_Only = 4
+    
     def __str__(self):
         return f'{self.name}'
     
@@ -208,6 +318,7 @@ class EnumOperator:
     Matmul = "MATMUL"
     Convolution = "CONV"
     Poll = "POLL"
+    Attention = "ATTENTION"
     def __str__(self):
         return f'{self.name}'
 
@@ -225,11 +336,11 @@ class EnumKernelDType(IntEnum):
         return f'{self.name}'
 
 def ToTorchType (t : EnumKernelDType) -> torch.dtype:
-    if t.value == EnumKernelDType.float32.value :
+    if t == EnumKernelDType.float32.value :
         return torch.float32
-    if t.value == EnumKernelDType.float64.value :
+    if t == EnumKernelDType.float64.value :
         return torch.float64
-    if t.value == EnumKernelDType.float16.value :
+    if t == EnumKernelDType.float16.value :
         return torch.float16
 
 def sizeof(t : EnumKernelDType) : # bytes
@@ -345,7 +456,12 @@ class PathManager :
     
     @staticmethod
     def cuda_install_dir()->str:
-        assert PathManager._s_path_obj is not None
+        if PathManager._s_path_obj is None :
+            userPathConfigfile = str(PathManager.project_dir()) + "/thirdPartyPath.json"
+            assert os.path.exists(userPathConfigfile)
+            with open(userPathConfigfile) as f:
+                import json
+                PathManager._s_path_obj = json.load(f)
         if len(PathManager._s_path_obj['cuda_install_dir']) > 1:
             return PathManager._s_path_obj['cuda_install_dir']
         if len(PathManager._s_cuda_install_dir) <= 0 :
@@ -369,10 +485,6 @@ class PathManager :
     @staticmethod
     def tmp_dir() ->str :
         return str(PathManager.project_dir())+'/_tmp'
-    
-    @staticmethod
-    def cluster_run_dir() ->str :
-        return str(PathManager.project_dir())+'/_cluster_run'
     
     @staticmethod
     def default_cache_dir()->str:
@@ -402,6 +514,11 @@ class PathManager :
         # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
     
     @staticmethod
+    def kcg_compiler_attention_path()->str:
+        return os.path.join(PathManager.project_dir(),"bin/libdeepgen.so")
+        # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
+    
+    @staticmethod
     def init(clearPkl = False, clearDump = False, clearOverride = False, clearCache = False, clearTmp = False) :
         # print("PathManager initializing ... ",flush=True)
         os.makedirs(PathManager.pikle_dir(),exist_ok=True)
@@ -409,25 +526,45 @@ class PathManager :
         os.makedirs(PathManager.default_override_dir(),exist_ok=True)
         os.makedirs(PathManager.default_dump_dir(),exist_ok=True)
         os.makedirs(PathManager.tmp_dir(),exist_ok=True)
-        os.makedirs(PathManager.cluster_run_dir(),exist_ok=True)
-        if clearPkl :
-            delete_files_in_directory(PathManager.pikle_dir())
-        if clearCache :
-            delete_files_in_directory(PathManager.default_cache_dir())
-        if clearOverride :
-            delete_files_in_directory(PathManager.default_override_dir())
-        if clearDump :
-            delete_files_in_directory(PathManager.default_dump_dir())
-        if clearTmp :
-            delete_files_in_directory(PathManager.tmp_dir())
+        try:
+            if clearPkl :
+                delete_files_in_directory(PathManager.pikle_dir())
+            if clearCache :
+                delete_files_in_directory(PathManager.default_cache_dir())
+            if clearOverride :
+                delete_files_in_directory(PathManager.default_override_dir())
+            if clearDump :
+                delete_files_in_directory(PathManager.default_dump_dir())
+            if clearTmp :
+                delete_files_in_directory(PathManager.tmp_dir())
+        except OSError as e :
+            ...
         userPathConfigfile = str(PathManager.project_dir()) + "/thirdPartyPath.json"
         assert os.path.exists(userPathConfigfile)
         with open(userPathConfigfile) as f:
             import json
             PathManager._s_path_obj = json.load(f)
-        
+
+class CompileNeededInfo :
+    def __init__(self):
+        self.baseArgs : List = []  # 问题定义（ 基础不变量，各个算子自定义.如对于matmul，其为 mnk ）
+        self.tsArgs : List = []
+        self.torchDataType : torch.dtype = None
+        self.blockDims : List[int] = None # optional. If needed, we can assign ans use
+        self.gridDims : List[int] = None # optional. If needed, we can assign ans use
+        self.shmBytes : int = None # optional. If needed, we can assign ans use
+
 #  关键字
 class ConfigKeywords :
+    # common
+    KEY_BLOCK_DIM_X =   "blockDim.x"
+    KEY_BLOCK_DIM_Y =   "blockDim.y"
+    KEY_BLOCK_DIM_Z =   "blockDim.z"
+    KEY_GRID_DIM_X =   "gridDim.x"
+    KEY_GRID_DIM_Y =   "gridDim.y"
+    KEY_GRID_DIM_Z =   "gridDim.z"
+    KEY_SHM_BYTES =   "shmBytes"
+    # gemm
     KEY_BLOCK_SIZE_M =         "BLOCK_SIZE_M"
     KEY_BLOCK_SIZE_N =         "BLOCK_SIZE_N"
     KEY_BLOCK_SIZE_K =         "BLOCK_SIZE_K"
@@ -460,6 +597,40 @@ class ConfigKeywords :
     KEY_SHARED_PREFETCH =       "SHARED_PREFETCH"
     KEY_LOAD_CONTINUOUS =       "LOAD_CONTINUOUS"
     KEY_REDUCE_C_CONTINUOUS =   "REDUCE_C_CONTINUOUS"
+    # attention
+    KEY_Br = "Br"
+    KEY_Bc = "Bc"
+    KEY_Hd = "Hd"
+    KEY_Slice1 = "Slice1"
+    KEY_Slice2 = "Slice2"
+    KEY_PTr = "PTr"
+    KEY_PTc = "PTc"
+    KEY_OTr = "OTr"
+    KEY_OTc = "OTc"
+    KEY_GLOB_LOAD_WIDTH_Q = "GLOB_LOAD_WIDTH_Q"
+    KEY_GLOB_LOAD_WIDTH_K = "GLOB_LOAD_WIDTH_K"
+    KEY_GLOB_LOAD_WIDTH_V = "GLOB_LOAD_WIDTH_V"
+    KEY_BLOCK_LAYOUT_P_Y = "BLOCK_LAYOUT_P_Y"
+    KEY_BLOCK_LAYOUT_P_X = "BLOCK_LAYOUT_P_X"
+    KEY_WARP_LAYOUT_P_Y = "WARP_LAYOUT_P_Y"
+    KEY_WARP_LAYOUT_P_X = "WARP_LAYOUT_P_X"
+    KEY_BLOCK_SCATTER_WIDTH_Q = "BLOCK_SCATTER_WIDTH_Q"
+    KEY_BLOCK_SCATTER_WIDTH_K = "BLOCK_SCATTER_WIDTH_K"
+    KEY_WARP_SCATTER_WIDTH_Q = "WARP_SCATTER_WIDTH_Q"
+    KEY_WARP_SCATTER_WIDTH_K = "WARP_SCATTER_WIDTH_K"
+    KEY_BLOCK_LAYOUT_O_Y = "BLOCK_LAYOUT_O_Y"
+    KEY_BLOCK_LAYOUT_O_X = "BLOCK_LAYOUT_O_X"
+    KEY_WARP_LAYOUT_O_Y = "WARP_LAYOUT_O_Y"
+    KEY_WARP_LAYOUT_O_X = "WARP_LAYOUT_O_X"
+    KEY_BLOCK_SCATTER_WIDTH_P = "BLOCK_SCATTER_WIDTH_P"
+    KEY_BLOCK_SCATTER_WIDTH_V = "BLOCK_SCATTER_WIDTH_V"
+    KEY_WARP_SCATTER_WIDTH_P = "WARP_SCATTER_WIDTH_P"
+    KEY_WARP_SCATTER_WIDTH_V = "WARP_SCATTER_WIDTH_V"
+    KEY_LOAD_CONTINUOUS_P = "LOAD_CONTINUOUS_P"
+    KEY_LOAD_CONTINUOUS_O = "LOAD_CONTINUOUS_O"
+    KEY_SHARED_PREFETCH_P = "SHARED_PREFETCH_P"
+    KEY_REG_PREFETCH_P = "REG_PREFETCH_P"
+    KEY_REG_PREFETCH_O = "REG_PREFETCH_O"
     
 def get_dtype_from_int(dtype : int) :
     if dtype == int( EnumKernelDType.float8) :
@@ -482,50 +653,54 @@ def get_dtype_from_int(dtype : int) :
         return EnumKernelDType.int64
     return None
 
-class OperatorBaseArgs :
-    def __init__(self):
-        self.operatorKind = EnumOperator.Invalid
-        self.argList = []  # arglist 中的参数为int类型 （int,torch.dtype）
-        self._innerDict = {
-            "kind" : self.operatorKind,
-            "b" : 0,
-            "m" : 0,
-            "n" : 0,
-            "k" : 0,
-            "dtype" : 0
-        }
-    def parseFromJsonfile(self,path : str):
-        import json
-        obj = None
-        with open(path) as f :
-            obj = json.load(f)
-        self.argList = [obj['b'],obj['m'],obj['n'],obj['k'],obj['dtype']]
-        self.operatorKind = obj['kind']
-        
-    def dumpToJson(self,path : str):
-        import json
-        self._innerDict["kind"] = self.operatorKind
-        self._innerDict["b"] = self.argList[0]
-        self._innerDict["m"] = self.argList[1]
-        self._innerDict["n"] = self.argList[2]
-        self._innerDict["k"] = self.argList[3]
-        self._innerDict["dtype"] = self.argList[4]
-        with open(path,'w') as f:
-            json.dump(self._innerDict,f)
-        
-    
-class GEMMBaseArgs(OperatorBaseArgs) :
-    def __init__(self):
-        super().__init__()
-        self.operatorKind = EnumOperator.Matmul
-    def getDetailedInfo(self) :
-        batch = int(self.argList[1])
-        m = int(self.argList[2])
-        n = int(self.argList[3])
-        k = int(self.argList[4])
-        dtype = ToTorchType(EnumKernelDType(int(self.argList[5])))
-        return (batch,m,n,k,dtype)
 
-if __name__ == '__main__' :
-    # PathManager.init()
-    pass
+
+# kernel运行时的二进制层面信息
+class KernelRuntimeInfo :
+    def __init__(self,module,func,regs,spills):
+        self.m_module = module
+        self.m_function = func
+        self.m_nRegs = regs
+        self.m_nSpills = spills
+
+
+class KernelLibFile :
+    def __init__(self,
+        filePath : str,  # hsaco文件路径
+        backendType : EnumBackendType,   # 后端类型（CUDA | HIP）
+        kernelFuncName ,  # 核函数名字
+        sharedMemSize,   # shm大小
+        signature,   # kernel signature
+        gridDims : list,
+        blockDims : list,
+        device= 0): # device号
+        
+        self.m_filePath = filePath
+        self.m_backendType : EnumBackendType = backendType
+        self.m_kernelInfo : KernelRuntimeInfo = None  # loader解析得到的地址等信息
+        self.m_signature = signature  
+        self.m_kernelFuncName = kernelFuncName
+        self.m_shmSize = sharedMemSize
+        self.m_device = device
+        self.m_gridDims = gridDims
+        self.m_blockDims = blockDims
+    
+    def __hash__(self) -> int:
+        return calculate_file_hash(self.m_filePath) 
+    
+    @functools.lru_cache
+    def hash(self)->int :
+        return calculate_file_hash(self.m_filePath) 
+
+    def signature_str(self) -> str :
+        ret = ''
+        for v in self.m_signature.values() :
+            ret += str(v)
+        return ret
+
+TsGeneratorType = Generator[CompileNeededInfo, Any, None]         
+
+
+# if __name__ == '__main__' :
+#     # PathManager.init()
+#     pass

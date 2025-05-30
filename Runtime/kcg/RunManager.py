@@ -1,6 +1,6 @@
 import json
 from typing import Dict,List,Tuple
-from RemoteUtils import DEFAULT_PORT, RemoteSSHConnect
+from RemoteUtils import RemoteSSHConnect
 from Utils import *
 
 # 分发给各个机器的启动参数，用于被 main_processs() 读取
@@ -25,10 +25,7 @@ class StartParam :
         self.remoteTesterSSHPort = 22
         self.remoteTesterUsername = ""
         self.remoteTesterPwd = ""
-        self.remoteTesterCWD = ""
         self.runMode = EnumRunMode.GetTuneSpace_Local_Only
-        self.tcp_port = DEFAULT_PORT
-        self.start_from = 0
         
     def parseFromJson(self,path) :
         obj = None
@@ -69,14 +66,9 @@ class StartParam :
             self.runMode = EnumRunMode.CallRemotePerftester
         elif obj['runMode'] == "AsRemotePerftester" :
             self.runMode = EnumRunMode.AsRemotePerftester
-        elif obj['runMode'] == "GetTuneSpace_Compile_Benchmark_Local" :
-            self.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
         else:
             assert False, f"illegal runmode {obj['runMode']}"
-        self.tcp_port = obj['tcp_port']
-        self.remoteTesterCWD = obj['remote_tester_cwd']
-        self.start_from = obj['start_from']
-        
+            
     def toJson(self) :
         dd = {
             'tuning_param_file' : None,
@@ -99,9 +91,6 @@ class StartParam :
             'remoteTesterUsername' : None,
             'remoteTesterPwd' : None,
             'runMode' : None,
-            'tcp_port' : None,
-            'remote_tester_cwd' : None,
-            'start_from' : None
         }
         dd['tuning_param_file'] = self.tuning_param_file
         dd['perfPathPrefix'] = self.perfPathPrefix
@@ -123,9 +112,6 @@ class StartParam :
         dd['remoteTesterUsername'] = self.remoteTesterUsername
         dd['remoteTesterPwd'] = self.remoteTesterPwd
         dd['runMode'] = str(self.runMode)
-        dd['tcp_port'] = self.tcp_port
-        dd['remote_tester_cwd'] = self.remoteTesterCWD
-        dd['start_from'] = self.start_from
         return dd
         
 class _Compiler :
@@ -135,33 +121,21 @@ class _Compiler :
         self.user_name = ""
         self.password = ""
         self.cwd = ""
-        self.tuning_config_relative_paths = []
-        self.tuning_space_relative_paths = []
-        self.perflog_prefix_list = []
+        self.tuning_config_relative_paths = ""
+        self.tuning_space_relative_paths = ""
+        self.perflog_prefix_list = ""
         self.max_process_count = 0
         self.tuning_space_generate_strategy = 1
         self.backendType = EnumBackendType.INVALID
         self.arch = ""
-        self.start_from = 0
-    
-    def getUUID(self) -> str :
-        return self.ip_addr +"_"+ self.user_name +"_"+ self.cwd
-    
+        
     def build(self, cfg : Dict) :
         self.ip_addr = cfg['ip_addr']
         self.sshPort =  cfg['ssh_port']
-        self.user_name = cfg['user_name']
-        self.password = cfg['password']
         self.cwd = cfg['cwd']
         self.tuning_config_relative_paths = cfg['tuning_config_relative_paths']
         self.tuning_space_relative_paths = cfg['tuning_space_relative_paths']
         self.perflog_prefix_list = cfg['perflog_prefix_list']
-        
-        if len(self.tuning_config_relative_paths) == len(self.tuning_space_relative_paths) \
-            and len(self.tuning_space_relative_paths) == len(self.perflog_prefix_list) :
-            pass
-        else:
-            assert False, f"[Fatal] Compiler {self.getUUID()} task list lengths illegal!"
         self.max_process_count = cfg['max_process_count']
         self.tuning_space_generate_strategy = cfg['tuning_space_generate_strategy']
         if cfg['backendType'] == 'CUDA':
@@ -169,7 +143,7 @@ class _Compiler :
         else:
             self.backendType = EnumBackendType.HIP
         self.arch = cfg['arch']
-        self.start_from = cfg['start_from']
+        
         
 class _Benchmarker :
     def __init__(self):
@@ -182,12 +156,6 @@ class _Benchmarker :
         self.benchmark_count = 0
         self.warmup_count = 0
         
-    def getUUID(self) -> str :
-        ret = self.ip_addr +"_"+ self.user_name +"_"+ self.cwd
-        for devid in self.devIds :
-            ret += str(f'_dev{devid}')
-        return ret
-    
     def build(self,config : Dict) :
         self.ip_addr = config['ip_addr']
         self.sshPort = config['ssh_port']
@@ -239,32 +207,29 @@ class _WorkGroup :
             com.remoteTesterSSHPort = self.m_perfTester.sshPort
             com.remoteTesterUsername = self.m_perfTester.user_name
             com.remoteTesterPwd = self.m_perfTester.password
-            com.tcp_port = self.id + DEFAULT_PORT
-            com.remoteTesterCWD = self.m_perfTester.cwd
-            com.start_from = self.m_compiler.start_from
             return com
         com = __get_object()
         tester = __get_object()
-        if self.m_isUseRemoteBenchmark :
+        if self.m_isUseRemoteBenchmark : # compile and benchmark process on different PC
             com.runMode = EnumRunMode.CallRemotePerftester
             tester.runMode = EnumRunMode.AsRemotePerftester
             return (com,tester)
-        else:
-            com.runMode = EnumRunMode.GetTuneSpace_Compile_Benchmark_Local
-            return (com,com)
+        else: # compile and benchmark process on same PC
+            com.runMode = EnumRunMode.CallRemotePerftester
+            tester.runMode = EnumRunMode.AsRemotePerftester
+            return (com,tester)
     
     def getCompilerTesterParamfileNames(self) -> Tuple[str,str] :
-        c = PathManager.default_override_dir() + f"/param_compile_{self.id}.json"
-        t = PathManager.default_override_dir() + f"/param_test_{self.id}.json"
+        c = PathManager.default_override_dir() + f"/param_c_{self.id}.json"
+        t = PathManager.default_override_dir() + f"/param_t_{self.id}.json"
         return (c,t)
     
-    def __getStartCmd(self, wd : str ,shortfname : str) -> str :
-        stem = shortfname.split('.')[0]
-        fullPath = f"{wd}/_cluster_run/{shortfname}"
-        fullLogPath = f"{wd}/_cluster_run/{stem}Log.log"
-        return f"cd {wd} ;nohup ./scripts/Benchmark.sh {fullPath} {fullLogPath} &"
-    def __getInitDirCmd(self, wd) -> str :
-        return f"cd {wd} ; rm -rf ./cluster_run ; mkdir _cluster_run/"
+    
+    def getStartCmd(self, wd : str ,shortfname : str, needClearDir = 1) -> str :
+        return f"cd {wd} ; ./scripts/Benchmark.sh  {wd}/_tmp/{shortfname} {needClearDir}"
+    
+    def getClearCmd(self, wd : str ) -> str :
+        return f"cd {wd} ; ./scripts/ClearRuntimeDir.sh "
     
     # start compiler and perftester :
     def start(self) :
@@ -279,34 +244,36 @@ class _WorkGroup :
         fname_c ,fname_t = self.getCompilerTesterParamfileNames()
         shortname_c = fname_c.split('/')[-1]
         shortname_t = fname_t.split('/')[-1]
+        if self.m_sshToCompiler.host == self.m_sshToTester.host : 
+            self.m_sshToCompiler.execute_cmd_on_remote( self.getClearCmd(self.m_compiler.cwd))
         with open(fname_c, 'w') as f:
             json.dump(param_c.toJson(),f)
         with open(fname_t, 'w') as f:
             json.dump(param_t.toJson(),f)
-        
         # connect to compiler and tester, execute startup shell command
-        if self.m_sshToCompiler.connectSSH() and self.m_sshToTester.connectSSH() :
+        if self.m_sshToCompiler.connect() and self.m_sshToTester.connect() :
+            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_tmp")
+            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_tmp")
             
-            self.m_sshToCompiler.execute_cmd_on_remote( self.__getInitDirCmd(self.m_compiler.cwd))
-            self.m_sshToTester.execute_cmd_on_remote( self.__getInitDirCmd(self.m_perfTester.cwd))
-            self.m_sshToCompiler.upload_file(fname_c,f"{self.m_compiler.cwd}/_cluster_run")
-            self.m_sshToTester.upload_file(fname_t,f"{self.m_perfTester.cwd}/_cluster_run")
-            self.m_sshToCompiler.execute_cmd_on_remote( self.__getStartCmd(self.m_compiler.cwd, shortname_c))
-            self.m_sshToTester.execute_cmd_on_remote( self.__getStartCmd(self.m_perfTester.cwd, shortname_t))
+            if self.m_sshToCompiler.host == self.m_sshToTester.host : 
+                self.m_sshToCompiler.execute_cmd_on_remote( self.getStartCmd(self.m_compiler.cwd, shortname_c, 0))
+                self.m_sshToTester.execute_cmd_on_remote( self.getStartCmd(self.m_perfTester.cwd, shortname_t, 0))
+            else:
+                self.m_sshToCompiler.execute_cmd_on_remote( self.getStartCmd(self.m_compiler.cwd, shortname_c, 1))
+                self.m_sshToTester.execute_cmd_on_remote( self.getStartCmd(self.m_perfTester.cwd, shortname_t, 1))
+            
+            
         
         
-# Wrokgroup 运行管理器，用于读取用户配置的批量信息 建立compile-test任务组 初始化各个机器的分工
-# 一个Workgroup内的任务是串行执行的。
+# 集群运行管理器，用于读取用户配置的批量信息 建立compile-test任务集群 初始化各个机器的分工
 class WorkgroupManager :
     def __init__(self, startupJson : str):
         self.m_config = None
         self.m_startupJsonPath = startupJson
-        self.workgroups : List[_WorkGroup] = []
-        self.compilerUUIDs = []
-        self.testerUUIDs = []
-        
-    # build workgorups with startupJson, then check whether all workgroups can run in parallel
-    def _loadAndCheck(self) -> bool:
+        self.workgroups = []
+    
+    # build workgorups with startupJson
+    def loadAndStart(self):
         with open(self.m_startupJsonPath) as f :
             self.m_config = json.load(f)
         # check json format
@@ -316,23 +283,5 @@ class WorkgroupManager :
             wg_param = self.m_config['workgroups'][i]
             wg = _WorkGroup(id=i)
             wg.build(wg_param)
-            com_uid = wg.m_compiler.getUUID()
-            tester_uid = wg.m_perfTester.getUUID()
-            if com_uid not in self.compilerUUIDs:
-                self.compilerUUIDs.append(com_uid)
-            else:
-                print(f"[E] workgroup {i} : compilerUUID {com_uid} already exsists!")  # deepGen 暂不支持多个compile任务同时运行在同台机器的相同项目目录
-                return False
-            if tester_uid not in self.testerUUIDs:
-                self.testerUUIDs.append(tester_uid)
-            else:
-                print(f"[E] workgroup {i} : TesterUUID {com_uid} already exsists!")  # deepGen 暂不支持多个test任务同时运行在同台机器的相同项目目录
-                return False
+            wg.start()
             self.workgroups.append(wg)
-        return True
-    
-    def run(self) :
-        if self._loadAndCheck() :
-            for wg in self.workgroups :
-                wg.start()
-        

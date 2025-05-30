@@ -4,7 +4,7 @@ import re
 import subprocess
 import tempfile
 from pathlib import Path
-from typing import Any, Tuple
+from typing import Any, Tuple, Callable
 from kcg.Cache import *
 
 # from kcg.common.backend import BaseBackend, register_backend, compute_core_version_key
@@ -13,7 +13,6 @@ from kcg.Cache import *
 # from kcg.Launcher.make_launcher import get_cache_manager, make_so_cache_key
 from kcg.Cache import *
 from kcg.Utils import *
-from kcg.Kernel import *
 from kcg.Loader import HIPLoaderST
 import importlib.util
 # HIP_BACKEND_MODE = False
@@ -270,35 +269,22 @@ class HIPLauncher :
     
     def __loadKernel(self):
         loader = HIPLoaderST()
-        loader.loadKernel(self.m_kernelLib)
-    
-    def __del__(self) :
-        self.releaseAndDeleteBinary()
-    
-    def releaseAndDeleteBinary(self):
-        loader = HIPLoaderST()
-        loader.unloadKernel(self.m_kernelLib)
-        if os.path.exists(self.m_kernelLib.m_filePath) :
-            os.remove(self.m_kernelLib.m_filePath)
+        loader.loadBinary(self.m_kernelLib)
     
     def _getWrapper(self) -> Callable:
-        try:
-            if self.m_launcherLibPath is None :
-                if self.m_kernelLib.m_kernelInfo is None : 
-                    self.__loadKernel()
-                # compile launcher.so
-                self.m_launcherLibPath = make_stub(self.m_kernelLib)
-            if self.m_cWrapper is None :
-        # import launcher.so as module
-                spec = importlib.util.spec_from_file_location("__kcg_launcher", self.m_launcherLibPath)
-                mod = importlib.util.module_from_spec(spec)
-                spec.loader.exec_module(mod)
-                self.m_cWrapper = getattr(mod, "launch")
-            return self.m_cWrapper
-        except Exception as e:
-            print("[error _getWrapper]",e)
-        return None
-        
+        if self.m_launcherLibPath is None :
+            if self.m_kernelLib.m_kernelInfo is None : 
+                self.__loadKernel()
+            # compile launcher.so
+            self.m_launcherLibPath = make_stub(self.m_kernelLib)
+        if self.m_cWrapper is None :
+			# import launcher.so as module
+            spec = importlib.util.spec_from_file_location("__kcg_launcher", self.m_launcherLibPath)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.m_cWrapper = getattr(mod, "launch")
+        return self.m_cWrapper
+
     def launchKernel(self,*args):
         wrapper = self._getWrapper()
         devid = self.m_kernelLib.m_device
@@ -322,3 +308,10 @@ class HIPLauncher :
                 enterHookFunc,
                 exitHookFunc,
                 self,*args )
+
+        if wrapper is None :
+            # print("[D] error cwrapper")
+            pass
+        else:
+            # print("[D] success cwrapper")
+            pass

@@ -1,8 +1,10 @@
 import json
 import importlib.util
-from typing import List
-from kcg.Operators.matmul import KernelArgMatmul, TuningSpaceEncoder_Matmul
-from kcg.Utils import ConfigKeywords as kw
+from typing import Any, Generator, List
+from kcg.Operators.matmul import MatmulTuningArgs
+from kcg.Utils import *
+
+kw = ConfigKeywords
 
 def readConfigJson(path):
   # read json file
@@ -18,7 +20,7 @@ class CreateMatmulConfig:
     self.word_width = word_width  # 一个字 4 byte
     self.max_reg_size = 256 * self.word_width   # byte
     self.max_sm_size = 64 * 1024  # byte
-    self.encoder = TuningSpaceEncoder_Matmul(self.cfg_dict)
+    # self.encoder = TuningSpaceEncoder(self.cfg_dict)
 
   def getThreadTile(self, halfTag=True, squareTag=True):
     # 获取线程tile的大小，halfTag为是tile只是用一半，另一半对称的不使用，squareTag且尽量方形
@@ -185,7 +187,7 @@ class CreateMatmulConfig:
     # (splitU, glob_store_width, reduce_c_continuous), (unroll, block_mapping))
     return new_tals
 
-  def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256) -> List[int]:
+  def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256) -> TsGeneratorType :
     # main
     ttiles = self.getThreadTile(halfTag=thalfTag, squareTag=tsquareTag)
     btiles = self.getBlockTile(halfTag=bhalfTag, squareTag=bsquareTag)
@@ -194,10 +196,16 @@ class CreateMatmulConfig:
     temp_tals = self.getScatterWidth(temp_tals)
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
     temp_tals = self.getOther(temp_tals)
-    kams = []
     for tal in temp_tals:
-      kam = KernelArgMatmul(self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0], self.cfg_dict[kw.KEY_BATCH][0] ,            # M, N, K, batch
-                            self.cfg_dict[kw.KEY_DTYPE_A][0], self.cfg_dict[kw.KEY_DTYPE_B][0], self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
+      ta = MatmulTuningArgs(
+        m = self.cfg_dict[kw.KEY_M][0], 
+        n = self.cfg_dict[kw.KEY_N][0],
+        k= self.cfg_dict[kw.KEY_K][0],
+        batch= self.cfg_dict[kw.KEY_BATCH][0] ,
+        enumDType= self.cfg_dict[kw.KEY_DTYPE_A][0]
+      ) 
+      # self.cfg_dict[kw.KEY_DTYPE_B][0], 
+      # self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
       config = (
         tal[0][0], tal[0][1], tal[0][2],  # block_size
         tal[1][0], tal[1][1],             # thread_size
@@ -211,52 +219,49 @@ class CreateMatmulConfig:
         tal[9][0], tal[9][1],             # block_mapping, unroll
         self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
       )
-      kam.setArgs(*config)
-      nthreads = kam.BLOCK_SIZE_M / kam.THREAD_SIZE_M * kam.BLOCK_SIZE_N / kam.THREAD_SIZE_N * kam.LOCAL_SPLIT_U
-      if kam.LOAD_CONTINUOUS == 0 :
-        if nthreads < kam.BLOCK_SIZE_K : 
-          continue
-      if kam.LOCAL_SPLIT_U > 1 :
-        if (nthreads / kam.LOCAL_SPLIT_U) < kam.BLOCK_SIZE_M :
-          continue
-      kamEncodedStr = self.encoder.encode(kam.jsonfy())
-      kams.append(int(kamEncodedStr))
-    return kams
+      ta.assignWithList(*config)
+      ret = CompileNeededInfo()
+      ret.baseArgs = [ta.batch, ta.M, ta.N, ta.K, int(ta.dtA)]
+      ret.tsArgs = [            
+          ta.BLOCK_SIZE_M,
+          ta.BLOCK_SIZE_N,
+          ta.BLOCK_SIZE_K,
+          ta.THREAD_SIZE_M,
+          ta.THREAD_SIZE_N,
+          ta.WARP_SIZE,
+          ta.BLOCK_LAYOUT_M,
+          ta.BLOCK_LAYOUT_N,
+          ta.WARP_LAYOUT_M,
+          ta.WARP_LAYOUT_N,
+          ta.GLOB_LOAD_WIDTH_A,
+          ta.GLOB_LOAD_WIDTH_B,
+          ta.WARP_SCATTER_WIDTH_A,
+          ta.WARP_SCATTER_WIDTH_B,
+          ta.THREAD_SCATTER_WIDTH_A,
+          ta.THREAD_SCATTER_WIDTH_B,
+          ta.LOCAL_SPLIT_U,
+          ta.BLOCK_MAPPING,
+          ta.GLOB_STORE_WIDTH,
+          ta.UNROLL_NUM,
+          ta.REG_PREFETCH,
+          ta.SHARED_PREFETCH,
+          ta.LOAD_CONTINUOUS,
+          ta.REDUCE_C_CONTINUOUS,
+          ta.dtA, # A
+          ta.dtB, # B
+          ta.dtC, # C
+          ta.M, ta.N, ta.K, ta.batch,
+          ta.isATranspose
+        ]
+      ret.torchDataType = ToTorchType(ta.dtA)
+      yield ret
     
 
-# def getCompileFunc():
-#   # 获取编译程序
-#   spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
-#   mod = importlib.util.module_from_spec(spec)
-#   spec.loader.exec_module(mod)
-#   return mod.compile_kernel_matmul
-
-# def compile(compileFunc, config, device=7):
-#   # 编译 这里获取一次 func 所以速度应该会提升
-#   hsacoPath, kernelName, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ = compileFunc(
-#     config.BLOCK_SIZE_M, config.BLOCK_SIZE_N, config.BLOCK_SIZE_K,
-#     config.THREAD_SIZE_M, config.THREAD_SIZE_N,
-#     config.WARP_SIZE,
-#     config.BLOCK_LAYOUT_M, config.BLOCK_LAYOUT_N,
-#     config.WARP_LAYOUT_M, config.WARP_LAYOUT_N,
-#     config.GLOB_LOAD_WIDTH_A, config.GLOB_LOAD_WIDTH_B,
-#     config.WARP_SCATTER_WIDTH_A, config.WARP_SCATTER_WIDTH_B,
-#     config.THREAD_SCATTER_WIDTH_A, config.THREAD_SCATTER_WIDTH_B,
-#     config.LOCAL_SPLIT_U,
-#     config.BLOCK_MAPPING,
-#     config.GLOB_STORE_WIDTH,
-#     config.UNROLL_NUM,
-#     config.REG_PREFETCH, config.SHARED_PREFETCH, config.LOAD_CONTINUOUS,
-#     config.REDUCE_C_CONTINUOUS,
-#     config.dtype('A'), config.dtype('B'), config.dtype('C'), config.M,config.N,config.K,
-#     config.isATranspose
-#   )[0]
-#   inConfig = UserInputs(hsacoPath, kernelName, config)
-#   inConfig.m_gridDims = [gridDimX, gridDimY, gridDimZ]
-#   inConfig.m_blockDims = [blockDimX, blockDimY, blockDimZ]
-#   inConfig.operatorKind = EnumOperator.Matmul
-#   packedKernel = CompiledKernelFactory.getKernel(inConfig, device)
-#   return packedKernel
+def getTuneSpace(geemConfigPath : str) -> TsGeneratorType :
+  cfg_dict = readConfigJson(geemConfigPath)
+  cmc = CreateMatmulConfig(cfg_dict, 4)
+  kams = cmc.createMatMulConfig(thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256)  # KernelArgMatmul
+  return kams
 
 # # example code 
 # if "__main__" == __name__:

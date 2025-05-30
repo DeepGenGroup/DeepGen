@@ -1,4 +1,4 @@
-from kcg.Operators.matmul import TuningSpaceEncoder_Matmul
+from kcg.Operators.matmul import TuningSpaceEncoder
 import json
 import sys
 
@@ -24,7 +24,7 @@ def convert_and_save(perflogpath:str, outputspacepath : str,mode : int) :
         tuningDict[key] = list(tuningDict[key])
         
     if mode == SAVE_AS_SPACE : # save as space
-        te = TuningSpaceEncoder_Matmul(tuningDict)
+        te = TuningSpaceEncoder(tuningDict)
         space={"template" : None, 'cfgs' : []}
         space['template'] = tuningDict
         for data in perfdata['results'] :
@@ -49,7 +49,7 @@ if __name__ == "__main__" :
     if len(sys.argv) > 3 :
         input = sys.argv[1]  # 输入 perflog 文件
         output = sys.argv[2]  # 输出 tuningspace 文件
-        mode = int(sys.argv[3])
+        mode = sys.argv[3]
         convert_and_save(input, output, mode)
     else :
         helpmsg = \
