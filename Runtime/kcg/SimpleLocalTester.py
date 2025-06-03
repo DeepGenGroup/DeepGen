@@ -35,28 +35,41 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
     print(f"__compile_task_func : ba = {ba}")
     serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
 
-def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str) :
+
+g_index : int = 0
+def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
-    allIndex = 0
-    kernelLimit = 0
-    for needInfo in tsGenerator :
-        procs : List[Process] = []
-        maxProcsLimit = 50
-        print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
-        p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch,allIndex))
-        # __compile_task_func(OpTy,needInfo,deviceId,backendtype,arch,allIndex)
-        procs.append(p)
-        p.start()
-        allIndex += 1
-        if allIndex > kernelLimit:
-            break 
-        if len(procs) >= maxProcsLimit :
-            for pp in procs :
-                pp.join()
-            procs.clear()
+    global g_index
+    g_index = 0
+    maxProcsLimit = 50
+    procs : List[Process] = []
+    iterationEnds = False
+    print('========= compiling ============')
+    while True:
+        try:
+            needInfo = next(tsGenerator)
+        # for needInfo in tsGenerator :
+            print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
+            # create compile process
+            p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index))
+            procs.append(p)
+            p.start()
+            g_index += 1
+            if g_index > kernelLimit:
+                break 
+            if len(procs) >= maxProcsLimit :
+                for pp in procs :
+                    pp.join()
+                procs.clear()
+        except StopIteration as e :
+            iterationEnds = True
+            break
+    # wait all procs end
     for pp in procs :
         pp.join()
     procs.clear()
+    return iterationEnds
+    
 
 def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> float :
     op.InitBaseArgs(baseArg)
@@ -75,28 +88,37 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
         print("Test Error!")
     return (acc,cfg.kernelFuncName)
     
-def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig):
+def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tempSaveJson : str = ''):
     init_cuda(devId)
     name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
     pkls = glob.glob(name_format)
-    maxSppedups = []
     if len(pkls) > 0 :
         for pkl in pkls :
-            op = OpTy()
-            (ba ,config ) = deserialize_from_file(pkl) 
-            assert isinstance(ba, List)
-            assert isinstance(config, KernelConfigs)
-            print(f'[D] after desrialize : {ba}')
-            
-            acc, funName = __runBenchmark(op, config, ba, 1, 5 , devId)
-            if acc > 0 :
-                obj = {"name" : funName, "speedup" : acc}
-                maxSppedups.append(obj)
-                maxSppedups.sort(key=lambda x: x["speedup"],reverse=True)
-                if len(maxSppedups) > benchConfig.keepTopNum :
-                    maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+            try:
+                op = OpTy()
+                (ba ,config ) = deserialize_from_file(pkl) 
+                assert isinstance(ba, List)
+                assert isinstance(config, KernelConfigs)
+                print(f'[D] after desrialize : {ba}')
+                acc, funName = __runBenchmark(op, config, ba, 1, 5 , devId)
+                os.remove(pkl)
+                if acc > 0 :
+                    obj = {"name" : funName, "speedup" : acc}
+                    maxSppedups.append(obj)
+                    maxSppedups.sort(key=lambda x: x["speedup"],reverse=True)
+                    if len(maxSppedups) > benchConfig.keepTopNum :
+                        maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+            except BaseException as e: 
+                print('[Deepgen Exception] ',e)
+            except IOError as e: 
+                print('[Deepgen IOError] ',e)
                     
     print(f" ======== benchmark end . maxSppedups = {maxSppedups} ===========")
+    if len(tempSaveJson) > 0 :
+        with open(tempSaveJson,'w+') as f:
+            result = {"res" : []}
+            result['res'] = maxSppedups
+            json.dump(result,f)
     
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
     if OpTy is matmul.MatmulOp :
@@ -133,21 +155,35 @@ def test_simple() :
     print(dd)
     # op.Test_baseline(7)
     # op.Test_benchmark(kernel,dev)
-    
+
+
+def compile_and_benchmark(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) :
+    maxSpeedups = []
+    while compile_kernel(opty,ts,devId,backend,arch, kernelLimit=10) :
+        print("=========== benchmark ======")
+        do_benchmark(opty,devId,cc,maxSpeedups)
+    do_benchmark(opty,devId,cc,maxSpeedups)
+
     
 if __name__ == '__main__' :
     # test_simple()
-    
     cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     opty = attention.AttentionOp
     devId = 7
+    backend = EnumBackendType.CUDA
+    arch = "80"
     # opty = matmul.MatmulOp
     PathManager.init(clearPkl=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
     print("get_tune_space",flush=True)
     ts = get_tuning_space(opty, cfgFile)
-    print("compiling",flush=True)
-    compile_kernel(opty,ts,devId,EnumBackendType.CUDA,"80")
-    print("=========== benchmark ======")
     cc = BenchmarkConfig()
-    do_benchmark(opty,devId,cc)
+    
+    tsSize = 0
+    for cfg in ts :
+        tsSize += 1
+    print("tsSize = ", tsSize)
+    
+    # # compile_and_benchmark(opty,ts,cc,backend,arch,devId)
+    # compile_kernel(opty,ts,devId,EnumBackendType.CUDA,"80",kernelLimit=3)
+    # do_benchmark(opty,devId,cc,[],'/home/xushilong/DeepGen/testResult.json')

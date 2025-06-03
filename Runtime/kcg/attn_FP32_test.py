@@ -83,7 +83,7 @@ class CreateConfig:
             for pwlx in self.cfg["WARP_LAYOUT_P_X"]:
               ty = pbly * pwly
               tx = pblx * pwlx
-              if ty == oldResult[0][0] and tx == oldResult[0][1]:
+              if ty == oldResult[0][0] and tx == oldResult[0][1] and pwly * pwlx == 32:
                 for qbsw in self.cfg["BLOCK_SCATTER_WIDTH_Q"]:
                   for kbsw in self.cfg["BLOCK_SCATTER_WIDTH_K"]:
                     for qwsw in self.cfg["WARP_SCATTER_WIDTH_Q"]:
@@ -104,7 +104,7 @@ class CreateConfig:
             for owlx in self.cfg["WARP_LAYOUT_O_X"]:
               ty = obly * owly
               tx = oblx * owlx
-              if ty == oldResult[0][2] and tx == oldResult[0][3]:
+              if ty == oldResult[0][2] and tx == oldResult[0][3] and owly * owlx == 32:
                 for pbsw in self.cfg["BLOCK_SCATTER_WIDTH_P"]:
                   for vbsw in self.cfg["BLOCK_SCATTER_WIDTH_V"]:
                     for pwsw in self.cfg["WARP_SCATTER_WIDTH_P"]:
