@@ -292,7 +292,7 @@ class CompiledKernel:
 class OpBaseArgs(ABC) :
     def __init__(self):
         self.operatorKind = EnumOperator.Invalid
-        self.intValues = []  # arglist 中的参数为int类型 （int,torch.dtype）
+        self.intValues = []  # [问题规模+数据类型] , arglist 中的参数为int类型 （int,torch.dtype）
         self.argDict = {  # 参数字典。
             "kind" : self.operatorKind,
             "dtype" : 0
@@ -349,7 +349,7 @@ class TuningArgsInterface(ABC) :
 class OpInterface(ABC) :
     def __init__(self):
         super().__init__()
-        self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，如dtypes，问题形状等（如M,N,K,batch）。为问题的基本属性
+        self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，定义了问题形状等（如M,N,K,batch）。为问题的基本属性
         self.InputTensors_Baseline : List[torch.Tensor] = None
         self.InputTensors_Benchmark : List[torch.Tensor] = None
         self.OutputTensor_Baseline : torch.Tensor = None
@@ -384,7 +384,7 @@ class OpInterface(ABC) :
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]: ...
 
     @abstractmethod
-    def Test_benchmark(self, packedKernel : CompiledKernel, devId : int) -> Tuple[torch.Tensor,float] :  ...
+    def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int , devId : int) -> Tuple[torch.Tensor,float] :  ...
     
     @abstractmethod
     # initialize input tensors for Test_baseline with given dataList & datatype & devId

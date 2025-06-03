@@ -297,7 +297,8 @@ class HIPLauncher :
         enterHookFunc = None
         exitHookFunc = None
         numCTAs = gridDims[0]*gridDims[1]*gridDims[2]
-        # print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ,shm-{self.m_kernelLib.m_shmSize}",flush=True)
+        print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ,shm={self.m_kernelLib.m_shmSize}",flush=True)
+        print(f"[Runtime] args = {args}")
         wrapper(gridDims[0],gridDims[1],gridDims[2],blockDims[0],blockDims[1],blockDims[2],
                 # m.num_ctas,
                 numCTAs,

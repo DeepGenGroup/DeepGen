@@ -197,10 +197,15 @@ class CreateMatmulConfig:
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
     temp_tals = self.getOther(temp_tals)
     for tal in temp_tals:
-      ta = MatmulTuningArgs(self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0], self.cfg_dict[kw.KEY_BATCH][0] ,            # M, N, K, batch
-                            self.cfg_dict[kw.KEY_DTYPE_A][0]) 
-                            # self.cfg_dict[kw.KEY_DTYPE_B][0], 
-                            # self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
+      ta = MatmulTuningArgs(
+        m = self.cfg_dict[kw.KEY_M][0], 
+        n = self.cfg_dict[kw.KEY_N][0],
+        k= self.cfg_dict[kw.KEY_K][0],
+        batch= self.cfg_dict[kw.KEY_BATCH][0] ,
+        enumDType= self.cfg_dict[kw.KEY_DTYPE_A][0]
+      ) 
+      # self.cfg_dict[kw.KEY_DTYPE_B][0], 
+      # self.cfg_dict[kw.KEY_DTYPE_C][0]) # typeA, typeB, typeC
       config = (
         tal[0][0], tal[0][1], tal[0][2],  # block_size
         tal[1][0], tal[1][1],             # thread_size
@@ -216,7 +221,7 @@ class CreateMatmulConfig:
       )
       ta.assignWithList(*config)
       ret = CompileNeededInfo()
-      ret.baseArgs = [ta.M, ta.N, ta.K]
+      ret.baseArgs = [ta.batch, ta.M, ta.N, ta.K, int(ta.dtA)]
       ret.tsArgs = [            
           ta.BLOCK_SIZE_M,
           ta.BLOCK_SIZE_N,
@@ -248,7 +253,7 @@ class CreateMatmulConfig:
           ta.M, ta.N, ta.K, ta.batch,
           ta.isATranspose
         ]
-      ret.dataType = ta.dtC
+      ret.torchDataType = ToTorchType(ta.dtA)
       yield ret
     
 

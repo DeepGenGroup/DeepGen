@@ -454,7 +454,7 @@ int main() {
 
   // 加载.cubin模块
   CUmodule module;
-  CUresult result = cuModuleLoad(&module, "/tmp/compile-ptx-src-e15e91.cubin");
+  CUresult result = cuModuleLoad(&module, "/tmp/compile-ptx-src-ebe279.cubin");
   if (result != CUDA_SUCCESS) {
     std::cerr << "Failed to load module: " << result << std::endl;
     return -1;
@@ -470,8 +470,8 @@ int main() {
 
   // 定义矩阵参数
   const int batch_size = 1;
-  const int head_num = 1;
-  const int seq_len = 128 ;
+  const int head_num = 32;
+  const int seq_len = 2048 ;
   const int head_dim = 128;
   const int len = batch_size * head_num * seq_len * head_dim;
 
@@ -529,34 +529,34 @@ int main() {
 
   cudaError_t err;
   void* args[] = {&d_Q, &d_K, &d_V, &d_O_};
-  cuLaunchKernel(kernel, 2, 1, 1, 256, 1, 1, 41728, 0, args, NULL);
+  cuLaunchKernel(kernel, 32, 32, 1, 256, 1, 1, 29440, 0, args, NULL);
   err = cudaDeviceSynchronize();
   if (err != cudaSuccess) {
       printf("设备同步失败: %s\n", cudaGetErrorString(err));
       return 1;
   }
   cudaMemcpy(h_O, d_O_, len * sizeof(float), cudaMemcpyDeviceToHost);
-  // display(h_O, len);
-  for (int i=0; i<128; i++) {
-    for (int j=0; j<128; j++) {
-      printf("%.7f ", h_O[i*128+j]);
-    }
-    printf("\n");
-  }
-  printf("\n\n");
+  display(h_O, len);
+  // for (int i=0; i<128; i++) {
+  //   for (int j=0; j<128; j++) {
+  //     printf("%.7f ", h_O[i*128+j]);
+  //   }
+  //   printf("\n");
+  // }
+  // printf("\n\n");
 
-  dim3 gridSize1(seq_len/64, head_num, batch_size);  // bx, by, bz
-  dim3 blockSize1(256);
-  FlashAttention_FP32<<<gridSize1, blockSize1>>>(d_Q, d_K, d_V, d_O, head_num, seq_len);
-  cudaMemcpy(h_O, d_O, len * sizeof(float), cudaMemcpyDeviceToHost);
+  // dim3 gridSize1(seq_len/64, head_num, batch_size);  // bx, by, bz
+  // dim3 blockSize1(256);
+  // FlashAttention_FP32<<<gridSize1, blockSize1>>>(d_Q, d_K, d_V, d_O, head_num, seq_len);
+  // cudaMemcpy(h_O, d_O, len * sizeof(float), cudaMemcpyDeviceToHost);
   // display(h_O, len);
-  for (int i=0; i<128; i++) {
-    for (int j=0; j<128; j++) {
-      printf("%.7f ", h_O[i*128+j]);
-    }
-    printf("\n");
-  }
-  printf("\n\n");
+  // for (int i=0; i<128; i++) {
+  //   for (int j=0; j<128; j++) {
+  //     printf("%.7f ", h_O[i*128+j]);
+  //   }
+  //   printf("\n");
+  // }
+  // printf("\n\n");
 
   // 同步设备
   cuModuleUnload(module);

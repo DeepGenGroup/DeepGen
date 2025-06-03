@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 from kcg.CompiledKernel import *
 from kcg.Kernel import *
@@ -302,6 +303,7 @@ class MatmulOp(OpInterface) :
         if self.InputTensors_Benchmark is None :
             [a,b] = self.GetBaselineInputTensor(devId)
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
+            print(f"self.BaseArgs.intValues = {self.BaseArgs.intValues}" )
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             if batch > 1 :
                 aa = a.transpose(1,2).contiguous()
@@ -321,6 +323,7 @@ class MatmulOp(OpInterface) :
     def InitLibInterface(self) :
         if self.CompileKernelMatmul is None or self.SetPlatform is None :
             import importlib.util
+            print(f"PathManager.kcg_compiler_path() = {PathManager.kcg_compiler_path()}",flush=True)
             spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
@@ -355,7 +358,7 @@ class MatmulOp(OpInterface) :
         Print("========= kernelName = ",kernelName)
         print(f"==== backend is {backendtype}")
         print(f"==== shmBytes is {shmBytes}")
-        dt = info.dataType
+        dt = info.torchDataType
         inConfig = KernelConfigs(hsacoPath, kernelName, [ dt,dt,dt ], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
@@ -380,11 +383,9 @@ class MatmulOp(OpInterface) :
     def GetSignature(self, dtypes : List[torch.dtype]) -> dict :
         # signature只和输入的dtype有关，尺寸无关
         dtypeA = dtypes[0]
-        dtypeB = dtypes[1]
-        dtypeC = dtypes[2]
-        a = torch.randn((2, 2), device='cpu', dtype=dtypeA)
-        b = torch.randn((2, 2), device='cpu', dtype=dtypeB)
-        c = torch.empty((2, 2), device='cpu', dtype=dtypeC)
+        a = torch.rand(100, 100, device='cpu', dtype=dtypeA)
+        b = torch.rand(100, 100, device='cpu', dtype=dtypeA)
+        c = torch.empty(100, 100, device='cpu', dtype=dtypeA)
         # get function signature
         outSignature = _matmul(a, b, c)
         return outSignature
@@ -393,7 +394,7 @@ class MatmulOp(OpInterface) :
         self.TuningArgs.assignWithList(*tuningArgs)
 
     def InitBaseArgs(self, args : List[int]) :
-        batch, m, n, k, dtypeInt = args
+        batch, m, n, k , dtypeInt = args
         self.BaseArgs.intValues = [batch, m,n,k, dtypeInt]
         ety = EnumKernelDType(dtypeInt)
         self.TuningArgs = MatmulTuningArgs(batch,m,n,k,ety)  
@@ -423,17 +424,21 @@ class MatmulOp(OpInterface) :
         eps = ev_start.elapsed_time(ev_end)
         return (self.OutputTensor_Baseline, eps)
     
-    def Test_benchmark(self, packedKernel : CompiledKernel, devId : int) -> Tuple[torch.Tensor,float] : 
-        a,b,c = self.GetBenchmarkInputTensor(devId)
+    def Test_benchmark(self, packedKernel : CompiledKernel,benchmarkCount : int , devId : int) -> Tuple[torch.Tensor,float] : 
         assert self.InputTensors_Benchmark  is not None, "error benchmark"
-        st = torch.cuda.Event(enable_timing=True)
-        et = torch.cuda.Event(enable_timing=True)
-        st.record()
-        packedKernel.run(a,b,c)
-        et.record()
-        torch.cuda.synchronize()
-        elapsed_time = st.elapsed_time(et)
-        return (c,elapsed_time)
+        eps = []
+        for i in range(benchmarkCount):
+            a,b,c = self.GetBenchmarkInputTensor(devId)
+            st = torch.cuda.Event(enable_timing=True)
+            et = torch.cuda.Event(enable_timing=True)
+            st.record()
+            packedKernel.run(a,b,c)
+            et.record()
+            torch.cuda.synchronize()
+            elapsed_time = st.elapsed_time(et)
+            eps.append(elapsed_time)
+        t = np.median(eps)
+        return (c,t)
     
     def InitInputTensorsWithDatalist(self,  devId) -> None:
         assert self.BaseArgs is not None

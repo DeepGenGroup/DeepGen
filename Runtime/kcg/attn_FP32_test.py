@@ -160,10 +160,10 @@ class CreateConfig:
     return results
 
 
-spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
-mod = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(mod)
-compile_kernel_FA = mod.compile_attn
+# spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
+# mod = importlib.util.module_from_spec(spec)
+# spec.loader.exec_module(mod)
+# compile_kernel_FA = mod.compile_attn
 
 def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
   path = "/home/xushilong/DeepGen/_TempCodes/config.json"
@@ -203,10 +203,12 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
       }
     }
     ret = CompileNeededInfo()
-    ret.baseArgs = [shape]
+    ret.baseArgs = shape
+    ret.torchDataType = torch.float32
     ret.tsArgs = [shape,config]
     ret.blockDims = [cfg[-1][0], 1, 1]  # tx
     ret.gridDims = [int(shape[2]/cfg[1]), shape[1], shape[0]]
+    # ret.shmBytes = 32768 
     ret.shmBytes = cfg[-1][1] 
     yield ret
     

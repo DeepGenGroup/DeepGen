@@ -336,12 +336,20 @@ class EnumKernelDType(IntEnum):
         return f'{self.name}'
 
 def ToTorchType (t : EnumKernelDType) -> torch.dtype:
-    if t.value == EnumKernelDType.float32.value :
+    if t == EnumKernelDType.float32.value :
         return torch.float32
-    if t.value == EnumKernelDType.float64.value :
+    if t == EnumKernelDType.float64.value :
         return torch.float64
-    if t.value == EnumKernelDType.float16.value :
+    if t == EnumKernelDType.float16.value :
         return torch.float16
+
+def ToEnumIntDType (t : torch.dtype) -> EnumKernelDType:
+    if t is torch.float32 :
+        return EnumKernelDType.float32
+    if t is torch.float64 :
+        return EnumKernelDType.float64
+    if t is torch.float16 :
+        return EnumKernelDType.float16
 
 def sizeof(t : EnumKernelDType) : # bytes
     assert(t is not None)
@@ -549,7 +557,7 @@ class CompileNeededInfo :
     def __init__(self):
         self.baseArgs : List = []  # 问题定义（ 基础不变量，各个算子自定义.如对于matmul，其为 mnk ）
         self.tsArgs : List = []
-        self.dataType : torch.dtype = None
+        self.torchDataType : torch.dtype = None
         self.blockDims : List[int] = None # optional. If needed, we can assign ans use
         self.gridDims : List[int] = None # optional. If needed, we can assign ans use
         self.shmBytes : int = None # optional. If needed, we can assign ans use

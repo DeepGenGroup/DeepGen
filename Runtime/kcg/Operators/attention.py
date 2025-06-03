@@ -313,9 +313,12 @@ class AttentionOp(OpInterface) :
         if self.InputTensors_Baseline is None :
             # [shape : List[int] , dtypeInt]
             [shapeList, dtypeInt] = self.BaseArgs.intValues 
-            assert len(shapeList)==4
+
+            assert len(shapeList)==4, f"shapeList= {shapeList}"
             [ b0, b1, m, n] = shapeList
+            print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
+            print("ety =", ety)
             a = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
             b = torch.rand((b0, b1, n,m),dtype=ety, device=f"cuda:{devId}" )
             c = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )
@@ -325,7 +328,8 @@ class AttentionOp(OpInterface) :
     def GetBenchmarkInputTensor(self,devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Benchmark is None :
             [q,k,v] = self.GetBaselineInputTensor(devId)
-            [shapeList, dtypeInt] = self.BaseArgs.intValues 
+            shapeList = self.BaseArgs.intValues[0] 
+            dtypeInt = self.BaseArgs.intValues[1] 
             assert len(shapeList)==4
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
@@ -343,7 +347,7 @@ class AttentionOp(OpInterface) :
             self.CompileKernel = mod.compile_attn
 
     
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[List,KernelConfigs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -359,7 +363,9 @@ class AttentionOp(OpInterface) :
         self.InitLibInterface()
         # self.SetPlatform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
-        ta = self.TuningArgs
+        dataTypeInt = ToEnumIntDType(info.torchDataType)
+        self.InitBaseArgs([info.baseArgs, dataTypeInt])
+
         shape, config = info.tsArgs
         res = self.CompileKernel(shape , config)
         # blockSize = [cfg[-1][0]]  # tx
@@ -367,8 +373,8 @@ class AttentionOp(OpInterface) :
 
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
         hsacoPath = res
-        blockDimX ,blockDimY ,blockDimZ = info.blockDims
-        gridDimX,gridDimY,gridDimZ = info.gridDims
+        blockDimX, blockDimY ,blockDimZ = info.blockDims
+        gridDimX, gridDimY, gridDimZ = info.gridDims
         kernelName = 'attention1'
         shmBytes = info.shmBytes
         print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
@@ -383,11 +389,13 @@ class AttentionOp(OpInterface) :
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Attention
         inConfig.shmBytes = shmBytes
+        # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
         packedKernel = self.GetCompiledKernel(inConfig,deviceId)
-        return (ta,inConfig,packedKernel)  # 
+        return ([info.baseArgs, dataTypeInt], inConfig, packedKernel)  # 
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)
+        print(f"GetCompiledKernel attop : {info.sharedMem()},{info.gridDims()},{info.blockDims()}, signature = {signature}")
         return CompiledKernel(
             info.backend,
             info.binaryPath,
@@ -402,13 +410,11 @@ class AttentionOp(OpInterface) :
     def GetSignature(self, dtypes : List[torch.dtype]) -> dict :
             # signature只和输入的dtype有关，尺寸无关
         dtypeA = dtypes[0]
-        dtypeB = dtypes[1]
-        dtypeC = dtypes[2]
-        dtypeD = dtypes[3]
-        a = torch.randn((1,3,2,2), device='cpu', dtype=dtypeA)
-        b = torch.randn((1,3,2,2), device='cpu', dtype=dtypeB)
-        c = torch.randn((1,3,2,2), device='cpu', dtype=dtypeC)
-        d = torch.empty((1,3,2,2), device='cpu', dtype=dtypeD)
+
+        a = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        b = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        c = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        d = torch.empty((1,3,100,100), device='cpu', dtype=dtypeA)
         # get function signature
         outSignature = _attention(a, b, c, d)
         return outSignature
@@ -416,7 +422,8 @@ class AttentionOp(OpInterface) :
     def SetTuningArgs(self, tuningArgs : List) :
         self.TuningArgs.assignWithList(*tuningArgs)
 
-    def InitBaseArgs(self, args : List[int]) :
+    def InitBaseArgs(self, args : List) :
+        print("InitBaseArgs=", args)
         shape, dtypeInt = args
         self.BaseArgs.intValues = [shape, dtypeInt]
         ety = EnumKernelDType(dtypeInt)
@@ -428,7 +435,9 @@ class AttentionOp(OpInterface) :
         for i in range(0,warmupCount) : 
             # F.scaled_dot_product_attention(q, k, v)
             packedKernel.run(qq,kk,vv,out)
-
+            print("out=",out)
+        return
+    
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
         [q,k,v] = self.GetBaselineInputTensor(devId)
         ev_start = torch.cuda.Event(enable_timing=True)
@@ -443,9 +452,17 @@ class AttentionOp(OpInterface) :
         eps = ev_start.elapsed_time(ev_end)
         return (self.OutputTensor_Baseline, eps)
     
-    def Test_benchmark(self, packedKernel : CompiledKernel, devId : int) -> Tuple[torch.Tensor,float] : 
+    def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         a,b,c,d = self.GetBenchmarkInputTensor(devId)
-        assert self.InputTensors_Benchmark  is not None, "error benchmark"
+        print("a.shape = ",a.shape)
+        print("b.shape = ",b.shape)
+        print("c.shape = ",c.shape)
+        print("d.shape = ",d.shape)
+        # a = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
+        # b = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
+        # c = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
+        # d = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
+        # assert self.InputTensors_Benchmark  is not None, "error benchmark"
         st = torch.cuda.Event(enable_timing=True)
         et = torch.cuda.Event(enable_timing=True)
         st.record()
