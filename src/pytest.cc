@@ -10,7 +10,9 @@
 using namespace KernelCodeGen;
 
 using TuneConfig = std::map<std::string, std::map<std::string, int64_t>>;
-
+KernelCodeGen::Target __GlobalTarget = KernelCodeGen::Target::CUDA;
+std::string __GlobalPlatDesc = "-";
+std::string __GlobalKernelName = "attention1";
 
 static PyObject* packResultsToPythonObject(std::vector<KernelInfo>& kernels){
   PyObject *retArr;
@@ -96,8 +98,9 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   kds.push_back(kd3);
 
   // ======  fuse kernel  ======
+  const std::string& kernelName = __GlobalKernelName;
   FuseKernelData fkd = {
-    "attention1",
+    kernelName,
     "FlashAttn",
     {"matmul1", "softmax1", "matmul2"},
     {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]},
@@ -120,7 +123,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   result = generator.mapping(module, tileConfig);
   // optimize
   generator.optimize(module, config);
-  llvm::outs() << "=========== after optimize ===========\n"; llvm::outs().flush();module->dump();
+  // llvm::outs() << "=========== after optimize ===========\n"; llvm::outs().flush();module->dump();
   // lowering
   generator.lowering(module);
   // translate
@@ -208,9 +211,49 @@ static PyObject* py_compile_attn(PyObject* self, PyObject* args) {
   return PyUnicode_FromString(result.c_str());
 }
 
+
+
+static PyObject* set_platform(PyObject* self, PyObject* args) {
+  int index = 0;
+  char* platInfo = NULL;
+  if(PyArg_ParseTuple(args, "is", &index, &platInfo)){
+    if(index == 2){
+      __GlobalTarget = KernelCodeGen::Target::ROCm;
+    }
+    else if(index == 1){
+      __GlobalTarget = KernelCodeGen::Target::CUDA;
+    }
+    else{
+      std::cout << "DeepGen Error : Invalid Platform id " << index << std::endl;
+      std::abort();
+    }
+    __GlobalPlatDesc = std::string(platInfo);
+    if(__GlobalPlatDesc.size() <= 0){
+      std::cout << "DeepGen Error : Invalid Arch info " << __GlobalPlatDesc << std::endl;
+      std::abort();
+    }
+  }
+  return Py_None;
+}
+
+
+static PyObject* set_kernel_name(PyObject* self, PyObject* args) {
+  char* kernelName = NULL;
+  if(PyArg_ParseTuple(args, "s", &kernelName)){
+    __GlobalKernelName = std::string(kernelName);
+    if(__GlobalKernelName.size() <= 0){
+      std::cout << "DeepGen Error : Invalid KernelName " << __GlobalKernelName << std::endl;
+      std::abort();
+    }
+  }
+  return Py_None;
+}
+
 // 方法定义
 static PyMethodDef AttentionMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
+    {"set_kernel_name", set_kernel_name, METH_VARARGS, "Compile attention with given shape and config"},
+    {"set_platform", set_platform, METH_VARARGS, "Compile attention with given shape and config"},
     {NULL, NULL, 0, NULL}
 };
 

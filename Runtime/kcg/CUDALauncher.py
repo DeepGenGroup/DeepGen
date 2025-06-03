@@ -347,12 +347,12 @@ class CUDALauncher :
         enterHookFunc = None
         exitHookFunc = None
         numCTAs = gridDims[0]*gridDims[1]*gridDims[2]
-        print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ")
+        # print(f"[Runtime] gridDims = {gridDims}, blockdims={blockDims} ")
         numWarps = int(blockDims[0]*blockDims[1]*blockDims[2] / 32)
-        print(f'[Runtime] shm={self.m_kernelLib.m_shmSize}',flush=True)
+        # print(f'[Runtime] shm={self.m_kernelLib.m_shmSize}',flush=True)
         if numWarps < 1 :
           numWarps = 1
-        print(f'[Runtime] warps={numWarps}',flush=True)
+        # print(f'[Runtime] warps={numWarps}',flush=True)
         wrapper(gridDims[0],gridDims[1],gridDims[2], numWarps,
                 numCTAs,
                 clusterDims[0],clusterDims[1],clusterDims[2],

@@ -561,7 +561,7 @@ class CompileNeededInfo :
         self.blockDims : List[int] = None # optional. If needed, we can assign ans use
         self.gridDims : List[int] = None # optional. If needed, we can assign ans use
         self.shmBytes : int = None # optional. If needed, we can assign ans use
-
+        
 #  关键字
 class ConfigKeywords :
     # common

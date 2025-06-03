@@ -343,16 +343,24 @@ class TuningArgsInterface(ABC) :
     @abstractmethod
     def check(self) :  ...
     @abstractmethod
+    def generateKernelName(self) -> str : ...
+    @abstractmethod
     def __str__(self): ...
 
 # 算子接口
 class OpInterface(ABC) :
     def __init__(self):
         super().__init__()
+        self.KernelName : str = None
         self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，定义了问题形状等（如M,N,K,batch）。为问题的基本属性
         self.InputTensors_Baseline : List[torch.Tensor] = None
         self.InputTensors_Benchmark : List[torch.Tensor] = None
         self.OutputTensor_Baseline : torch.Tensor = None
+
+    def GetKernelName(self) -> str : 
+        if self.KernelName is None:
+            self.KernelName = self.TuningArgs.generateKernelName()
+        return self.KernelName
     
     @abstractmethod
     ### [basearg, kernelRunINfo, packedKernel]

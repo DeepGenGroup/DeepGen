@@ -56,7 +56,7 @@ class AttentionBaseArgs(OpBaseArgs) :
         with open(path) as f :
             obj = json.load(f)
         self.intValues = [obj['shape'] , obj['dtype']]
-        print(f"[ attention ] shape,dtype = {self.intValues}")
+        # print(f"[ attention ] shape,dtype = {self.intValues}")
         # self.operatorKind = obj['kind']
         
     def dumpToJson(self,path : str):
@@ -248,6 +248,45 @@ class AttentionTuningArgs(TuningArgsInterface) :
     #     config = tse.decode(cfgstr)
     #     self.assignWithDict(config)
     
+    def generateKernelName(self) -> str : 
+        ret = "kcg_Attention_"
+        ret += f"Br{ self.Br }"
+        ret += f"Bc{ self.Bc }"
+        ret += f"Hd{ self.Hd }"
+        ret += f"Slice1_{ self.Slice1 }"
+        ret += f"Slice2_{ self.Slice2 }"
+        ret += f"PTr{ self.PTr }"
+        ret += f"PTc{ self.PTc }"
+        ret += f"OTr{ self.OTr }"
+        ret += f"OTc{ self.OTc }"
+        ret += f"GLWQ{ self.GLOB_LOAD_WIDTH_Q }"
+        ret += f"GLWK{ self.GLOB_LOAD_WIDTH_K }"
+        ret += f"GLWV{ self.GLOB_LOAD_WIDTH_V }"
+        ret += f"BLPY{ self.BLOCK_LAYOUT_P_Y }"
+        ret += f"BLPX{ self.BLOCK_LAYOUT_P_X }"
+        ret += f"WLPY{ self.WARP_LAYOUT_P_Y }"
+        ret += f"WLPX{ self.WARP_LAYOUT_P_X }"
+        ret += f"BSWQ{ self.BLOCK_SCATTER_WIDTH_Q }"
+        ret += f"BSWK{ self.BLOCK_SCATTER_WIDTH_K }"
+        ret += f"WSWQ{ self.WARP_SCATTER_WIDTH_Q }"
+        ret += f"WSWK{ self.WARP_SCATTER_WIDTH_K }"
+        ret += f"BLOY{ self.BLOCK_LAYOUT_O_Y }"
+        ret += f"BLOX{ self.BLOCK_LAYOUT_O_X }"
+        ret += f"WLOY{ self.WARP_LAYOUT_O_Y }"
+        ret += f"WLOX{ self.WARP_LAYOUT_O_X }"
+        ret += f"BSWP{ self.BLOCK_SCATTER_WIDTH_P }"
+        ret += f"BSWV{ self.BLOCK_SCATTER_WIDTH_V }"
+        ret += f"WSWP{ self.WARP_SCATTER_WIDTH_P }"
+        ret += f"WSWV{ self.WARP_SCATTER_WIDTH_V }"
+        ret += f"Un{ self.UNROLL_NUM }"
+        ret += f"W{ self.WARP_SIZE }"
+        ret += f"LCP{ self.LOAD_CONTINUOUS_P }"
+        ret += f"LCO{ self.LOAD_CONTINUOUS_O }"
+        ret += f"SPP{ self.SHARED_PREFETCH_P }"
+        ret += f"RPP{ self.REG_PREFETCH_P }"
+        ret += f"RPO{ self.REG_PREFETCH_O }"
+        return ret
+    
     def assignWithJson(self, jsonObj) : 
         kw = ConfigKeywords    
         self.Br = jsonObj[kw.KEY_Br]
@@ -316,9 +355,9 @@ class AttentionOp(OpInterface) :
 
             assert len(shapeList)==4, f"shapeList= {shapeList}"
             [ b0, b1, m, n] = shapeList
-            print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
+            # print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            print("ety =", ety)
+            # print("ety =", ety)
             a = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
             b = torch.rand((b0, b1, n,m),dtype=ety, device=f"cuda:{devId}" )
             c = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )
@@ -345,6 +384,7 @@ class AttentionOp(OpInterface) :
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             self.CompileKernel = mod.compile_attn
+            self.SetKernelName = mod.set_kernel_name
 
     
     def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[List,KernelConfigs,CompiledKernel] :
@@ -367,7 +407,9 @@ class AttentionOp(OpInterface) :
         self.InitBaseArgs([info.baseArgs, dataTypeInt])
 
         shape, config = info.tsArgs
+        assert isinstance(config, KernelConfigs)
         res = self.CompileKernel(shape , config)
+        self.SetKernelName( config.kernelFuncName )
         # blockSize = [cfg[-1][0]]  # tx
         # sharedSize = cfg[-1][1]  # shared memroy size
 
@@ -375,14 +417,15 @@ class AttentionOp(OpInterface) :
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims
         gridDimX, gridDimY, gridDimZ = info.gridDims
-        kernelName = 'attention1'
+        # kernelName = 'attention1'
+        kernelName = self.KernelName
         shmBytes = info.shmBytes
-        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         Print("========= hsacoPath = ",hsacoPath)
         Print("========= kernelName = ",kernelName)
-        print(f"==== backend is {backendtype}")
-        print(f"==== shmBytes is {shmBytes}")
+        # print(f"==== backend is {backendtype}")
+        # print(f"==== shmBytes is {shmBytes}")
         dt = self.BaseArgs.getTorchDType()
         inConfig = KernelConfigs(hsacoPath,kernelName, [dt,dt,dt,dt], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
@@ -395,7 +438,7 @@ class AttentionOp(OpInterface) :
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)
-        print(f"GetCompiledKernel attop : {info.sharedMem()},{info.gridDims()},{info.blockDims()}, signature = {signature}")
+        # print(f"GetCompiledKernel attop : {info.sharedMem()},{info.gridDims()},{info.blockDims()}, signature = {signature}")
         return CompiledKernel(
             info.backend,
             info.binaryPath,
@@ -423,7 +466,7 @@ class AttentionOp(OpInterface) :
         self.TuningArgs.assignWithList(*tuningArgs)
 
     def InitBaseArgs(self, args : List) :
-        print("InitBaseArgs=", args)
+        # print("InitBaseArgs=", args)
         shape, dtypeInt = args
         self.BaseArgs.intValues = [shape, dtypeInt]
         ety = EnumKernelDType(dtypeInt)
@@ -435,7 +478,7 @@ class AttentionOp(OpInterface) :
         for i in range(0,warmupCount) : 
             # F.scaled_dot_product_attention(q, k, v)
             packedKernel.run(qq,kk,vv,out)
-            print("out=",out)
+            # print("out=",out)
         return
     
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
@@ -454,10 +497,10 @@ class AttentionOp(OpInterface) :
     
     def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         a,b,c,d = self.GetBenchmarkInputTensor(devId)
-        print("a.shape = ",a.shape)
-        print("b.shape = ",b.shape)
-        print("c.shape = ",c.shape)
-        print("d.shape = ",d.shape)
+        # print("a.shape = ",a.shape)
+        # print("b.shape = ",b.shape)
+        # print("c.shape = ",c.shape)
+        # print("d.shape = ",d.shape)
         # a = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
         # b = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
         # c = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
@@ -469,7 +512,7 @@ class AttentionOp(OpInterface) :
         packedKernel.run(a,b,c,d)
         et.record()
         torch.cuda.synchronize()
-        print(d)
+        # print(d)
         elapsed_time = st.elapsed_time(et)
         return (d,elapsed_time)
     

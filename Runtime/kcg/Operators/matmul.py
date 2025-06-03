@@ -105,7 +105,6 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.LOCAL_SPLIT_U : int = 0
         self.BLOCK_MAPPING : int = 0
         self.GLOB_STORE_WIDTH : int = 0
-        
         self.UNROLL_NUM : int = 1
         self.REG_PREFETCH : int = 0
         self.SHARED_PREFETCH : int = 0
@@ -270,11 +269,40 @@ class MatmulTuningArgs(TuningArgsInterface) :
             return self.dtB
         if index=='C':
             return self.dtC
-        
-    def getGridDims(self) -> List[int]: ...
-    def getBlockDims(self) -> List[int]: ...
-    def getShmBytes(self) -> int : ...
-
+    
+    def generateKernelName(self) -> str :
+        ret = "kcg_MM_"
+        ret += f"b{ self.batch }" 
+        ret += f"M{ self.M }" 
+        ret += f"N{ self.N }" 
+        ret += f"K{ self.K }" 
+        ret += f"isAT{ self.isATranspose }" 
+        ret += f"W{ self.WARP_SIZE }_" 
+        ret += f"BM{ self.BLOCK_SIZE_M }" 
+        ret += f"BN{ self.BLOCK_SIZE_N }" 
+        ret += f"BK{ self.BLOCK_SIZE_K }" 
+        ret += f"TM{ self.THREAD_SIZE_M }" 
+        ret += f"TN{ self.THREAD_SIZE_N }" 
+        ret += f"BLM{ self.BLOCK_LAYOUT_M }" 
+        ret += f"BLN{ self.BLOCK_LAYOUT_N }" 
+        ret += f"WLM{ self.WARP_LAYOUT_M }" 
+        ret += f"WLN{ self.WARP_LAYOUT_N }" 
+        ret += f"GLWA{ self.GLOB_LOAD_WIDTH_A }" 
+        ret += f"GLWB{ self.GLOB_LOAD_WIDTH_B }" 
+        ret += f"WSWA{ self.WARP_SCATTER_WIDTH_A }" 
+        ret += f"WSWB{ self.WARP_SCATTER_WIDTH_B }" 
+        ret += f"TSWA{ self.THREAD_SCATTER_WIDTH_A }" 
+        ret += f"TSWB{ self.THREAD_SCATTER_WIDTH_B }" 
+        ret += f"LSU{ self.LOCAL_SPLIT_U }" 
+        ret += f"Map{ self.BLOCK_MAPPING }" 
+        ret += f"GSW{ self.GLOB_STORE_WIDTH }" 
+        ret += f"UR{ self.UNROLL_NUM }" 
+        ret += f"RP{ self.REG_PREFETCH }" 
+        ret += f"SP{ self.SHARED_PREFETCH }" 
+        ret += f"LC{ self.LOAD_CONTINUOUS }" 
+        ret += f"RC{ self.REDUCE_C_CONTINUOUS }" 
+        return ret
+            
     def __str__(self):
         return str(self.jsonfy())
 
@@ -285,7 +313,7 @@ class MatmulOp(OpInterface) :
         self.BaseArgs = MatmulBaseArgs()
         self.CompileKernelMatmul = None
         self.SetPlatform = None
-
+    
     def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Baseline is None :
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 

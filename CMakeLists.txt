@@ -44,6 +44,7 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
+option(DEBUG_MODE "Enable Debug Log" OFF)
 # close some warnings
 add_compile_options(
   -Wno-unused-function
@@ -92,6 +93,11 @@ else()
   set(MLIR_GENERATED_INCLUDE_DIR ${LLVM_BINARY_DIR}/tools/mlir/include)
   set(MLIR_INCLUDE_DIRS "${MLIR_INCLUDE_DIR};${MLIR_GENERATED_INCLUDE_DIR}")
 endif()
+
+if(DEBUG_MODE)
+  add_definitions(-DKCG_DEBUG)
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(KernelCodeGen_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(KernelCodeGen_BINARY_DIR ${PROJECT_BINARY_DIR})
