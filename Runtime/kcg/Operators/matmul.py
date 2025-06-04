@@ -318,12 +318,12 @@ class MatmulOp(OpInterface) :
         if self.InputTensors_Baseline is None :
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            if batch > 1 :
-                a = torch.rand((batch, m,k),dtype=ety, device=f"cuda:{devId}" )
-                b = torch.rand((batch, k,n),dtype=ety, device=f"cuda:{devId}" )
-            else:
-                a = torch.rand((m,k),dtype=ety, device=f"cuda:{devId}" )
-                b = torch.rand((k,n),dtype=ety, device=f"cuda:{devId}" )
+            # if batch > 1 :
+            a = torch.rand((batch, m,k),dtype=ety, device=f"cuda:{devId}" )
+            b = torch.rand((batch, k,n),dtype=ety, device=f"cuda:{devId}" )
+            # else:
+            #     a = torch.rand((m,k),dtype=ety, device=f"cuda:{devId}" )
+            #     b = torch.rand((k,n),dtype=ety, device=f"cuda:{devId}" )
             self.InputTensors_Baseline = [a,b]
         return self.InputTensors_Baseline
             
@@ -333,12 +333,12 @@ class MatmulOp(OpInterface) :
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
             print(f"self.BaseArgs.intValues = {self.BaseArgs.intValues}" )
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            if batch > 1 :
-                aa = a.transpose(1,2).contiguous()
-                c = torch.empty((batch,m,n), dtype=ety, device=f"cuda:{devId}")
-            else :
-                aa = a.transpose(0,1).contiguous()
-                c = torch.empty((m,n), dtype=ety, device=f"cuda:{devId}")
+            # if batch > 1 :
+            aa = a.transpose(-1,-2).contiguous()
+            c = torch.empty((batch,m,n), dtype=ety, device=f"cuda:{devId}")
+            # else :
+            #     aa = a.transpose(0,1).contiguous()
+            #     c = torch.empty((m,n), dtype=ety, device=f"cuda:{devId}")
             self.InputTensors_Benchmark = [aa,b,c]
         return self.InputTensors_Benchmark
     
@@ -378,7 +378,7 @@ class MatmulOp(OpInterface) :
         print("ba=",info.baseArgs,flush=True)
         Print("===== call InitLibInterface ========",flush=True)
         self.InitLibInterface()
-        Print("===== call SetPlatform ========",flush=True)
+        Print(f"===== call SetPlatform ========, arch = {arch}",flush=True)
         self.SetPlatform(_backend,arch)
         Print("===== call SetKernelName ========",flush=True)
         self.SetKernelName(info.kernelName)

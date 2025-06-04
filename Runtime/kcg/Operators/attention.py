@@ -403,6 +403,7 @@ class AttentionOp(OpInterface) :
         
         self.InitLibInterface()
         self.SetPlatform(_backend,arch)
+        print(f"set arch : {arch}")
         # Print("===== call compileKernel(kpm)[0] ========")
         dataTypeInt = ToEnumIntDType(info.torchDataType)
         self.InitBaseArgs([info.baseArgs, dataTypeInt])

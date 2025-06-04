@@ -243,9 +243,9 @@ class CreateMatmulConfig:
         shm_reduce = ta.BLOCK_SIZE_M * ta.BLOCK_SIZE_N * ta.LOCAL_SPLIT_U
         if shm_reduce > shmBytes :
           shmBytes = shm_reduce
-      ret.blockDims = [blockDim,1,1]
-      ret.gridDims = [gridDim,1,1]
-      ret.shmBytes = shmBytes * sizeof(ta.dtA)
+      ret.blockDims = [int(blockDim),1,1]
+      ret.gridDims = [int(gridDim),1,1]
+      ret.shmBytes = int(shmBytes * sizeof(ta.dtA))
       
       yield ret
     

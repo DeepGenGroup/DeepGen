@@ -160,6 +160,7 @@ std::string compile_mm(std::vector<int64_t> shape, const TuneConfig& config) {
   }
 
   KernelCodeGenerator generator(__GlobalTarget, __GlobalPlatDesc);
+  std::cout << "[lib] ============ 1" << std::endl;
   mlir::ModuleOp module = generator.createModule();
   std::vector<KernelData> kds;
   // std::vector<FuseKernelData> fkds;
@@ -179,6 +180,7 @@ std::string compile_mm(std::vector<int64_t> shape, const TuneConfig& config) {
   std::vector<int64_t> shapeA;
   std::vector<int64_t> shapeB;
   std::vector<int64_t> shapeC;
+  std::cout << "[lib] ============ 2" << std::endl;
   for(int i=0;i<LEN-3;++i){
     shapeA.push_back(shape[i]);
     shapeB.push_back(shape[i]);
@@ -194,17 +196,22 @@ std::string compile_mm(std::vector<int64_t> shape, const TuneConfig& config) {
   kd1.outputArgNum = 1;
   kds.push_back(kd1);
 
+  std::cout << "[lib] ============ 3" << std::endl;
   // create kernels
   auto noSupKernels = generator.createKernels(module, kds);
+  std::cout << "[lib] ============ 4" << std::endl;
   // mpping
   auto result = generator.mapping(module, tileConfig);
+  std::cout << "[lib] ============ 5" << std::endl;
   // optimize
   generator.optimize(module, config);
+  std::cout << "[lib] ============ 6" << std::endl;
   // llvm::outs() << "=========== after optimize ===========\n"; llvm::outs().flush();module->dump();
   // lowering
   generator.lowering(module);
   // translate
   auto path = generator.translate(module);
+  std::cout << "[lib] ============ 7" << std::endl;
   // std::cout << "[lib] ===========4" << std::endl;
   return path;
 }

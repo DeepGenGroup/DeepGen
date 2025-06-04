@@ -85,6 +85,10 @@ void eraseSingleIterForOps(mlir::func::FuncOp funcOp) {
   funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
     auto [lb, ub, step] = getLoopBoundAndStep(forOp);
     if ((ub - lb) / step == 1) {
+      auto attrval = getStrAttr(forOp, FORDESC);
+      if((attrval == "k") || (attrval == "ttilex") || (attrval == "ttiley")){
+        return;
+      }
       eraseSingleIterForOp(forOp);
     }
   });
