@@ -385,6 +385,7 @@ class AttentionOp(OpInterface) :
             spec.loader.exec_module(mod)
             self.CompileKernel = mod.compile_attn
             self.SetKernelName = mod.set_kernel_name
+            self.SetPlatform = mod.set_platform
 
     
     def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[List,KernelConfigs,CompiledKernel] :
@@ -401,7 +402,7 @@ class AttentionOp(OpInterface) :
             assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
         
         self.InitLibInterface()
-        # self.SetPlatform(_backend,arch)
+        self.SetPlatform(_backend,arch)
         # Print("===== call compileKernel(kpm)[0] ========")
         dataTypeInt = ToEnumIntDType(info.torchDataType)
         self.InitBaseArgs([info.baseArgs, dataTypeInt])

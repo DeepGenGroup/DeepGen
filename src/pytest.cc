@@ -12,7 +12,7 @@ using namespace KernelCodeGen;
 
 using TuneConfig = std::map<std::string, std::map<std::string, int64_t>>;
 KernelCodeGen::Target __GlobalTarget = KernelCodeGen::Target::CUDA;
-std::string __GlobalPlatDesc = "-";
+std::string __GlobalPlatDesc = "";
 std::string __GlobalKernelName = "attention1";
 
 static PyObject* packResultsToPythonObject(std::vector<KernelInfo>& kernels){
@@ -68,7 +68,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
     std::abort();
   }
 
-  KernelCodeGenerator generator(Target::CUDA, "");
+  KernelCodeGenerator generator(__GlobalTarget, __GlobalPlatDesc);
   mlir::ModuleOp module = generator.createModule();
   std::vector<KernelData> kds;
   std::vector<FuseKernelData> fkds;

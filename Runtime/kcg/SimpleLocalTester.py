@@ -121,6 +121,7 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
                         maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
             except BaseException as e: 
                 print('[Deepgen Exception] ',e)
+                traceback.print_exc()
             except IOError as e: 
                 print('[Deepgen IOError] ',e)
                     
@@ -184,10 +185,10 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
 if __name__ == '__main__' :
     # test_simple()
     cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
-    opty = attention.AttentionOp
+    opty = matmul.MatmulOp
     devId = 7
-    backend = EnumBackendType.CUDA
-    arch = "80"
+    backend = EnumBackendType.HIP
+    arch = "906"
     # opty = matmul.MatmulOp
     PathManager.init(clearPkl=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
