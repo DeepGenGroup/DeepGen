@@ -84,10 +84,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.THREAD_SIZE_M : int = 4
         self.THREAD_SIZE_N : int = 4
         self.WARP_SIZE : int = 64 
-        self.BLOCK_LAYOUT_M : int = 4
-        self.BLOCK_LAYOUT_N : int = 1
-        self.WARP_LAYOUT_M : int = 16
-        self.WARP_LAYOUT_N : int = 4
+        self.BLOCK_LAYOUT_Y : int = 4
+        self.BLOCK_LAYOUT_X : int = 1
+        self.WARP_LAYOUT_Y : int = 16
+        self.WARP_LAYOUT_X : int = 4
         self.dtA : EnumKernelDType = enumDType
         self.dtB : EnumKernelDType = enumDType
         self.dtC : EnumKernelDType = enumDType
@@ -98,10 +98,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.isATranspose : int = 1
         self.GLOB_LOAD_WIDTH_A : int = 0
         self.GLOB_LOAD_WIDTH_B : int = 0
-        self.WARP_SCATTER_WIDTH_A : int = 0
-        self.WARP_SCATTER_WIDTH_B : int = 0
-        self.THREAD_SCATTER_WIDTH_A : int = 0
-        self.THREAD_SCATTER_WIDTH_B : int = 0
+        self.BLOCK_SCATTER_WIDTH_M : int = 0
+        self.BLOCK_SCATTER_WIDTH_N : int = 0
+        self.WARP_SCATTER_WIDTH_M : int = 0
+        self.WARP_SCATTER_WIDTH_N : int = 0
         self.LOCAL_SPLIT_U : int = 0
         self.BLOCK_MAPPING : int = 0
         self.GLOB_STORE_WIDTH : int = 0
@@ -109,7 +109,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.REG_PREFETCH : int = 0
         self.SHARED_PREFETCH : int = 0
         self.LOAD_CONTINUOUS : int = 0
-        self.REDUCE_C_CONTINUOUS : int = 0
+        self.STORE_CONTINUOUS : int = 0
     
     def assignWithList(self, *args):
         self.BLOCK_SIZE_M = args[0]
@@ -119,20 +119,20 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.THREAD_SIZE_N = args[4]
         self.GLOB_LOAD_WIDTH_A  = args[5]
         self.GLOB_LOAD_WIDTH_B  = args[6]
-        self.BLOCK_LAYOUT_M = args[7]
-        self.BLOCK_LAYOUT_N = args[8]
-        self.WARP_LAYOUT_M = args[9]
-        self.WARP_LAYOUT_N = args[10]
-        self.WARP_SCATTER_WIDTH_A  = args[11]
-        self.WARP_SCATTER_WIDTH_B  = args[12]
-        self.THREAD_SCATTER_WIDTH_A  = args[13]
-        self.THREAD_SCATTER_WIDTH_B  = args[14]
+        self.BLOCK_LAYOUT_Y = args[7]
+        self.BLOCK_LAYOUT_X = args[8]
+        self.WARP_LAYOUT_Y = args[9]
+        self.WARP_LAYOUT_X = args[10]
+        self.BLOCK_SCATTER_WIDTH_M  = args[11]
+        self.BLOCK_SCATTER_WIDTH_N  = args[12]
+        self.WARP_SCATTER_WIDTH_M  = args[13]
+        self.WARP_SCATTER_WIDTH_N  = args[14]
         self.SHARED_PREFETCH  = args[15]
         self.REG_PREFETCH  = args[16]
         self.LOAD_CONTINUOUS  = args[17]
         self.LOCAL_SPLIT_U  = args[18]
         self.GLOB_STORE_WIDTH   = args[19]
-        self.REDUCE_C_CONTINUOUS  = args[20]
+        self.STORE_CONTINUOUS  = args[20]
         self.BLOCK_MAPPING  = args[21]
         self.UNROLL_NUM  = args[22]
         self.WARP_SIZE = args[23]
@@ -147,10 +147,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
             str(ConfigKeywords.KEY_THREAD_SIZE_M) : (self.THREAD_SIZE_M),
             str(ConfigKeywords.KEY_THREAD_SIZE_N) : (self.THREAD_SIZE_N),
             str(ConfigKeywords.KEY_WARP_SIZE) : (self.WARP_SIZE),
-            str(ConfigKeywords.KEY_BLOCK_LAYOUT_M) : (self.BLOCK_LAYOUT_M),
-            str(ConfigKeywords.KEY_BLOCK_LAYOUT_N) : (self.BLOCK_LAYOUT_N),
-            str(ConfigKeywords.KEY_WARP_LAYOUT_M) : (self.WARP_LAYOUT_M),
-            str(ConfigKeywords.KEY_WARP_LAYOUT_N) : (self.WARP_LAYOUT_N),
+            str(ConfigKeywords.KEY_BLOCK_LAYOUT_Y) : (self.BLOCK_LAYOUT_Y),
+            str(ConfigKeywords.KEY_BLOCK_LAYOUT_X) : (self.BLOCK_LAYOUT_X),
+            str(ConfigKeywords.KEY_WARP_LAYOUT_Y) : (self.WARP_LAYOUT_Y),
+            str(ConfigKeywords.KEY_WARP_LAYOUT_X) : (self.WARP_LAYOUT_X),
             str(ConfigKeywords.KEY_DTYPE_A) : int(self.dtA),
             str(ConfigKeywords.KEY_DTYPE_B) : int(self.dtB), 
             str(ConfigKeywords.KEY_DTYPE_C) : int(self.dtC), 
@@ -161,10 +161,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
             str(ConfigKeywords.KEY_IS_A_TRANSPOSE) : (self.isATranspose) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A) : (self.GLOB_LOAD_WIDTH_A) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B) : (self.GLOB_LOAD_WIDTH_B) ,
-            str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A) : (self.WARP_SCATTER_WIDTH_A) ,
-            str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B) : (self.WARP_SCATTER_WIDTH_B) ,
-            str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A) : (self.THREAD_SCATTER_WIDTH_A) ,
-            str(ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B) : (self.THREAD_SCATTER_WIDTH_B) ,
+            str(ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_M) : (self.BLOCK_SCATTER_WIDTH_M) ,
+            str(ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_N) : (self.BLOCK_SCATTER_WIDTH_N) ,
+            str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_M) : (self.WARP_SCATTER_WIDTH_M) ,
+            str(ConfigKeywords.KEY_WARP_SCATTER_WIDTH_N) : (self.WARP_SCATTER_WIDTH_N) ,
             str(ConfigKeywords.KEY_LOCAL_SPLIT_U) : (self.LOCAL_SPLIT_U) ,
             str(ConfigKeywords.KEY_BLOCK_MAPPING) : (self.BLOCK_MAPPING) ,
             str(ConfigKeywords.KEY_GLOB_STORE_WIDTH) : (self.GLOB_STORE_WIDTH ) ,
@@ -172,7 +172,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
             str(ConfigKeywords.KEY_REG_PREFETCH) : (self.REG_PREFETCH) ,
             str(ConfigKeywords.KEY_SHARED_PREFETCH) : (self.SHARED_PREFETCH) ,
             str(ConfigKeywords.KEY_LOAD_CONTINUOUS) : (self.LOAD_CONTINUOUS) ,
-            str(ConfigKeywords.KEY_REDUCE_C_CONTINUOUS) : (self.REDUCE_C_CONTINUOUS) ,
+            str(ConfigKeywords.KEY_STORE_CONTINUOUS) : (self.STORE_CONTINUOUS) ,
         }
         return obj
     
@@ -186,17 +186,17 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.THREAD_SIZE_M = config[kw.KEY_THREAD_SIZE_M]
         self.THREAD_SIZE_N = config[kw.KEY_THREAD_SIZE_N]
         self.WARP_SIZE = config[kw.KEY_WARP_SIZE]
-        self.BLOCK_LAYOUT_M = config[kw.KEY_BLOCK_LAYOUT_M]
-        self.BLOCK_LAYOUT_N = config[kw.KEY_BLOCK_LAYOUT_N]
-        self.WARP_LAYOUT_M = config[kw.KEY_WARP_LAYOUT_M]
-        self.WARP_LAYOUT_N = config[kw.KEY_WARP_LAYOUT_N]
+        self.BLOCK_LAYOUT_Y = config[kw.KEY_BLOCK_LAYOUT_Y]
+        self.BLOCK_LAYOUT_X = config[kw.KEY_BLOCK_LAYOUT_X]
+        self.WARP_LAYOUT_Y = config[kw.KEY_WARP_LAYOUT_Y]
+        self.WARP_LAYOUT_X = config[kw.KEY_WARP_LAYOUT_X]
         self.isATranspose = config[kw.KEY_IS_A_TRANSPOSE]
         self.GLOB_LOAD_WIDTH_A = config[kw.KEY_GLOB_LOAD_WIDTH_A]
         self.GLOB_LOAD_WIDTH_B = config[kw.KEY_GLOB_LOAD_WIDTH_B]
-        self.WARP_SCATTER_WIDTH_A = config[kw.KEY_WARP_SCATTER_WIDTH_A]
-        self.WARP_SCATTER_WIDTH_B = config[kw.KEY_WARP_SCATTER_WIDTH_B]
-        self.THREAD_SCATTER_WIDTH_A = config[kw.KEY_THREAD_SCATTER_WIDTH_A]
-        self.THREAD_SCATTER_WIDTH_B = config[kw.KEY_THREAD_SCATTER_WIDTH_B]
+        self.BLOCK_SCATTER_WIDTH_M = config[kw.KEY_BLOCK_SCATTER_WIDTH_M]
+        self.BLOCK_SCATTER_WIDTH_N = config[kw.KEY_BLOCK_SCATTER_WIDTH_N]
+        self.WARP_SCATTER_WIDTH_M = config[kw.KEY_WARP_SCATTER_WIDTH_M]
+        self.WARP_SCATTER_WIDTH_N = config[kw.KEY_WARP_SCATTER_WIDTH_N]
         self.LOCAL_SPLIT_U = config[kw.KEY_LOCAL_SPLIT_U]
         self.BLOCK_MAPPING = config[kw.KEY_BLOCK_MAPPING]
         self.GLOB_STORE_WIDTH = config[kw.KEY_GLOB_STORE_WIDTH]
@@ -204,7 +204,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.REG_PREFETCH = config[kw.KEY_REG_PREFETCH]
         self.SHARED_PREFETCH = config[kw.KEY_SHARED_PREFETCH]
         self.LOAD_CONTINUOUS = config[kw.KEY_LOAD_CONTINUOUS]
-        self.REDUCE_C_CONTINUOUS = config[kw.KEY_REDUCE_C_CONTINUOUS]
+        self.STORE_CONTINUOUS = config[kw.KEY_STORE_CONTINUOUS]
     
     # def assignWithEncoder(self, cfgstr : int, tse : TuningSpaceEncoder) : 
     #     config = tse.decode(cfgstr)
@@ -217,10 +217,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.THREAD_SIZE_M = jsonObj[ConfigKeywords.KEY_THREAD_SIZE_M] 
         self.THREAD_SIZE_N = jsonObj[ConfigKeywords.KEY_THREAD_SIZE_N] 
         self.WARP_SIZE = jsonObj[ConfigKeywords.KEY_WARP_SIZE] 
-        self.BLOCK_LAYOUT_M = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_M] 
-        self.BLOCK_LAYOUT_N = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_N] 
-        self.WARP_LAYOUT_M = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_M] 
-        self.WARP_LAYOUT_N = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_N] 
+        self.BLOCK_LAYOUT_Y = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_Y] 
+        self.BLOCK_LAYOUT_X = jsonObj[ConfigKeywords.KEY_BLOCK_LAYOUT_X] 
+        self.WARP_LAYOUT_Y = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_Y] 
+        self.WARP_LAYOUT_X = jsonObj[ConfigKeywords.KEY_WARP_LAYOUT_X] 
         self.dtA=  int(jsonObj[ConfigKeywords.KEY_DTYPE_A])
         self.dtB = int(jsonObj[ConfigKeywords.KEY_DTYPE_B])
         self.dtC = int(jsonObj[ConfigKeywords.KEY_DTYPE_C])
@@ -231,10 +231,10 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.isATranspose  = jsonObj[ConfigKeywords.KEY_IS_A_TRANSPOSE] > 0 
         self.GLOB_LOAD_WIDTH_A  = jsonObj[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A]
         self.GLOB_LOAD_WIDTH_B  = jsonObj[ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B]
-        self.WARP_SCATTER_WIDTH_A  = jsonObj[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A]
-        self.WARP_SCATTER_WIDTH_B  = jsonObj[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B]
-        self.THREAD_SCATTER_WIDTH_A  = jsonObj[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A]
-        self.THREAD_SCATTER_WIDTH_B  = jsonObj[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B]
+        self.BLOCK_SCATTER_WIDTH_M  = jsonObj[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_M]
+        self.BLOCK_SCATTER_WIDTH_N  = jsonObj[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_N]
+        self.WARP_SCATTER_WIDTH_M  = jsonObj[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_M]
+        self.WARP_SCATTER_WIDTH_N  = jsonObj[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_N]
         self.LOCAL_SPLIT_U  = jsonObj[ConfigKeywords.KEY_LOCAL_SPLIT_U]
         self.BLOCK_MAPPING  = jsonObj[ConfigKeywords.KEY_BLOCK_MAPPING]
         self.GLOB_STORE_WIDTH   = jsonObj[ConfigKeywords.KEY_GLOB_STORE_WIDTH]
@@ -242,7 +242,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.REG_PREFETCH  = jsonObj[ConfigKeywords.KEY_REG_PREFETCH]
         self.SHARED_PREFETCH  = jsonObj[ConfigKeywords.KEY_SHARED_PREFETCH]
         self.LOAD_CONTINUOUS  = jsonObj[ConfigKeywords.KEY_LOAD_CONTINUOUS]
-        self.REDUCE_C_CONTINUOUS  = jsonObj[ConfigKeywords.KEY_REDUCE_C_CONTINUOUS]
+        self.STORE_CONTINUOUS  = jsonObj[ConfigKeywords.KEY_STORE_CONTINUOUS]
 
     
     def check(self) :
@@ -254,9 +254,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
         # warp-block validation check
         assert self.BLOCK_SIZE_M % self.THREAD_SIZE_M == 0
         assert self.BLOCK_SIZE_N % self.THREAD_SIZE_N == 0
-        assert (self.BLOCK_LAYOUT_M * self.WARP_LAYOUT_M) == (self.BLOCK_SIZE_M / self.THREAD_SIZE_M)
-        assert (self.BLOCK_LAYOUT_N * self.WARP_LAYOUT_N) == (self.BLOCK_SIZE_N / self.THREAD_SIZE_N)
-        assert self.WARP_LAYOUT_N * self.WARP_LAYOUT_M == self.WARP_SIZE
+        assert (self.BLOCK_LAYOUT_Y * self.WARP_LAYOUT_Y) == (self.BLOCK_SIZE_M / self.THREAD_SIZE_M)
+        assert (self.BLOCK_LAYOUT_X * self.WARP_LAYOUT_X) == (self.BLOCK_SIZE_N / self.THREAD_SIZE_N)
+        assert self.WARP_LAYOUT_X * self.WARP_LAYOUT_Y == self.WARP_SIZE
         # shm size check
         assert 2*(self.BLOCK_SIZE_M + self.BLOCK_SIZE_N) * self.BLOCK_SIZE_K <= 65536
         
@@ -283,24 +283,24 @@ class MatmulTuningArgs(TuningArgsInterface) :
         ret += f"BK{ self.BLOCK_SIZE_K }" 
         ret += f"TM{ self.THREAD_SIZE_M }" 
         ret += f"TN{ self.THREAD_SIZE_N }" 
-        ret += f"BLM{ self.BLOCK_LAYOUT_M }" 
-        ret += f"BLN{ self.BLOCK_LAYOUT_N }" 
-        ret += f"WLM{ self.WARP_LAYOUT_M }" 
-        ret += f"WLN{ self.WARP_LAYOUT_N }" 
+        ret += f"BLY{ self.BLOCK_LAYOUT_Y }" 
+        ret += f"BLX{ self.BLOCK_LAYOUT_X }" 
+        ret += f"WLY{ self.WARP_LAYOUT_Y }" 
+        ret += f"WLX{ self.WARP_LAYOUT_X }" 
         ret += f"GLWA{ self.GLOB_LOAD_WIDTH_A }" 
         ret += f"GLWB{ self.GLOB_LOAD_WIDTH_B }" 
-        ret += f"WSWA{ self.WARP_SCATTER_WIDTH_A }" 
-        ret += f"WSWB{ self.WARP_SCATTER_WIDTH_B }" 
-        ret += f"TSWA{ self.THREAD_SCATTER_WIDTH_A }" 
-        ret += f"TSWB{ self.THREAD_SCATTER_WIDTH_B }" 
+        ret += f"BSWM{ self.BLOCK_SCATTER_WIDTH_M }" 
+        ret += f"BSWN{ self.BLOCK_SCATTER_WIDTH_N }" 
+        ret += f"WSWM{ self.WARP_SCATTER_WIDTH_M }" 
+        ret += f"WSWN{ self.WARP_SCATTER_WIDTH_N }" 
         ret += f"LSU{ self.LOCAL_SPLIT_U }" 
         ret += f"Map{ self.BLOCK_MAPPING }" 
         ret += f"GSW{ self.GLOB_STORE_WIDTH }" 
-        ret += f"UR{ self.UNROLL_NUM }" 
+        ret += f"UN{ self.UNROLL_NUM }" 
         ret += f"RP{ self.REG_PREFETCH }" 
         ret += f"SP{ self.SHARED_PREFETCH }" 
         ret += f"LC{ self.LOAD_CONTINUOUS }" 
-        ret += f"RC{ self.REDUCE_C_CONTINUOUS }" 
+        ret += f"RC{ self.STORE_CONTINUOUS }" 
         return ret
             
     def __str__(self):
@@ -351,12 +351,13 @@ class MatmulOp(OpInterface) :
     def InitLibInterface(self) :
         if self.CompileKernelMatmul is None or self.SetPlatform is None :
             import importlib.util
-            print(f"PathManager.kcg_compiler_path() = {PathManager.kcg_compiler_path()}",flush=True)
-            spec = importlib.util.spec_from_file_location("KCGCompiler", PathManager.kcg_compiler_path())
+            print(f"libdeepgen = {PathManager.kcg_lib_deepgen_path()}",flush=True)
+            spec = importlib.util.spec_from_file_location("deepgen", PathManager.kcg_lib_deepgen_path())
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            self.CompileKernelMatmul = mod.compile_kernel_matmul
+            self.CompileKernelMatmul = mod.compile_mm
             self.SetPlatform = mod.set_platform
+            self.SetKernelName = mod.set_kernel_name
 
         # attn_spec = importlib.util.spec_from_file_location("attention", PathManager.kcg_compiler_attention_path())
         # attn_mod = importlib.util.module_from_spec(attn_spec)
@@ -375,11 +376,22 @@ class MatmulOp(OpInterface) :
         print("compiling matmul",flush=True)
         print("ta=",*info.tsArgs,flush=True)
         print("ba=",info.baseArgs,flush=True)
+        Print("===== call InitLibInterface ========",flush=True)
         self.InitLibInterface()
+        Print("===== call SetPlatform ========",flush=True)
         self.SetPlatform(_backend,arch)
-        # Print("===== call compileKernel(kpm)[0] ========")
-        res = self.CompileKernelMatmul( *info.tsArgs)
-        hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
+        Print("===== call SetKernelName ========",flush=True)
+        self.SetKernelName(info.kernelName)
+        Print("===== call CompileKernelMatmul ========",flush=True)
+        shape, cfg = info.tsArgs
+        print(f"shape = {shape}, cfg = {cfg}",flush=True)
+        hsacoPath = self.CompileKernelMatmul( shape,cfg)
+        # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
+        kernelName = info.kernelName
+        gridDimX,gridDimY,gridDimZ = info.gridDims
+        blockDimX,blockDimY,blockDimZ = info.blockDims
+        shmBytes = info.shmBytes
+        
         print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
         print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         Print("========= hsacoPath = ",hsacoPath)
@@ -547,8 +559,8 @@ class TuningSpaceChecker_Matmul :
     
     @staticmethod
     def check_warp(config : Dict) -> bool :
-        wlm = config[ConfigKeywords.KEY_WARP_LAYOUT_M]
-        wln = config[ConfigKeywords.KEY_WARP_LAYOUT_N]
+        wlm = config[ConfigKeywords.KEY_WARP_LAYOUT_Y]
+        wln = config[ConfigKeywords.KEY_WARP_LAYOUT_X]
         warpsz = config[ConfigKeywords.KEY_WARP_SIZE]
         if wlm * wln == warpsz :
             return True
@@ -565,11 +577,11 @@ class TuningSpaceChecker_Matmul :
         n = config[ConfigKeywords.KEY_N]
         k = config[ConfigKeywords.KEY_K]
         
-        blm = config[ConfigKeywords.KEY_BLOCK_LAYOUT_M]
-        bln = config[ConfigKeywords.KEY_BLOCK_LAYOUT_N]
+        blm = config[ConfigKeywords.KEY_BLOCK_LAYOUT_Y]
+        bln = config[ConfigKeywords.KEY_BLOCK_LAYOUT_X]
         
-        wlm = config[ConfigKeywords.KEY_WARP_LAYOUT_M]
-        wln = config[ConfigKeywords.KEY_WARP_LAYOUT_N]
+        wlm = config[ConfigKeywords.KEY_WARP_LAYOUT_Y]
+        wln = config[ConfigKeywords.KEY_WARP_LAYOUT_X]
         
         if m % bm != 0 :
             return False
@@ -583,10 +595,10 @@ class TuningSpaceChecker_Matmul :
         if blockDim_m * tm != bm or blockDim_n * tn != bn :
             return False
         
-        wswa = config[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A]
-        wswb = config[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B]
-        tswa = config[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A]
-        tswb = config[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B]
+        wswa = config[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_M]
+        wswb = config[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_N]
+        tswa = config[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_M]
+        tswb = config[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_N]
         if wswa < tswa or wswb < tswb :
             return False
         if wswa % tswa != 0 or wswb % tswb != 0 :

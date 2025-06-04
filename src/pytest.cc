@@ -63,7 +63,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
                   {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
     };
   }
-  catch(std::exception e){
+  catch(std::exception & e){
     std::cout << "[Deepgen Fatal] invalid config or not set kernel name!" << std::endl;
     std::abort();
   }
@@ -139,7 +139,73 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   generator.lowering(module);
   // translate
   auto path = generator.translate(module);
-  std::cout << "[lib] ===========4" << std::endl;
+  // std::cout << "[lib] ===========4" << std::endl;
+  return path;
+}
+
+
+std::string compile_mm(std::vector<int64_t> shape, const TuneConfig& config) {
+    // auto attn = config.at("attention1");
+  std::map<std::string, std::map<std::string, int64_t>> tileConfig;
+  try{
+    auto mm = config.at(__GlobalKernelName);
+    tileConfig = {
+      {__GlobalKernelName , {{"BLOCK_SIZE_Y", mm.at(KEY_BLOCK_SIZE_M)}, {"THREAD_SIZE_Y", mm.at(KEY_THREAD_SIZE_M)}, 
+                  {"BLOCK_SIZE_X", mm.at(KEY_BLOCK_SIZE_N)}, {"THREAD_SIZE_X", mm.at(KEY_THREAD_SIZE_N)}}}
+    };
+  }
+  catch(std::exception& e){
+    std::cout << "[Deepgen Fatal] invalid config or not set kernel name!" << std::endl;
+    std::abort();
+  }
+
+  KernelCodeGenerator generator(__GlobalTarget, __GlobalPlatDesc);
+  mlir::ModuleOp module = generator.createModule();
+  std::vector<KernelData> kds;
+  // std::vector<FuseKernelData> fkds;
+  KernelInfo info;
+// ======  kernel  ======
+  KernelData kd1;
+  // matmul1
+  // kd1.name = "matmul1";
+  kd1.name = __GlobalKernelName;
+  kd1.type = "Matmul";
+  kd1.argNames = {"A1", "B1", "C1"};
+  
+  int LEN = shape.size();  // [.. , ..] , M , N , K
+  assert(LEN >= 3);
+  int64_t mVal; int64_t nVal;int64_t kVal;
+  mVal = shape[LEN-3]; nVal = shape[LEN-2]; kVal = shape[LEN-1];
+  std::vector<int64_t> shapeA;
+  std::vector<int64_t> shapeB;
+  std::vector<int64_t> shapeC;
+  for(int i=0;i<LEN-3;++i){
+    shapeA.push_back(shape[i]);
+    shapeB.push_back(shape[i]);
+    shapeC.push_back(shape[i]);
+  }
+  shapeA.push_back(kVal);shapeA.push_back(mVal);
+  shapeB.push_back(kVal);shapeB.push_back(nVal);
+  shapeC.push_back(mVal);shapeC.push_back(nVal);
+
+  kd1.shapes = {shapeA, shapeB, shapeC};
+  kd1.dtypes = {"float32", "float32", "float32"};
+  kd1.isTrans = {true, false};
+  kd1.outputArgNum = 1;
+  kds.push_back(kd1);
+
+  // create kernels
+  auto noSupKernels = generator.createKernels(module, kds);
+  // mpping
+  auto result = generator.mapping(module, tileConfig);
+  // optimize
+  generator.optimize(module, config);
+  // llvm::outs() << "=========== after optimize ===========\n"; llvm::outs().flush();module->dump();
+  // lowering
+  generator.lowering(module);
+  // translate
+  auto path = generator.translate(module);
+  // std::cout << "[lib] ===========4" << std::endl;
   return path;
 }
 
@@ -223,6 +289,25 @@ static PyObject* py_compile_attn(PyObject* self, PyObject* args) {
   return PyUnicode_FromString(result.c_str());
 }
 
+static PyObject* py_compile_mm(PyObject* self, PyObject* args) {
+  // bind compile_attn func
+  PyObject* py_shape;
+  PyObject* py_config;
+  if (!PyArg_ParseTuple(args, "OO", &py_shape, &py_config)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) {
+    return NULL;
+  }
+  if (!py_dict_to_config(py_config, config)) {
+    return NULL;
+  }
+  std::string result = compile_mm(shape, config);
+  return PyUnicode_FromString(result.c_str());
+}
+
 
 
 static PyObject* set_platform(PyObject* self, PyObject* args) {
@@ -265,23 +350,24 @@ static PyObject* set_kernel_name(PyObject* self, PyObject* args) {
 }
 
 // 方法定义
-static PyMethodDef AttentionMethods[] = {
+static PyMethodDef DeepgenMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
+    {"compile_mm", py_compile_mm, METH_VARARGS, "Compile matmul with given shape and config"},
     {"set_kernel_name", set_kernel_name, METH_VARARGS, "Compile attention with given shape and config"},
     {"set_platform", set_platform, METH_VARARGS, "Compile attention with given shape and config"},
     {NULL, NULL, 0, NULL}
 };
 
 // 模块定义
-static struct PyModuleDef attentionmodule = {
+static struct PyModuleDef deepgenmodule = {
   PyModuleDef_HEAD_INIT,
-  "attention",
+  "deepgen",
   NULL,
   -1,
-  AttentionMethods
+  DeepgenMethods
 };
 
 // 模块初始化
-PyMODINIT_FUNC PyInit_attention(void) {
-  return PyModule_Create(&attentionmodule);
+PyMODINIT_FUNC PyInit_deepgen(void) {
+  return PyModule_Create(&deepgenmodule);
 }

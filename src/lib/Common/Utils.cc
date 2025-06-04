@@ -30,17 +30,17 @@ Config _parseCfgItem(cJSON* item){
       {KEY_BLOCK_SIZE_M, 0}, {KEY_BLOCK_SIZE_N, 0}, {KEY_BLOCK_SIZE_K, 0}, 
       {KEY_THREAD_SIZE_M, 0}, {KEY_THREAD_SIZE_N, 0}, 
       {KEY_WARP_SIZE, 0}, 
-      {KEY_BLOCK_LAYOUT_M, 0}, {KEY_BLOCK_LAYOUT_N, 0}, 
-      {KEY_WARP_LAYOUT_M, 0}, {KEY_WARP_LAYOUT_N, 0},
+      {KEY_BLOCK_LAYOUT_Y, 0}, {KEY_BLOCK_LAYOUT_X, 0}, 
+      {KEY_WARP_LAYOUT_Y, 0}, {KEY_WARP_LAYOUT_X, 0},
       {KEY_DTYPE_A, (int)0},{KEY_DTYPE_B, (int)0},{KEY_DTYPE_C, (int)0},
       {KEY_M, (int)0},{KEY_N, (int)0},{KEY_K, (int)0},
       {KEY_IS_A_TRANSPOSE,(int)0},
       {KEY_GLOB_LOAD_WIDTH_A,(int)0},
       {KEY_GLOB_LOAD_WIDTH_B,(int)0},
-      {KEY_WARP_SCATTER_WIDTH_A,(int)0},
-      {KEY_WARP_SCATTER_WIDTH_B,(int)0},
-      {KEY_THREAD_SCATTER_WIDTH_A,(int)0},
-      {KEY_THREAD_SCATTER_WIDTH_B,(int)0},
+      {KEY_BLOCK_SCATTER_WIDTH_M,(int)0},
+      {KEY_BLOCK_SCATTER_WIDTH_N,(int)0},
+      {KEY_WARP_SCATTER_WIDTH_M,(int)0},
+      {KEY_WARP_SCATTER_WIDTH_N,(int)0},
       {KEY_LOCAL_SPLIT_U,(int)0},
       {KEY_BLOCK_MAPPING,(int)0},
       {KEY_GLOB_STORE_WIDTH,(int)0}
@@ -52,10 +52,10 @@ Config _parseCfgItem(cJSON* item){
   assert(_parseKeyInt(item,ret,KEY_THREAD_SIZE_M)) ;
   assert(_parseKeyInt(item,ret,KEY_THREAD_SIZE_N)) ;
   assert(_parseKeyInt(item,ret,KEY_WARP_SIZE)) ;
-  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_M)) ;
-  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_N)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_M)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_N)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_Y)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_X)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_Y)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_X)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_A)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_B)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_C)) ;
@@ -65,10 +65,10 @@ Config _parseCfgItem(cJSON* item){
   assert(_parseKeyInt(item,ret,KEY_IS_A_TRANSPOSE)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_LOAD_WIDTH_A)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_LOAD_WIDTH_B)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_A)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_B)) ;
-  assert(_parseKeyInt(item,ret,KEY_THREAD_SCATTER_WIDTH_A)) ;
-  assert(_parseKeyInt(item,ret,KEY_THREAD_SCATTER_WIDTH_B)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_SCATTER_WIDTH_M)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_SCATTER_WIDTH_N)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_M)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_N)) ;
   assert(_parseKeyInt(item,ret,KEY_LOCAL_SPLIT_U)) ;
   assert(_parseKeyInt(item,ret,KEY_BLOCK_MAPPING)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_STORE_WIDTH)) ;

@@ -44,7 +44,7 @@ int main() {
   kd2.dtypes = {"float32", "float32"};
   kd2.isTrans = {false};
   kd2.outputArgNum = 1;
-  kds.push_back(kd2);
+  // kds.push_back(kd2);
   // matmul2
   kd3.name = "matmul2";
   kd3.type = "Matmul";
@@ -53,7 +53,7 @@ int main() {
   kd3.dtypes = {"float32", "float32", "float32"};
   kd3.isTrans = {false, false};
   kd3.outputArgNum = 1;
-  kds.push_back(kd3);
+  // kds.push_back(kd3);
 
   // ======  fuse kernel  ======
   FuseKernelData fkd = {
@@ -70,7 +70,7 @@ int main() {
     {"y"},
     1
   };
-  fkds.push_back(fkd);
+  // fkds.push_back(fkd);
 
   // create kernels
   auto noSupKernels = generator.createKernels(module, kds);
@@ -88,32 +88,32 @@ int main() {
   };
   
   //
-  std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
-    {"attention1", 
-      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
-       {"PTr", 2}, {"PTc", 8}, {"OTr", 4}, {"OTc", 8}, 
-       // global to shared
-       {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
-       {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
-       // prefecth
-       {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
-       // P = Q * K
-       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 8},
-       {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
-       // O = P * V
-       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
-       {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
-       {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
-  };
   // std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
-  //   {"matmul1", {{"BLOCK_SIZE_M", 64}, {"THREAD_SIZE_M", 4}, {"BLOCK_SIZE_N", 64}, {"THREAD_SIZE_N", 4}, /* thread_num: 256 */
-  //                {"LOCAL_SPLIT_U", 1}, {"BLOCK_SIZE_K", 32},     /* u>1 -> thread_num *= u */
-  //                {"GLOB_LOAD_WIDTH_A", 4}, {"GLOB_LOAD_WIDTH_B", 4}, {"GLOB_STORE_WIDTH", 4},
-  //                {"BLOCK_LAYOUT_Y", 2}, {"BLOCK_LAYOUT_X", 4}, {"WARP_LAYOUT_Y", 8}, {"WARP_LAYOUT_X", 4},  /* 不受splitu的影响th256 */
-  //                {"BLOCK_SCATTER_WIDTH_M", 4}, {"WARP_SCATTER_WIDTH_M", 2}, {"BLOCK_SCATTER_WIDTH_N", 4}, {"WARP_SCATTER_WIDTH_N", 2},
-  //                {"WARP_SIZE", 32}, {"LOAD_CONTINUOUS", 1}, {"STORE_CONTINUOUS", 1}, {"SHARED_PREFETCH", 1}, {"REG_PREFETCH", 1}, 
-  //                {"BLOCK_MAPPING", 8}, {"UNROLL_NUM", 16}}}
+  //   {"attention1", 
+  //     {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+  //      {"PTr", 2}, {"PTc", 8}, {"OTr", 4}, {"OTc", 8}, 
+  //      // global to shared
+  //      {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
+  //      {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
+  //      // prefecth
+  //      {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
+  //      // P = Q * K
+  //      {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 8},
+  //      {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
+  //      // O = P * V
+  //      {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
+  //      {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
+  //      {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
   // };
+  std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
+    {"matmul1", {{"BLOCK_SIZE_M", 64}, {"THREAD_SIZE_M", 4}, {"BLOCK_SIZE_N", 64}, {"THREAD_SIZE_N", 4}, /* thread_num: 256 */
+                 {"LOCAL_SPLIT_U", 1}, {"BLOCK_SIZE_K", 32},     /* u>1 -> thread_num *= u */
+                 {"GLOB_LOAD_WIDTH_A", 4}, {"GLOB_LOAD_WIDTH_B", 4}, {"GLOB_STORE_WIDTH", 4},
+                 {"BLOCK_LAYOUT_Y", 2}, {"BLOCK_LAYOUT_X", 4}, {"WARP_LAYOUT_Y", 8}, {"WARP_LAYOUT_X", 4},  /* 不受splitu的影响th256 */
+                 {"BLOCK_SCATTER_WIDTH_M", 4}, {"WARP_SCATTER_WIDTH_M", 2}, {"BLOCK_SCATTER_WIDTH_N", 4}, {"WARP_SCATTER_WIDTH_N", 2},
+                 {"WARP_SIZE", 32}, {"LOAD_CONTINUOUS", 1}, {"STORE_CONTINUOUS", 1}, {"SHARED_PREFETCH", 1}, {"REG_PREFETCH", 1}, 
+                 {"BLOCK_MAPPING", 8}, {"UNROLL_NUM", 16}}}
+  };
 #if 0
   // 如果是调优的话就需要将模型切成小模型 splitModule
   mods = generator.splitModule(module);
@@ -130,16 +130,16 @@ for (auto mod : mods) {
   llvm::outs() << mod << "\n";
   
   // optimize
-  // generator.optimize(mod, tuneConfig);
-  // // llvm::outs() << mod << "\n";
+  generator.optimize(mod, tuneConfig);
+  // llvm::outs() << mod << "\n";
 
-  // // lowering
-  // generator.lowering(mod);
-  // // llvm::outs() << mod << "\n";
+  // lowering
+  generator.lowering(mod);
+  // llvm::outs() << mod << "\n";
 
-  // // translate
-  // auto path = generator.translate(mod);
-  // llvm::outs() << "bin path: " << path << "\n";
+  // translate
+  auto path = generator.translate(mod);
+  llvm::outs() << "bin path: " << path << "\n";
 }
 
   return 0;

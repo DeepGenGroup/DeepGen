@@ -110,7 +110,7 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
                 (ba ,config ) = deserialize_from_file(pkl) 
                 assert isinstance(ba, List)
                 assert isinstance(config, KernelConfigs)
-                # print(f'[D] after desrialize : {ba}')
+                print(f'[D] after desrialize : {ba}')
                 acc, funName = __runBenchmark(op, config, ba, 1, 5 , devId)
                 os.remove(pkl)
                 if acc > 0 :

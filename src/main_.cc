@@ -159,10 +159,10 @@ public:
       {KEY_THREAD_SIZE_M , m_THREAD_SIZE_M},
       {KEY_THREAD_SIZE_N , m_THREAD_SIZE_N},
       {KEY_WARP_SIZE , m_WARP_SIZE},
-      {KEY_BLOCK_LAYOUT_M , m_BLOCK_LAYOUT_M},
-      {KEY_BLOCK_LAYOUT_N , m_BLOCK_LAYOUT_N},
-      {KEY_WARP_LAYOUT_M , m_WARP_LAYOUT_M},
-      {KEY_WARP_LAYOUT_N , m_WARP_LAYOUT_N},
+      {KEY_BLOCK_LAYOUT_Y , m_BLOCK_LAYOUT_M},
+      {KEY_BLOCK_LAYOUT_X , m_BLOCK_LAYOUT_N},
+      {KEY_WARP_LAYOUT_Y , m_WARP_LAYOUT_M},
+      {KEY_WARP_LAYOUT_X , m_WARP_LAYOUT_N},
       {KEY_DTYPE_A , int(m_dtypeA)},
       {KEY_DTYPE_B , int(m_dtypeB)},
       {KEY_DTYPE_C , int(m_dtypeC)},
@@ -173,10 +173,10 @@ public:
       {KEY_IS_A_TRANSPOSE , m_isATranspose},
       {KEY_GLOB_LOAD_WIDTH_A , m_GLOB_LOAD_WIDTH_A},
       {KEY_GLOB_LOAD_WIDTH_B , m_GLOB_LOAD_WIDTH_B},
-      {KEY_WARP_SCATTER_WIDTH_A , m_WARP_SCATTER_WIDTH_A},
-      {KEY_WARP_SCATTER_WIDTH_B , m_WARP_SCATTER_WIDTH_B},
-      {KEY_THREAD_SCATTER_WIDTH_A , m_THREAD_SCATTER_WIDTH_A},
-      {KEY_THREAD_SCATTER_WIDTH_B , m_THREAD_SCATTER_WIDTH_B},
+      {KEY_BLOCK_SCATTER_WIDTH_M , m_WARP_SCATTER_WIDTH_A},
+      {KEY_BLOCK_SCATTER_WIDTH_N , m_WARP_SCATTER_WIDTH_B},
+      {KEY_WARP_SCATTER_WIDTH_M , m_THREAD_SCATTER_WIDTH_A},
+      {KEY_WARP_SCATTER_WIDTH_N , m_THREAD_SCATTER_WIDTH_B},
       {KEY_LOCAL_SPLIT_U , m_LOCAL_SPLIT_U},
       {KEY_BLOCK_MAPPING , m_BLOCK_MAPPING},
       {KEY_GLOB_STORE_WIDTH , m_GLOB_STORE_WIDTH},
@@ -185,7 +185,7 @@ public:
       {KEY_REG_PREFETCH, m_REG_PREFETCH},
       {KEY_SHARED_PREFETCH, m_SHARED_PREFETCH},
       {KEY_LOAD_CONTINUOUS, m_LOAD_CONTINUOUS},
-      {KEY_REDUCE_C_CONTINUOUS,  m_REDUCE_C_CONTINUOUS}, 
+      {KEY_STORE_CONTINUOUS,  m_REDUCE_C_CONTINUOUS}, 
     };
     return ret;
   }
@@ -239,16 +239,16 @@ std::ostream& operator<<(std::ostream& os, const Config& cfg){
   os << "- " << KEY_THREAD_SIZE_M << ":"<< cfg.at(KEY_THREAD_SIZE_M) << std::endl;
   os << "- " << KEY_THREAD_SIZE_N << ":"<< cfg.at(KEY_THREAD_SIZE_N) << std::endl;
   os << "- " << KEY_WARP_SIZE << ":"<< cfg.at(KEY_WARP_SIZE) << std::endl;
-  os << "- " << KEY_BLOCK_LAYOUT_M << ":"<< cfg.at(KEY_BLOCK_LAYOUT_M) << std::endl;
-  os << "- " << KEY_BLOCK_LAYOUT_N << ":"<< cfg.at(KEY_BLOCK_LAYOUT_N) << std::endl;
-  os << "- " << KEY_WARP_LAYOUT_M << ":"<< cfg.at(KEY_WARP_LAYOUT_M) << std::endl;
-  os << "- " << KEY_WARP_LAYOUT_N << ":"<< cfg.at(KEY_WARP_LAYOUT_N) << std::endl;
+  os << "- " << KEY_BLOCK_LAYOUT_Y << ":"<< cfg.at(KEY_BLOCK_LAYOUT_Y) << std::endl;
+  os << "- " << KEY_BLOCK_LAYOUT_X << ":"<< cfg.at(KEY_BLOCK_LAYOUT_X) << std::endl;
+  os << "- " << KEY_WARP_LAYOUT_Y << ":"<< cfg.at(KEY_WARP_LAYOUT_Y) << std::endl;
+  os << "- " << KEY_WARP_LAYOUT_X << ":"<< cfg.at(KEY_WARP_LAYOUT_X) << std::endl;
   os << "- " << KEY_GLOB_LOAD_WIDTH_A << ":"<< cfg.at(KEY_GLOB_LOAD_WIDTH_A) << std::endl;
   os << "- " << KEY_GLOB_LOAD_WIDTH_B << ":"<< cfg.at(KEY_GLOB_LOAD_WIDTH_B) << std::endl;
-  os << "- " << KEY_WARP_SCATTER_WIDTH_A << ":"<< cfg.at(KEY_WARP_SCATTER_WIDTH_A) << std::endl;
-  os << "- " << KEY_WARP_SCATTER_WIDTH_B << ":"<< cfg.at(KEY_WARP_SCATTER_WIDTH_B) << std::endl;
-  os << "- " << KEY_THREAD_SCATTER_WIDTH_A << ":"<< cfg.at(KEY_THREAD_SCATTER_WIDTH_A) << std::endl;
-  os << "- " << KEY_THREAD_SCATTER_WIDTH_B << ":"<< cfg.at(KEY_THREAD_SCATTER_WIDTH_B) << std::endl;
+  os << "- " << KEY_BLOCK_SCATTER_WIDTH_M << ":"<< cfg.at(KEY_BLOCK_SCATTER_WIDTH_M) << std::endl;
+  os << "- " << KEY_BLOCK_SCATTER_WIDTH_N << ":"<< cfg.at(KEY_BLOCK_SCATTER_WIDTH_N) << std::endl;
+  os << "- " << KEY_WARP_SCATTER_WIDTH_M << ":"<< cfg.at(KEY_WARP_SCATTER_WIDTH_M) << std::endl;
+  os << "- " << KEY_WARP_SCATTER_WIDTH_N << ":"<< cfg.at(KEY_WARP_SCATTER_WIDTH_N) << std::endl;
   os << "- " << KEY_LOCAL_SPLIT_U << ":"<< cfg.at(KEY_LOCAL_SPLIT_U) << std::endl;
   os << "- " << KEY_BLOCK_MAPPING << ":"<< cfg.at(KEY_BLOCK_MAPPING) << std::endl;
   os << "- " << KEY_GLOB_STORE_WIDTH << ":"<< cfg.at(KEY_GLOB_STORE_WIDTH) << std::endl;
@@ -486,10 +486,10 @@ int main(){
     {
       {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 16}, {KEY_THREAD_SIZE_M, 8}, {KEY_THREAD_SIZE_N, 8}, 
       {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 4}, 
-      {KEY_BLOCK_LAYOUT_M, 1}, {KEY_BLOCK_LAYOUT_N, 2}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 4},
-      {KEY_WARP_SCATTER_WIDTH_A, 4}, {KEY_WARP_SCATTER_WIDTH_B, 4}, {KEY_THREAD_SCATTER_WIDTH_A, 2}, {KEY_THREAD_SCATTER_WIDTH_B, 2}, 
+      {KEY_BLOCK_LAYOUT_Y, 1}, {KEY_BLOCK_LAYOUT_X, 2}, {KEY_WARP_LAYOUT_Y, 8}, {KEY_WARP_LAYOUT_X, 4},
+      {KEY_BLOCK_SCATTER_WIDTH_M, 4}, {KEY_BLOCK_SCATTER_WIDTH_N, 4}, {KEY_WARP_SCATTER_WIDTH_M, 2}, {KEY_WARP_SCATTER_WIDTH_N, 2}, 
       {KEY_LOCAL_SPLIT_U, 2}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 32}, {KEY_GLOB_STORE_WIDTH, 4}, 
-      {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_REDUCE_C_CONTINUOUS, 1}, 
+      {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_STORE_CONTINUOUS, 1}, 
       {KEY_DTYPE_A, (int)KcgDtype::float32},
       {KEY_DTYPE_B, (int)KcgDtype::float32},
       {KEY_DTYPE_C, (int)KcgDtype::float32},
@@ -503,10 +503,10 @@ int main(){
   //   {
   //     {KEY_BLOCK_SIZE_M, 64}, {KEY_BLOCK_SIZE_N, 64}, {KEY_BLOCK_SIZE_K, 16}, {KEY_THREAD_SIZE_M, 4}, {KEY_THREAD_SIZE_N, 4}, 
   //     {KEY_GLOB_LOAD_WIDTH_A, 4}, {KEY_GLOB_LOAD_WIDTH_B, 4}, 
-  //     {KEY_BLOCK_LAYOUT_M, 2}, {KEY_BLOCK_LAYOUT_N, 2}, {KEY_WARP_LAYOUT_M, 8}, {KEY_WARP_LAYOUT_N, 8},
-  //     {KEY_WARP_SCATTER_WIDTH_A, 2}, {KEY_WARP_SCATTER_WIDTH_B, 2}, {KEY_THREAD_SCATTER_WIDTH_A, 1}, {KEY_THREAD_SCATTER_WIDTH_B, 1}, 
+  //     {KEY_BLOCK_LAYOUT_Y, 2}, {KEY_BLOCK_LAYOUT_X, 2}, {KEY_WARP_LAYOUT_Y, 8}, {KEY_WARP_LAYOUT_X, 8},
+  //     {KEY_BLOCK_SCATTER_WIDTH_M, 2}, {KEY_BLOCK_SCATTER_WIDTH_N, 2}, {KEY_WARP_SCATTER_WIDTH_M, 1}, {KEY_WARP_SCATTER_WIDTH_N, 1}, 
   //     {KEY_LOCAL_SPLIT_U, 1}, {KEY_BLOCK_MAPPING, 8}, {KEY_WARP_SIZE, 64}, {KEY_GLOB_STORE_WIDTH, 4}, 
-  //     {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_REDUCE_C_CONTINUOUS, 1}, 
+  //     {KEY_UNROLL_NUM, 16}, {KEY_REG_PREFETCH, 1}, {KEY_SHARED_PREFETCH, 1}, {KEY_LOAD_CONTINUOUS, 1}, {KEY_STORE_CONTINUOUS, 1}, 
   //     {KEY_DTYPE_A, (int)KcgDtype::float32},
   //     {KEY_DTYPE_B, (int)KcgDtype::float32},
   //     {KEY_DTYPE_C, (int)KcgDtype::float32},
