@@ -58,7 +58,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             procs.append(p)
             p.start()
             g_index += 1
-            if g_index > kernelLimit:
+            if g_index >= kernelLimit:
                 break 
             if len(procs) >= maxProcsLimit :
                 for pp in procs :
@@ -194,14 +194,14 @@ if __name__ == '__main__' :
     print("get_tune_space",flush=True)
     ts = get_tuning_space(opty, cfgFile)
     cc = BenchmarkConfig()
-    cc.max_kernel_per_iter = 20
+    cc.max_kernel_per_iter = 1
     cc.result_json_path = "/home/xushilong/DeepGen/testResult.json"
     
     st = time.time()
     print(f"=====  start at : {st}")
-    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
-    # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=3)
-    # do_benchmark(opty,devId,cc,[],'/home/xushilong/DeepGen/testResult.json')
+    # do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
+    compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
+    do_benchmark(opty,devId,cc,[])
     et = time.time()
     print(f"=====  Total spends {(et - st)/ 60} minutes")
     

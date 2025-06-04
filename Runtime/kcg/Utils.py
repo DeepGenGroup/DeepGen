@@ -558,9 +558,10 @@ class CompileNeededInfo :
         self.baseArgs : List = []  # 问题定义（ 基础不变量，各个算子自定义.如对于matmul，其为 mnk ）
         self.tsArgs : List = []
         self.torchDataType : torch.dtype = None
-        self.blockDims : List[int] = None # optional. If needed, we can assign ans use
-        self.gridDims : List[int] = None # optional. If needed, we can assign ans use
-        self.shmBytes : int = None # optional. If needed, we can assign ans use
+        self.blockDims : List[int] = None # optional. If needed, we can assign and use
+        self.gridDims : List[int] = None # optional. If needed, we can assign and use
+        self.shmBytes : int = None # optional. If needed, we can assign and use
+        self.kernelName : str = None #  optional. If need, we can assign and use
         
 #  关键字
 class ConfigKeywords :

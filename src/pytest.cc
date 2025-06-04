@@ -6,6 +6,7 @@
 #include <stdlib.h>
 #include "Common/Utils.h"
 #include "Python.h"
+#include <exception>
 
 using namespace KernelCodeGen;
 
@@ -49,15 +50,23 @@ static PyObject* packResultsToPythonObject(std::vector<KernelInfo>& kernels){
 
 
 std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
-  auto attn = config.at("attention1");
-  std::map<std::string, std::map<std::string, int64_t>> tileConfig = {
-    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
-                 {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}}, 
-    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
-                 {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
-    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")}, 
-                 {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
-  };
+    // auto attn = config.at("attention1");
+  std::map<std::string, std::map<std::string, int64_t>> tileConfig;
+  try{
+    auto attn = config.at(__GlobalKernelName);
+    tileConfig = {
+      {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
+                  {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}}, 
+      {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
+                  {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+      {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")}, 
+                  {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+    };
+  }
+  catch(std::exception e){
+    std::cout << "[Deepgen Fatal] invalid config or not set kernel name!" << std::endl;
+    std::abort();
+  }
 
   KernelCodeGenerator generator(Target::CUDA, "");
   mlir::ModuleOp module = generator.createModule();
@@ -98,7 +107,9 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   kds.push_back(kd3);
 
   // ======  fuse kernel  ======
+  std::cout << "[lib] ===========3" << std::endl;
   const std::string& kernelName = __GlobalKernelName;
+  std::cout << "[lib]kernelName = " << kernelName << std::endl;
   FuseKernelData fkd = {
     kernelName,
     "FlashAttn",
@@ -128,6 +139,7 @@ std::string compile_attn(std::vector<int64_t> shape, const TuneConfig& config) {
   generator.lowering(module);
   // translate
   auto path = generator.translate(module);
+  std::cout << "[lib] ===========4" << std::endl;
   return path;
 }
 
@@ -244,6 +256,9 @@ static PyObject* set_kernel_name(PyObject* self, PyObject* args) {
     if(__GlobalKernelName.size() <= 0){
       std::cout << "DeepGen Error : Invalid KernelName " << __GlobalKernelName << std::endl;
       std::abort();
+    }
+    else{
+      std::cout << "[lib] setKernelNAme : "<< __GlobalKernelName << std::endl;
     }
   }
   return Py_None;

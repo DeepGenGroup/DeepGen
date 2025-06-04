@@ -100,24 +100,37 @@ def init_cuda(_devId) :
         torch.cuda.init()
         torch.cuda.empty_cache()
 
+def test_yield() :
+    for i in range(10) :
+        yield i
 
 if __name__ == '__main__':
-    dev = 7
-    init_cuda(dev)
-    a = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
-    b = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
-    c = torch.empty(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
-    st = torch.Event(enable_timing=True)
-    et = torch.Event(enable_timing=True)
-    d = torch.matmul(a,b)
-    st.record()
-    c = torch.matmul(a,b)
-    torch.cuda.synchronize()
-    et.record()
-    if torch.allclose(c,d):
-        print("test correct")
-    else:
-        print("test error")
+    pp = test_yield()
+    for num in pp :
+        print("num = ",num)
+        if num > 5:
+            break
+    print("============")
+    for num in pp :
+        print("num = ",num)
+        if num > 10:
+            break
+    # dev = 7
+    # init_cuda(dev)
+    # a = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    # b = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    # c = torch.empty(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")
+    # st = torch.Event(enable_timing=True)
+    # et = torch.Event(enable_timing=True)
+    # d = torch.matmul(a,b)
+    # st.record()
+    # c = torch.matmul(a,b)
+    # torch.cuda.synchronize()
+    # et.record()
+    # if torch.allclose(c,d):
+    #     print("test correct")
+    # else:
+    #     print("test error")
 
 
 

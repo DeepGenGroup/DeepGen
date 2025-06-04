@@ -4,7 +4,7 @@ from kcg.CompiledKernel import *
 from kcg.Kernel import *
 from kcg.Utils import *
 import torch.nn.functional as F
-
+from typing import Mapping
 
 
 @kcg_kernel
@@ -407,9 +407,10 @@ class AttentionOp(OpInterface) :
         self.InitBaseArgs([info.baseArgs, dataTypeInt])
 
         shape, config = info.tsArgs
-        assert isinstance(config, KernelConfigs)
+        assert info.kernelName is not None
+        kernelName = info.kernelName
+        self.SetKernelName( kernelName )
         res = self.CompileKernel(shape , config)
-        self.SetKernelName( config.kernelFuncName )
         # blockSize = [cfg[-1][0]]  # tx
         # sharedSize = cfg[-1][1]  # shared memroy size
 
@@ -418,7 +419,6 @@ class AttentionOp(OpInterface) :
         blockDimX, blockDimY ,blockDimZ = info.blockDims
         gridDimX, gridDimY, gridDimZ = info.gridDims
         # kernelName = 'attention1'
-        kernelName = self.KernelName
         shmBytes = info.shmBytes
         # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
         # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
@@ -438,7 +438,7 @@ class AttentionOp(OpInterface) :
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)
-        # print(f"GetCompiledKernel attop : {info.sharedMem()},{info.gridDims()},{info.blockDims()}, signature = {signature}")
+        print(f"GetCompiledKernel attop : funame = {info.kernelFuncName}")
         return CompiledKernel(
             info.backend,
             info.binaryPath,

@@ -177,8 +177,7 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
   if len(cfgs) <= 0:
     cfgs = get_cfgs(shape)
   for cfg in cfgs:
-    config = {
-      "attention1": {
+    valDict = {
         "Br": cfg[0], "Bc": cfg[1], "Hd": cfg[2], "Slice1": cfg[3], "Slice2": cfg[4], 
         "PTr": cfg[5], "PTc": cfg[6], "OTr": cfg[7], "OTc": cfg[8],
         # global to shared
@@ -201,8 +200,13 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
         kw.KEY_GRID_DIM_Y : shape[1],
         kw.KEY_GRID_DIM_Z : shape[0]
       }
-    }
+    temp = AttentionTuningArgs(ToEnumIntDType(torch.float32))
+    temp.assignWithDict(valDict)
+    kernelName = temp.generateKernelName()
+    config = {kernelName : valDict}
+    
     ret = CompileNeededInfo()
+    ret.kernelName = kernelName
     ret.baseArgs = shape
     ret.torchDataType = torch.float32
     ret.tsArgs = [shape,config]
