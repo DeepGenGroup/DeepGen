@@ -384,6 +384,9 @@ class MatmulOp(OpInterface) :
         self.SetKernelName(info.kernelName)
         Print("===== call CompileKernelMatmul ========",flush=True)
         shape, cfg = info.tsArgs
+        if len(shape) == 4 :
+            if shape[0] <= 1:
+                shape = shape[1:]
         print(f"shape = {shape}, cfg = {cfg}",flush=True)
         hsacoPath = self.CompileKernelMatmul( shape,cfg)
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]

@@ -52,7 +52,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
         try:
             needInfo = next(tsGenerator)
         # for needInfo in tsGenerator :
-            # print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
+            print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
             # create compile process
             p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index))
             procs.append(p)
@@ -190,12 +190,12 @@ if __name__ == '__main__' :
     backend = EnumBackendType.HIP
     arch = "906"
     # opty = matmul.MatmulOp
-    PathManager.init(clearPkl=True)
+    PathManager.init(clearPkl=True, clearCache=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
     print("get_tune_space",flush=True)
     ts = get_tuning_space(opty, cfgFile)
     cc = BenchmarkConfig()
-    cc.max_kernel_per_iter = 1
+    cc.max_kernel_per_iter = 0
     cc.result_json_path = "/home/xushilong/DeepGen/testResult.json"
     
     st = time.time()
