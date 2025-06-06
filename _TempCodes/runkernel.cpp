@@ -109,5 +109,6 @@ int main(int argc, char** argv) {
 
   freeBufs({A, B, C, D}, {d_A, d_B, d_C, d_D});
   hipModuleUnload(module);
+  std::cout << "Done" << std::endl;
   return 0;
 }

@@ -374,7 +374,7 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
     // llvm::outs() << " =========== after LLVM IR ============\n";
     // llvm::outs() << llvmIR << "\n";
     const std::string gfx_triple{"amdgcn-amd-amdhsa"};
-    const std::string gfx_features{""};
+    const std::string gfx_features{"+code-object-v4"};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));

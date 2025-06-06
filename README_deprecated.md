@@ -44,9 +44,6 @@
 - CUDA/ROCM 基础环境   
 对于HygonDCU以及其他有配套工具要求的平台，请安装供应商提供的pytorch或CUDA/ROCM基础环境
 
-For Hygon DCU Z100:
-- 采用 dtk 24.04.1 , LLVM中设置 amd的ABI版本为 code-object-v4
-
 MLIR/LLVM compile & setup ：
 ```sh
 cmake -G Ninja ../llvm   -DLLVM_ENABLE_PROJECTS="mlir;clang" \
