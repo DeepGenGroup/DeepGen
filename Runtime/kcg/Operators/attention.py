@@ -45,10 +45,6 @@ class AttentionBaseArgs(OpBaseArgs) :
         # get shape of attention
         return self.intValues[0]
     
-    def parseFromTemplateDict(self,templateDict : Dict):
-        shape : List[int] = templateDict['shape']
-        dtype : int = templateDict[ConfigKeywords.KEY_DTYPE_A][0]
-        self.intValues = [shape,dtype]
         
     def parseFromJsonfile(self,path : str):
         import json

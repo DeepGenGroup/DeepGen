@@ -197,15 +197,11 @@ class CreateMatmulConfig:
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
     temp_tals = self.getOther(temp_tals)
     for tal in temp_tals:
-      _m = self.cfg_dict[kw.KEY_M][0]
-      _n = self.cfg_dict[kw.KEY_N][0]
-      _k= self.cfg_dict[kw.KEY_K][0]
-      _batch= self.cfg_dict[kw.KEY_BATCH][0] 
       ta = MatmulTuningArgs(
         m = self.cfg_dict[kw.KEY_M][0], 
         n = self.cfg_dict[kw.KEY_N][0],
         k= self.cfg_dict[kw.KEY_K][0],
-        batch= self.cfg_dict[kw.KEY_BATCH][0] ,
+        batch= self.cfg_dict[kw.KEY_BATCH] ,
         enumDType= self.cfg_dict[kw.KEY_DTYPE_A][0]
       ) 
       # self.cfg_dict[kw.KEY_DTYPE_B][0], 
@@ -224,6 +220,9 @@ class CreateMatmulConfig:
         self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
       )
       ta.assignWithList(*config)
+      for e in ta.batch:
+        if e == 1:
+          ta.batch.remove(e)
       kernelName = ta.generateKernelName()
       configDict = {
         kernelName : ta.jsonfy()
@@ -231,9 +230,9 @@ class CreateMatmulConfig:
       ret = CompileNeededInfo()
       ret.kernelName = kernelName
       ret.baseArgs = [ta.batch, ta.M, ta.N, ta.K, int(ta.dtA)]
-      ret.tsArgs = [[_batch, _m, _n, _k] , configDict  ]
+      ret.tsArgs = [[ta.batch, ta.M, ta.N, ta.K] , configDict  ]
       ret.torchDataType = ToTorchType(ta.dtA)
-      gridDim = _m / ta.BLOCK_SIZE_M * _n / ta.BLOCK_SIZE_N
+      gridDim = ta.M / ta.BLOCK_SIZE_M * ta.N / ta.BLOCK_SIZE_N
       blockDim = (ta.BLOCK_SIZE_M / ta.THREAD_SIZE_M) * ( ta.BLOCK_SIZE_N / ta.THREAD_SIZE_N )
       shmBytes = (ta.BLOCK_SIZE_M + ta.BLOCK_SIZE_N) * ta.BLOCK_SIZE_K
       if ta.SHARED_PREFETCH > 0 :
@@ -244,7 +243,13 @@ class CreateMatmulConfig:
         if shm_reduce > shmBytes :
           shmBytes = shm_reduce
       ret.blockDims = [int(blockDim),1,1]
-      ret.gridDims = [int(gridDim),1,1]
+      
+      ret.gridDims = [int(gridDim)]
+      if len(ta.batch) > 0 :
+        ret.gridDims += ta.batch  # 处理方式： 将batch维度加到griddim的y,z上. 即batch数组的维度不超过2
+      assert len(ret.gridDims) <= 3
+      while len(ret.gridDims) < 3:
+        ret.gridDims.append(1)   # 不够三维的部分用1 补全
       ret.shmBytes = int(shmBytes * sizeof(ta.dtA))
       
       yield ret

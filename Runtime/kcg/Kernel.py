@@ -311,9 +311,7 @@ class OpBaseArgs(ABC) :
     @abstractmethod
     # 从json反序列化
     def parseFromJsonfile(self,path : str): ...
-    @abstractmethod
-    # 从TuningSpace的'template'字段反序列化
-    def parseFromTemplateDict(self,templateDict : Dict): ...
+
     @abstractmethod
     # 序列化
     def dumpToJson(self,path : str): ...

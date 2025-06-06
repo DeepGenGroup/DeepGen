@@ -44,15 +44,7 @@ class MatmulBaseArgs(OpBaseArgs) :
     
     def getIntDatalist(self) -> List[int] :
         return self.intValues[0:4] + [self.intValues[-1]]
-    
-    def parseFromTemplateDict(self,templateDict : Dict):
-        batch = templateDict[ConfigKeywords.KEY_BATCH][0]
-        m = templateDict[ConfigKeywords.KEY_M][0]
-        n = templateDict[ConfigKeywords.KEY_N][0]
-        k = templateDict[ConfigKeywords.KEY_K][0]
-        dtype : int = templateDict[ConfigKeywords.KEY_DTYPE_C][0]
-        self.intValues = [batch,m,n,k,dtype]
-        
+     
     def parseFromJsonfile(self,path : str):
         import json
         obj = None
@@ -94,7 +86,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.M : int = m
         self.N : int = n
         self.K : int = k
-        self.batch : int = batch
+        self.batch = batch
         self.isATranspose : int = 1
         self.GLOB_LOAD_WIDTH_A : int = 0
         self.GLOB_LOAD_WIDTH_B : int = 0
@@ -157,7 +149,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
             str(ConfigKeywords.KEY_M) : (self.M) ,
             str(ConfigKeywords.KEY_N) : (self.N) ,
             str(ConfigKeywords.KEY_K) : (self.K) ,
-            str(ConfigKeywords.KEY_BATCH) : (self.batch) ,
+            str(ConfigKeywords.KEY_BATCH) : 1 ,  # in tsArgs , we don't need batch info
             str(ConfigKeywords.KEY_IS_A_TRANSPOSE) : (self.isATranspose) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_A) : (self.GLOB_LOAD_WIDTH_A) ,
             str(ConfigKeywords.KEY_GLOB_LOAD_WIDTH_B) : (self.GLOB_LOAD_WIDTH_B) ,
@@ -250,7 +242,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         assert self.M % self.BLOCK_SIZE_M == 0 
         assert self.N % self.BLOCK_SIZE_N == 0 
         assert self.K % self.BLOCK_SIZE_K == 0 
-        assert self.batch >= 1 
+        # assert self.batch >= 1 
         # warp-block validation check
         assert self.BLOCK_SIZE_M % self.THREAD_SIZE_M == 0
         assert self.BLOCK_SIZE_N % self.THREAD_SIZE_N == 0
@@ -272,7 +264,9 @@ class MatmulTuningArgs(TuningArgsInterface) :
     
     def generateKernelName(self) -> str :
         ret = "kcg_MM_"
-        ret += f"b{ self.batch }" 
+        ret += 'b'
+        for e in self.batch :
+            ret += f"{e}_" 
         ret += f"M{ self.M }" 
         ret += f"N{ self.N }" 
         ret += f"K{ self.K }" 
@@ -317,13 +311,12 @@ class MatmulOp(OpInterface) :
     def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Baseline is None :
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
+            assert isinstance(batch, List)
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            # if batch > 1 :
-            a = torch.rand((batch, m,k),dtype=ety, device=f"cuda:{devId}" )
-            b = torch.rand((batch, k,n),dtype=ety, device=f"cuda:{devId}" )
-            # else:
-            #     a = torch.rand((m,k),dtype=ety, device=f"cuda:{devId}" )
-            #     b = torch.rand((k,n),dtype=ety, device=f"cuda:{devId}" )
+            shapeA = batch + [m,k]
+            shapeB = batch + [k,n]
+            a = torch.rand(shapeA,dtype=ety, device=f"cuda:{devId}" )
+            b = torch.rand(shapeB,dtype=ety, device=f"cuda:{devId}" )
             self.InputTensors_Baseline = [a,b]
         return self.InputTensors_Baseline
             
@@ -333,9 +326,9 @@ class MatmulOp(OpInterface) :
             [batch, m,n,k, dtypeInt] = self.BaseArgs.intValues 
             print(f"self.BaseArgs.intValues = {self.BaseArgs.intValues}" )
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            # if batch > 1 :
             aa = a.transpose(-1,-2).contiguous()
-            c = torch.empty((batch,m,n), dtype=ety, device=f"cuda:{devId}")
+            shapeC = batch + [m,n]
+            c = torch.empty(shapeC, dtype=ety, device=f"cuda:{devId}")
             # else :
             #     aa = a.transpose(0,1).contiguous()
             #     c = torch.empty((m,n), dtype=ety, device=f"cuda:{devId}")
@@ -384,9 +377,11 @@ class MatmulOp(OpInterface) :
         self.SetKernelName(info.kernelName)
         Print("===== call CompileKernelMatmul ========",flush=True)
         shape, cfg = info.tsArgs
-        if len(shape) == 4 :
-            if shape[0] <= 1:
-                shape = shape[1:]
+        # batch,m,n,k = shape
+        if len(shape[0]) > 0 :
+            shape = shape[0] + shape[1:]
+        else:
+            shape = shape[1:]
         print(f"shape = {shape}, cfg = {cfg}",flush=True)
         hsacoPath = self.CompileKernelMatmul( shape,cfg)
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
@@ -446,8 +441,8 @@ class MatmulOp(OpInterface) :
         [a0,b0] = self.GetBaselineInputTensor(devId)
         [a,b,c] = self.GetBenchmarkInputTensor(devId)
         torchMM = torch.matmul
-        if self.TuningArgs.batch > 1:
-            assert len(a0.shape) == 3, f"shape not match : len(a0.shape)={len(a0.shape)}, TuningArgs.batch={self.TuningArgs.batch}" 
+        if len(self.TuningArgs.batch) == 1 :
+            # assert len(a0.shape) == 3, f"shape not match : len(a0.shape)={len(a0.shape)}, TuningArgs.batch={self.TuningArgs.batch}" 
             torchMM = torch.bmm
         for i in range(0,warmupCount) : 
             torchMM(a0,b0)
@@ -456,7 +451,7 @@ class MatmulOp(OpInterface) :
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
         [matrixA, matrixB] = self.GetBaselineInputTensor(devId)
         torchMM = torch.matmul
-        if len(matrixA.shape) > 2 :
+        if len(matrixA.shape) == 3 :
             torchMM = torch.bmm
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
@@ -493,12 +488,10 @@ class MatmulOp(OpInterface) :
         if self.InputTensors_Baseline is None :
             batch, m,n,k , dtypeInt = self.BaseArgs.getIntDatalist()
             datatype = ToTorchType(EnumKernelDType(dtypeInt))
-            if batch > 1:
-                matA = torch.randn(batch,m,k, dtype= datatype, device=f'cuda:{devId}')
-                matB = torch.randn(batch,k,n, dtype= datatype, device=f'cuda:{devId}')
-            else:
-                matA = torch.randn(m,k, dtype= datatype, device=f'cuda:{devId}')
-                matB = torch.randn(k,n, dtype= datatype, device=f'cuda:{devId}')
+            shapeA = batch + [m,k]
+            shapeB = batch + [k,n]
+            matA = torch.randn(shapeA, dtype= datatype, device=f'cuda:{devId}')
+            matB = torch.randn(shapeB, dtype= datatype, device=f'cuda:{devId}')
             self.InputTensors_Baseline = [matA ,matB]
         else:
             matA, matB = self.InputTensors_Baseline
@@ -506,10 +499,7 @@ class MatmulOp(OpInterface) :
         if self.InputTensors_Benchmark is None:
             aUse = None
             if self.TuningArgs.isATranspose :
-                d0,d1 = 0,1
-                if len(matA.shape) == 3 :
-                    d0,d1 = 1,2
-                atrans = torch.transpose(matA,d0,d1).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
+                atrans = torch.transpose(matA,-1,-2).contiguous()  # 转置会令底层存储不连续，导致失败。必须使其连续
                 assert(matA.is_contiguous())
                 assert(matB.is_contiguous())
                 assert(atrans.is_contiguous())
@@ -524,10 +514,8 @@ class MatmulOp(OpInterface) :
         if self.OutputTensor_Baseline is None :
             b,m,n,k,dtypeInt = self.BaseArgs.getIntDatalist()
             dt = ToTorchType(EnumKernelDType(dtypeInt))
-            if b > 1:
-                ret = torch.empty(b,m,n,dtype=dt, device=f'cuda:{devId}')
-            else:
-                ret = torch.empty(m,n,dtype=dt, device=f'cuda:{devId}')
+            shapeC = b + [m,n]
+            ret = torch.empty(shapeC,dtype=dt, device=f'cuda:{devId}')
             self.OutputTensor_Baseline = ret
 
     
