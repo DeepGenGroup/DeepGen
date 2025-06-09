@@ -186,12 +186,13 @@ if __name__ == '__main__' :
     cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     opty = matmul.MatmulOp
     devId = 7
-    arch = "80"
     
     if is_hip():
         backend = EnumBackendType.HIP
+        arch = "906"
     else:
         backend = EnumBackendType.CUDA
+        arch = "80"
     
     PathManager.init(clearPkl=True, clearCache=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
@@ -203,9 +204,9 @@ if __name__ == '__main__' :
     
     st = time.time()
     print(f"=====  start at : {st}")
-    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
-    # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
-    # do_benchmark(opty,devId,cc,[])
+    # do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
+    compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
+    do_benchmark(opty,devId,cc,[])
     et = time.time()
     print(f"=====  Total spends {(et - st)/ 60} minutes")
     

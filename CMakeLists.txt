@@ -45,9 +45,10 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
-option(ENABLE_DEBUG_LOG "Enable debug log" ON)
+option(DEBUG_MODE "Enable debug log & add -g compile option" ON)
 # close some warnings
 add_compile_options(
+  -Wno-maybe-uninitialized
   -Wno-unused-function
   -Wno-unused-variable
   -Wno-unused-result
@@ -96,6 +97,7 @@ endif()
 
 if(DEBUG_MODE)
   add_definitions(-DKCG_DEBUG)
+  add_compile_options(-g)
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
@@ -113,10 +115,8 @@ link_directories(${LLVM_INSTALL_DIR}/lib)
 add_definitions(${LLVM_DEFINITIONS})
 add_definitions()
 message("add-def:${LLVM_DEFINITIONS}")
-if(IS_DEBUG_MODE)
-  add_definitions(-DKCG_DEBUG)
-endif()
-add_compile_options(-g)
+
+
 
 # Configure CMake.
 list(APPEND CMAKE_MODULE_PATH ${MLIR_MAIN_SRC_DIR}/cmake/modules)
