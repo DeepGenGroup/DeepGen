@@ -9,38 +9,222 @@
 
 namespace KernelCodeGen {
 
-std::unique_ptr<Optimizer> createOptimizer(const std::string& opName) {
-  if (opName == "Matmul") {
-    return std::make_unique<MatmulOptimizer>();
-  }
-  return nullptr;
-}
-
 KernelCodeGenerator::KernelCodeGenerator(const KernelCodeGenerator& other):
   KernelCodeGenerator(other.target,other.arch)
-{
-  ;
+{;}
+
+
+mlir::ModuleOp KernelCodeGenerator::createModule() {
+  // 在同一个context下生成moduleop
+  mlir::OpBuilder builder(&context);
+  mlir::ModuleOp module = mlir::ModuleOp::create(builder.getUnknownLoc());
+  return module;
 }
 
 
-bool KernelCodeGenerator::optimize(mlir::ModuleOp &mod, std::map<std::string, int> config) {
-  auto opNames = Analyzer::collectFuncNames(mod);
-  for (auto opName : opNames) {
-    auto opt = createOptimizer(opName);
-    if (opt == nullptr) {
-      llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
-      return false;
+std::vector<mlir::ModuleOp> KernelCodeGenerator::splitModule(mlir::ModuleOp& mod) {
+  // split module 
+  std::vector<mlir::ModuleOp> mods;
+  auto kernels = getAllKernels(mod);
+  for (auto kernel : kernels) {
+    auto newMod = createModule();
+    mlir::Block& moduleBlock = newMod.getBodyRegion().front();
+    kernel->moveBefore(&moduleBlock, moduleBlock.end());
+    mods.push_back(newMod);
+  }
+  return mods;
+}
+
+std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod, std::vector<KernelData> kernelList) {
+  // create all kernels
+  std::vector<std::string> noSupKernels;
+  for (auto kernel : kernelList) {
+    std::vector<std::vector<int64_t>> inputShape(kernel.shapes.begin(), kernel.shapes.end()-kernel.outputArgNum);
+    std::vector<std::vector<int64_t>> outputShape(kernel.shapes.end()-kernel.outputArgNum, kernel.shapes.end());
+    std::vector<std::string> inputDType(kernel.dtypes.begin(), kernel.dtypes.end()-kernel.outputArgNum);
+    std::vector<std::string> outputDType(kernel.dtypes.end()-kernel.outputArgNum, kernel.dtypes.end());
+    if (kernel.type == "Matmul") {
+      create<Operators::Matmul>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "Softmax") {
+      create<Operators::Softmax>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else {
+      noSupKernels.push_back(kernel.type);
     }
-    if (!opt->applicable(mod)) return false;   // collect matmul datas
-    opt->applyOptimzer(mod, config);
+  }
+  // add attr
+  for (auto kernel : kernelList) {
+    mod.walk<mlir::WalkOrder::PreOrder>([&](mlir::func::FuncOp funcOp) {
+      auto name = funcOp.getName().str();
+      if (name == kernel.name) {
+        mlir::OpBuilder builder(funcOp);
+        funcOp.walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+          auto forDesc = getStrAttr(forOp, FORDESC);
+          if (forDesc == "x" || forDesc == "y") {
+            forOp->setAttr(FORINCFUNC, builder.getStringAttr(name));
+          }
+        });
+        return;
+      }
+    });
+  }
+
+  return noSupKernels;
+}
+
+bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData> fkList) {
+  // kernel fusing
+  for (auto kernels : fkList) {  // kernels
+    auto fks = getSpecifiedKernels(mod, kernels.fuseKernels);
+    // get batch kernels
+    auto funcBatchs = getBatchFors(fks);
+    // create new func and get new func args and mid vars
+    mlir::OpBuilder builder(mod);
+    builder.setInsertionPointToStart(mod.getBody());
+    auto [newFuncOp, funcArgs, midVars] = createFuseFuncAndMidMems(builder, kernels);
+    // 获取【新函数参数】需要替换的【旧函数参数】，根据【fks】提供的索引信息
+    // funcargs{newArg0, newArg1, newArg2, newArg3} -> {{oldArg0}, {oldArg1}, {oldArg5}, {oldArg6}}
+    auto argToArgs = collectOldMems(kernels.funcArgIndex, fks);
+    // 【中间变量】替换【旧函数参数】
+    // midvars{midVar0} -> {{oldArg2}, {oldArg3}, {oldArg4}}
+    auto midToArgs = collectOldMems(kernels.midVarIndex, fks);
+    // move ops in old func and fuse kernel
+    moveOperation(newFuncOp, fks, funcArgs, midVars, argToArgs, midToArgs);
+    // fuse batch forops
+    fuseForOps(funcBatchs);
+    LOG_DEBUG("===== batch fuse =====\n", mod);
+
+    auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(newFuncOp, FORDESC, std::string{"y"});
+    auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(newFuncOp, FORDESC, std::string{"x"});
+    // x bufferize 将含有迭代变量的forx循环进行bufferize，形成foryx完美嵌套
+    for (int i=0; i<xloops.size(); i++) {
+      if (xloops[i].getNumIterOperands() > 0) {
+        auto iterDescs = getArrayStrAttr(xloops[i], ITERVARDESC);  // 获取含有迭代变量的for循环的属性
+        std::vector<mlir::affine::AffineForOp> upperLoops{yloops[i]};
+        Rewriter::bufferizeLoopCarryVar(xloops[i], upperLoops, MemorySpace::global, iterDescs);
+      }
+    }
+    LOG_DEBUG("===== X bufferize =====\n", mod);
+    // 针对softmax这个算子，decouple 将y中含有两个x循环进行拆分，保证所有的fory下含有一个forx
+    normalizeParaForOp(yloops);
+    LOG_DEBUG("===== decouple =====\n", mod);
+    // 先将算子进行更加小粒度的切分，变成一些reduce、elem-wise、binary、matmul级别的算子
+    separateParaForOps(newFuncOp);   // ！！！！=== 重点设计 === ！！！！
+    LOG_DEBUG("===== splitParaForOps =====\n", mod);
+    // 将kernel内部可以进行融合的循环操作进行融合
+    // 这个函数将用于将在for层面进行分析，将可以进行融合的for进行深度的融合（可行/未实现）
+    fuseParaForOps(newFuncOp);   // ！！！！=== 重点设计 === ！！！！
+    LOG_DEBUG("===== fuseParaForOps =====\n", mod);
   }
   return true;
 }
 
 
-bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target, const std::string& arch) {
+bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tileConfig) {
+  // 并行化映射
+  auto kernels = getAllKernels(mod);
+  for (auto kernel : kernels) {
+    // collect datas
+    auto paraDims = getArrayStrAttr(kernel, PARALLELDIMS);  // 获取可并行维度
+    auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
+    auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
+    // split & reorder & parallel 上一步做完必然会有fory和forx一一对应，大小相等
+    std::vector<mlir::affine::AffineParallelOp> blockIdxs;  // collect all block parallel ops
+    for (int i=0; i<yloops.size(); i++) {
+      // split tile for
+      auto funcName = getStrAttr(yloops[i], FORINCFUNC);
+      std::vector<int64_t> tiley{tileConfig.at(funcName).at("BLOCK_SIZE_Y"), tileConfig.at(funcName).at("THREAD_SIZE_Y")};
+      std::vector<int64_t> tilex{tileConfig.at(funcName).at("BLOCK_SIZE_X"), tileConfig.at(funcName).at("THREAD_SIZE_X")};
+      auto bytyfory = Rewriter::split(yloops[i], tiley, {"blocky", "thready", "ttiley"});
+      auto bxtxforx = Rewriter::split(xloops[i], tilex, {"blockx", "threadx", "ttilex"});
+      // reorder tile for
+      Rewriter::reorder({bytyfory[0], bxtxforx[0], bytyfory[1], bxtxforx[1], bytyfory[2], bxtxforx[2]});
+      // parallel tile for
+      std::vector<mlir::affine::AffineForOp> blockForOps;
+      for (auto paraDim : paraDims) {
+        if (paraDim == "y") blockForOps.push_back(bytyfory[0]);
+        if (paraDim == "x") blockForOps.push_back(bxtxforx[0]);
+      }
+      auto blockIdx = Rewriter::parallel(blockForOps, BLOCKIDX, true);
+      auto threadIdx = Rewriter::parallel({bytyfory[1], bxtxforx[1]}, THREADIDX);
+      blockIdxs.push_back(blockIdx);
+    }
+    LOG_DEBUG("===== split & reorder & parallel block/thread tile =====\n", mod);
+
+    // addLoopsToParallel 将batch添加进入parallel
+    auto batchloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"batch"});
+    if (batchloops.size()) {
+      Rewriter::addLoopsToParallel(batchloops, blockIdxs);
+      LOG_DEBUG("===== addLoopsToParallel =====\n", mod);
+    }
+
+    // 若block.x的循环还存在的话，就应该将这个循环下移到parallel内部
+    auto bxloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"blockx"});
+    if (bxloops.size()){
+      blockForOpShiftDown(bxloops);
+      LOG_DEBUG("===== blockForOpShiftDown =====\n", mod);
+    }
+
+    // 将多个parallel合成一个
+    mlir::OpBuilder builder(kernel);
+    // fuse blockidx
+    auto blockParaOps = collectOpsInfuncOp<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, BLOCKIDX);
+    if (blockParaOps.size() > 1) {
+      builder.setInsertionPointAfter(blockParaOps.back());
+      auto blockIdx = fuseParallelOp(builder, blockParaOps);
+    }
+    // fuse threadidx
+    auto threadParaOps = collectOpsInfuncOp<mlir::affine::AffineParallelOp>(kernel, AttrGPUIndex, THREADIDX);
+    if (threadParaOps.size() > 1) {
+      builder.setInsertionPointAfter(threadParaOps.back());
+      auto threadIdx = fuseParallelOp(builder, threadParaOps);
+    }
+    LOG_DEBUG("===== fuseParallelOp blockIdx & threadIdx =====\n", mod);
+    // erase single iteration forop and amend map of loadop or storeop
+    eraseSingleIterForOps(kernel);
+    LOG_DEBUG("===== eraseSingleIterForOps =====\n", mod);
+    kernel->setAttr(std::string("func.state"), builder.getStringAttr("gpu"));
+  }
+  return true;
+}
+
+
+bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig) {
+  // optimize
+  // create opt tool pools
+  std::cout << "[lib] ========= optimize start " << std::endl;
+  auto KernelTypes = Analyzer::collectFuncTypes(mod);
+  std::cout << "[lib] ========= optimize 0 " << std::endl;
+  std::map<std::string, std::unique_ptr<Optimizer>> opts;
+  for (auto KernelType : KernelTypes) {
+    if (KernelType == "Matmul") {
+      opts[KernelType] = std::make_unique<MatmulOptimizer>();
+    } else if (KernelType == "FlashAttn") {
+      opts[KernelType] = std::make_unique<FlashAttnOptimizer>();
+    } else {
+      llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
+      return false;
+    }
+  }
+  std::cout << "[lib] ========= optimize mid " << std::endl;
+  // optimize all kernel
+  auto ntMap = Analyzer::collectNameTypeMap(mod);
+  for (auto nt : ntMap) {  // {matmul1 : Matmul}
+    auto opt = std::move(opts[nt.second]);
+    auto funcOps = getSpecifiedKernels(mod, {nt.first});
+    if (!opt->applicable(funcOps[0], tuneConfig.at(nt.first))) {
+      std::cout << "[lib] ========= optimize false " << std::endl;
+      return false;   // collect matmul datas
+    }
+    opt->applyOptimzer(funcOps[0]);
+  }
+  std::cout << "[lib] ========= optimize ends " << std::endl;
+  return true;
+}
+
+
+bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target, const std::string& arch) {
 #define FLAG 1
-  mlir::PassManager pm(&context);
+  mlir::PassManager pm(context);
   // pm.addPass(createAddDebugLogPass());
   pm.addPass(createAddExternalLibPass(target, arch));      // 给mlir module添加lib属性
 
@@ -67,9 +251,8 @@ bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target, 
 }
 
 
-
-bool firstLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
-  mlir::PassManager pm(&context);
+bool firstLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context) {
+  mlir::PassManager pm(context);
   pm.addPass(mlir::createCSEPass());
   pm.addPass(mlir::createLowerAffinePass());                     // affine -> scf/vector
   // pm.addPass(mlir::createParallelLoopToGpuPass());               // scf.parallelOp -> gpu...
@@ -82,8 +265,8 @@ bool firstLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context) {
 }
 
 
-bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target target) {
-  mlir::PassManager pm(&context);
+bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target) {
+  mlir::PassManager pm(context);
   // pm.addPass(createROCDLIdOpModifyPass());                      // 自定义 rocdl idop加attr (弃用)
   pm.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
   pm.addPass(mlir::createSCFToControlFlowPass());                    // scf -> cf
@@ -94,10 +277,6 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
   pm.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));        // cf -> llvm
   // pm.addPass(createConvertArithIndexToI64Pass());                      // 自定义 将arith中的constantOp的result为index类型的Op全部转成result为i64的op
 
-  ArithToLLVMConversionPassOptions arithOptions;
-  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  pm.addPass(mlir::createArithToLLVMConversionPass(arithOptions));            // arith -> llvm
-
   pm.addPass(createVectorToLLVMPass(/*indexBitwidth*/INDEX_BIT_WIDTH));                    // 自定义 vector to llvm pass
   // pm.addPass(mlir::createConvertVectorToLLVMPass());                       // vector -> llvm
 
@@ -106,9 +285,9 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
   // memrefOptions.useAlignedAlloc = true;                                    // 这个如果不开启的话，且上为i32，则llir转换失败，解决使用pass - createMallocFuncOpArgTypeI32ToI64Pass
   pm.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));  // memref -> llvm
 
-  pm.addPass(mlir::createCanonicalizerPass());
-  pm.addPass(mlir::createCSEPass());
-  pm.addPass(mlir::createSymbolDCEPass());
+  // pm.addPass(mlir::createCanonicalizerPass());
+  // pm.addPass(mlir::createCSEPass());
+  // pm.addPass(mlir::createSymbolDCEPass());
 
   ConvertFuncToLLVMPassOptions funcOptions;                                 // passes.h.inc文件中有通过tablegen生成的pass base类型 以及createxxx()
   funcOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // func loewring 到 llvm 时，其index转到llvm上是使用i32类型
@@ -117,6 +296,10 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
 
   pm.addPass(createLLVMFuncOpAddGPUAttrPass(target));                       // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
   pm.addPass(createGPUToROCDLOrNVVMPass(target, INDEX_BIT_WIDTH));          // GPU indexOp to rocdl/nvvm indexOp
+
+  ArithToLLVMConversionPassOptions arithOptions;
+  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  pm.addPass(mlir::createArithToLLVMConversionPass(arithOptions));            // arith -> llvm
   // pm.addPass(createEraseRedundantUnCCastPass());                         // 手动写的去除多余UnrealizedCast
   // pm.addPass(mlir::createReconcileUnrealizedCastsPass());                // 内置去除多余cast的pass
   pm.addPass(mlir::createCanonicalizerPass());
@@ -136,8 +319,9 @@ bool secondLowering(mlir::ModuleOp& mod, mlir::MLIRContext& context, Target targ
 }
 
 
-bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims, OUT int& shmBytes) {
+bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod/*, OUT std::vector<int>& griddims, OUT std::vector<int>& blockdims, OUT int& shmBytes*/) {
   // mod.dump();
+  mlir::MLIRContext* context = &(this->context);
   LOG_DEBUG(" === start mlir =====\n",mod) ;
 
   transforms(mod, context, target, arch);
@@ -146,8 +330,8 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
   firstLowering(mod, context);
   LOG_DEBUG(" === after firstLowering =====\n",mod) ;
 
+  /*
   bool findKernel = false;
-  
   auto op = mod.getOperation();
   int shmElements = 0;
   int elementBytes = 0;
@@ -173,9 +357,9 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod, OUT std::vector<int>& gr
       blockdims = tools::getIntArrayAttr(f,AttrBlockDim);
     }
   });
-
+*/
   secondLowering(mod, context, target);
-  LOG_DEBUG(" === after secondLowering =====\n",mod) ;
+  LOG_DEBUG(" === after secondLowering =====\n",mod);
   
   return true;
 }
@@ -187,13 +371,15 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
   if (target == Target::ROCm) {
     const int wavesPerEU = 0;
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target, wavesPerEU));
-
+    // llvm::outs() << " =========== after LLVM IR ============\n";
+    // llvm::outs() << llvmIR << "\n";
     const std::string gfx_triple{"amdgcn-amd-amdhsa"};
-    const std::string gfx_features{""};
+    const std::string gfx_features{"+code-object-v4"};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
-
+    // llvm::outs() << " =========== after LLVM IR ============\n";
+    // llvm::outs() << llvmIR << "\n";
     const int capability = CUDA_CAP;
     const int version = PTXAS_VERSION;
     auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);

@@ -1,63 +1,153 @@
-from Utils import *
-from Operators.matmul import *
-import time
-import itertools
-import json
-from ConfigGenerator import *
-import numpy as np
+import glob
+from kcg.Utils import *
+from kcg.HIPLauncher import *
+from kcg.CUDALauncher import *
+from kcg.Operators import matmul, attention
+import multiprocessing
+import attn_FP32_test as ATT
 
-jsonPath = "/home/xushilong/DeepGen/combs_ALL.json"
+ctx = multiprocessing.get_context('spawn')
+Process = ctx.Process
 
-keywords = [
-"BLOCK_SIZE_M",
-"BLOCK_SIZE_N",
-"BLOCK_SIZE_K",
-"THREAD_SIZE_M",
-"THREAD_SIZE_N",
-"WARP_SIZE",
-"BLOCK_LAYOUT_M",
-"BLOCK_LAYOUT_N",
-"WARP_LAYOUT_M",
-"WARP_LAYOUT_N",
-"DATATYPE_A",
-"DATATYPE_B",
-"DATATYPE_C",
-"M_SIZE",
-"N_SIZE",
-"K_SIZE",
-"IS_ATRANS",
-"GLOB_LOAD_WIDTH_A",
-"GLOB_LOAD_WIDTH_B",
-"WARP_SCATTER_WIDTH_A",
-"WARP_SCATTER_WIDTH_B",
-"THREAD_SCATTER_WIDTH_A",
-"THREAD_SCATTER_WIDTH_B",
-"LOCAL_SPLIT_U",
-"BLOCK_MAPPING",
-"GLOB_STORE_WIDTH",
-"UNROLL_NUM",
-"REG_PREFETCH",
-"SHARED_PREFETCH",
-"LOAD_CONTINUOUS",
-"REDUCE_C_CONTINUOUS",]
+def GetTuneSpaceDict(Op : OpInterface, tuingSpaceJsonPath : str) :
+    if len(tuingSpaceJsonPath) > 0 :
+        with open(tuingSpaceJsonPath) as f :
+            obj = json.load(f)
+            tse = TuningSpaceEncoder(obj['template'])
+            cfgstrs = obj['cfgs']
+            for cfgString in cfgstrs :
+                decodedRes = tse.decode(cfgString)
+                yield decodedRes
+    else:
+        ...
 
-def getVal() :
-    # str 编码：文件大小 4300023
-    # int : 4100023
-    ret = '0'
-    for i in range(len(keywords)) :
-        ret += '1'
-    return int(ret)
 
-obj = {'confs' : []}
-t0 = time.time()
 
-for i in range(1000000) :
-    # obj["confs"].append('0000000000000000000020000121000')  # file 33.38MB ,time: 0.14580845832824707 / 20.436734894380212%,  0.5676541328430176 / 79.56326510561979%, total 0.7134625911712646.
-    obj["confs"].append(int('0000000000000000000020000121000'))  # file 12.4MB  time: 0.4025759696960449 / 38.05594690234771%,  0.6552770137786865 / 61.94405309765229%, total 1.0578529834747314.
+def RunKernelWithKernelConfig(op : OpInterface, cfg : KernelConfigs, devId : int) :
+    op.GetBaselineInputTensor(devId)
+    kernel = op.GetCompiledKernel(cfg,devId)
+    r0,t0 = op.Test_baseline(devId)
+    r,t = op.Test_benchmark(kernel,devId)
+    if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
+        print("Test Correct!")
+    else:
+        print("Test Error!")
+        print(r)
+    # kernel.run(*args)
 
-t1 = time.time()
-with open('/home/xushilong/DeepGen/te.json','w') as f :
-    json.dump(obj,f)
-t2 = time.time()
-print(f'time: {t1-t0} / {(t1-t0)/(t2-t0)*100}%,  {t2-t1} / {(t2-t1)/(t2-t0)*100}%, total {t2-t0}.' )
+        
+def RunKernelBinary(op : OpInterface, binpath : str, kernelFuncName : str, griddims : List[int] , blockdims : List[int], shmBytes : int ,args : List[torch.Tensor]) :
+    dtypes = []
+    for tensor in args :
+        dtypes.append(tensor.dtype)
+    backend = EnumBackendType.CUDA
+    if is_hip():
+        backend = EnumBackendType.HIP
+    kernelConfig = KernelConfigs(binpath,kernelFuncName,dtypes,backend)
+    kernelConfig.m_gridDims = griddims #[256,1,1]
+    kernelConfig.m_blockDims = blockdims #[128,1,1]
+    kernelConfig.shmBytes = shmBytes
+    devId = args[0].get_device()
+    kernel = op.GetCompiledKernel(kernelConfig,devId)
+    kernel.run(*args)
+    
+def CompileKernelWithTuneList(op : OpInterface, deviceId:int, backendtype : EnumBackendType, arch : str, tuningArgs : List[int], baseArgs : List) -> KernelConfigs :
+    op.InitBaseArgs(baseArgs)  # 本质都是给 tuningspace结构体赋值
+    op.SetTuningArgs(tuningArgs) 
+    _, kernlCfg, _ = op.Compile(deviceId, backendtype, arch)
+    return kernlCfg
+
+def compile_with_dict(OpTy : Type[OpInterface], baseargs : List, deviceId:int, backendtype : EnumBackendType, arch : str , configDict : Dict, index : int) :
+    op = OpTy()
+    op.InitBaseArgs(baseargs)
+    op.TuningArgs.assignWithDict(configDict)
+    _, kernlCfg, _ = op.Compile(deviceId, backendtype, arch)
+    pklName = f"{PathManager.pikle_dir()}/{deviceId}/kfg_{index}.pkl"
+    serialize_to_file(pklName, kernlCfg)
+
+def CompileKernelWithSapceJson(OpTy : Type[OpInterface], deviceId:int, backendtype : EnumBackendType, arch : str, tuingSpaceJsonPath : str, baseArgs : List) -> KernelConfigs :
+    index = 0
+    procs : List[Process] = []
+    maxProcsLimit = 50
+    ts = GetTuneSpaceDict(OpTy(), tuingSpaceJsonPath)
+    for configDict in ts :
+        p = Process(target=compile_with_dict,args=(OpTy,baseArgs,deviceId,backendtype,arch,configDict,index))
+        procs.append(p)
+        p.start()
+        index += 1
+        if len(procs) >= maxProcsLimit :
+            for pp in procs :
+                pp.join()
+            procs.clear()
+
+def init_cuda(_devId) :
+    DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
+    print("init_cuda devid=",_devId)
+    DeviceInfo.set_visible_devices([_devId])
+    DeviceInfo.set_current_device(_devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
+    if not torch.cuda.is_available() :
+        torch.cuda.init()
+        torch.cuda.empty_cache()
+        
+def compile_matmul(tuneSpaceJson : str) :
+    batch, m, n, k, dtypeInt = [1, 1024,1024,1024, 4]
+    args = [batch, m, n, k, dtypeInt]
+    CompileKernelWithSapceJson(matmul.MatmulOp, 7, EnumBackendType.CUDA, "80", "/home/xushilong/DeepGen/TuningCombs/ts_1.json", args )
+
+def compile_att(tuneSpaceJson : str) :
+    shape, dtypeInt = [[1, 32, 2048, 128], 4]
+    args = [shape, dtypeInt]
+    CompileKernelWithSapceJson(attention.AttentionOp, 7, EnumBackendType.CUDA, "80", tuneSpaceJson, args )
+
+def benchmark_mm(OpTy : Type[OpInterface], devId : int):
+    init_cuda(devId)
+    batch, m, n, k, dtypeInt = [1, 1024,1024,1024, 4]
+    args = [batch, m, n, k, dtypeInt]
+    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
+    pkls = glob.glob(name_format)
+    op = OpTy()
+    if len(pkls) > 0 :
+        for pkl in pkls :
+            op.InitBaseArgs(args)
+            op.GetBaselineInputTensor(devId)
+            config : KernelConfigs = deserialize_from_file(pkl) 
+            RunKernelWithKernelConfig(op,config, devId)
+
+def benchmark_att(OpTy : Type[OpInterface], devId : int):
+    init_cuda(devId)
+    shape, dtypeInt = [[1, 32, 2048, 128] , 4]
+    args = [shape, dtypeInt]
+    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
+    pkls = glob.glob(name_format)
+    op = OpTy()
+    if len(pkls) > 0 :
+        for pkl in pkls :
+            op.InitBaseArgs(args)
+            op.GetBaselineInputTensor(devId)
+            config : KernelConfigs = deserialize_from_file(pkl) 
+            RunKernelWithKernelConfig(op,config, devId)
+
+def get_tuning_space(outJsonPath : str) :
+    ATT.getTuneSpace([1, 32, 2048, 128],[],outJsonPath)
+    
+if __name__ == '__main__' :
+    
+    # binPath = "/tmp/compile-ptx-src-b27d15.cubin"
+    # kernelName = "GEMM_bMNK1x1024x1024x1024_DTabcfloat32xfloat32xfloat32_AT1_TTmn4x4_BTmnk32x32x8_BLmn1x1_WLmn8x8_GLWab4x4_GSW2_WSWab2x2_TSWab2x1_LSU1_BM16_UNROLL4_REGP0_SHMP0_LC0_RC0_"
+    # gDims = [1024, 1, 1]
+    # bDims = [64, 1, 1]
+    # shmBytes = 2048
+    
+    
+
+    # binPath = "/tmp/compile-ptx-src-6871fa.cubin"
+    # kernelName = "GEMM_testKernel"
+    # gDims = [256,1,1]
+    # bDims = [128,1,1]
+    # shmBytes = 8192*4
+    tsJson = "/home/xushilong/DeepGen/TuningCombs/ts_3.json"
+    # get_tuning_space(tsJson)
+    # compile_att(tsJson)
+    # benchmark_mm(attention.AttentionOp, 7 )
+    benchmark_att(attention.AttentionOp, 7)
+    # test_matmul(7,binPath, kernelName, gDims, bDims, shmBytes)

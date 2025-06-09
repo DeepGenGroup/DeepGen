@@ -28,18 +28,18 @@ struct CompareFunc {
   }
 };
 
-struct BufferCompare {
-  bool operator()(const mlir::Value& buf0, const mlir::Value& buf1) const {
-    return buf0.getAsOpaquePointer() < buf1.getAsOpaquePointer();
+struct ValueCompare {
+  bool operator()(const mlir::Value& val0, const mlir::Value& val1) const {
+    return val0.getAsOpaquePointer() < val1.getAsOpaquePointer();
   }
 };
 
 namespace Analyzer {
   std::vector<int64_t> getParallelNumber(mlir::affine::AffineParallelOp parallelLevel, int64_t& totalNumber);
   int64_t getThreadPerBlock(mlir::affine::AffineParallelOp parallelLevel);
-  std::vector<mlir::func::FuncOp> collectFunctions(mlir::ModuleOp& module, const std::string& targetFuncName = {""});
   std::vector<mlir::affine::AffineForOp> collectFuncLoops(mlir::func::FuncOp funcOp);
-  std::set<std::string> collectFuncNames(mlir::ModuleOp& module);
+  std::map<std::string, std::string> collectNameTypeMap(mlir::ModuleOp& module);
+  std::set<std::string> collectFuncTypes(mlir::ModuleOp& module);
   int getThreadsPerCTA(mlir::ModuleOp module); 
 
   std::vector<mlir::Value> getParallelIdx(mlir::affine::AffineParallelOp parallelLevel);

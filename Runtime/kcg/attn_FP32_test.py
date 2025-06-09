@@ -83,7 +83,7 @@ class CreateConfig:
             for pwlx in self.cfg["WARP_LAYOUT_P_X"]:
               ty = pbly * pwly
               tx = pblx * pwlx
-              if ty == oldResult[0][0] and tx == oldResult[0][1]:
+              if ty == oldResult[0][0] and tx == oldResult[0][1] and pwly * pwlx == 32:
                 for qbsw in self.cfg["BLOCK_SCATTER_WIDTH_Q"]:
                   for kbsw in self.cfg["BLOCK_SCATTER_WIDTH_K"]:
                     for qwsw in self.cfg["WARP_SCATTER_WIDTH_Q"]:
@@ -104,7 +104,7 @@ class CreateConfig:
             for owlx in self.cfg["WARP_LAYOUT_O_X"]:
               ty = obly * owly
               tx = oblx * owlx
-              if ty == oldResult[0][2] and tx == oldResult[0][3]:
+              if ty == oldResult[0][2] and tx == oldResult[0][3] and owly * owlx == 32:
                 for pbsw in self.cfg["BLOCK_SCATTER_WIDTH_P"]:
                   for vbsw in self.cfg["BLOCK_SCATTER_WIDTH_V"]:
                     for pwsw in self.cfg["WARP_SCATTER_WIDTH_P"]:
@@ -173,12 +173,12 @@ def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
 
 def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType : 
   # shape = [1, 32, 2048, 128]
+  # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
   kw = ConfigKeywords
   if len(cfgs) <= 0:
     cfgs = get_cfgs(shape)
   for cfg in cfgs:
-    config = {
-      "attention1": {
+    valDict = {
         "Br": cfg[0], "Bc": cfg[1], "Hd": cfg[2], "Slice1": cfg[3], "Slice2": cfg[4], 
         "PTr": cfg[5], "PTc": cfg[6], "OTr": cfg[7], "OTc": cfg[8],
         # global to shared
@@ -201,12 +201,19 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
         kw.KEY_GRID_DIM_Y : shape[1],
         kw.KEY_GRID_DIM_Z : shape[0]
       }
-    }
+    temp = AttentionTuningArgs(ToEnumIntDType(torch.float32))
+    temp.assignWithDict(valDict)
+    kernelName = temp.generateKernelName()
+    config = {kernelName : valDict}
+    
     ret = CompileNeededInfo()
-    ret.baseArgs = [shape]
+    ret.kernelName = kernelName
+    ret.baseArgs = shape
+    ret.torchDataType = torch.float32
     ret.tsArgs = [shape,config]
     ret.blockDims = [cfg[-1][0], 1, 1]  # tx
     ret.gridDims = [int(shape[2]/cfg[1]), shape[1], shape[0]]
+    # ret.shmBytes = 32768 
     ret.shmBytes = cfg[-1][1] 
     yield ret
     

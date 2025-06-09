@@ -20,7 +20,7 @@ import setuptools
 import torch
 from typing import List,Tuple,Dict
 from datetime import datetime
-
+import traceback
 
 class CacheManager(ABC):
     def __init__(self, key):
@@ -343,6 +343,14 @@ def ToTorchType (t : EnumKernelDType) -> torch.dtype:
     if t == EnumKernelDType.float16.value :
         return torch.float16
 
+def ToEnumIntDType (t : torch.dtype) -> EnumKernelDType:
+    if t is torch.float32 :
+        return EnumKernelDType.float32
+    if t is torch.float64 :
+        return EnumKernelDType.float64
+    if t is torch.float16 :
+        return EnumKernelDType.float16
+
 def sizeof(t : EnumKernelDType) : # bytes
     assert(t is not None)
     return int(t) % 30
@@ -514,7 +522,7 @@ class PathManager :
         # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
     
     @staticmethod
-    def kcg_compiler_attention_path()->str:
+    def kcg_lib_deepgen_path()->str:
         return os.path.join(PathManager.project_dir(),"bin/libdeepgen.so")
         # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
     
@@ -550,10 +558,11 @@ class CompileNeededInfo :
         self.baseArgs : List = []  # 问题定义（ 基础不变量，各个算子自定义.如对于matmul，其为 mnk ）
         self.tsArgs : List = []
         self.torchDataType : torch.dtype = None
-        self.blockDims : List[int] = None # optional. If needed, we can assign ans use
-        self.gridDims : List[int] = None # optional. If needed, we can assign ans use
-        self.shmBytes : int = None # optional. If needed, we can assign ans use
-
+        self.blockDims : List[int] = None # optional. If needed, we can assign and use
+        self.gridDims : List[int] = None # optional. If needed, we can assign and use
+        self.shmBytes : int = None # optional. If needed, we can assign and use
+        self.kernelName : str = None #  optional. If need, we can assign and use
+        
 #  关键字
 class ConfigKeywords :
     # common
@@ -571,10 +580,10 @@ class ConfigKeywords :
     KEY_THREAD_SIZE_M =        "THREAD_SIZE_M"
     KEY_THREAD_SIZE_N =        "THREAD_SIZE_N"
     KEY_WARP_SIZE =            "WARP_SIZE"
-    KEY_BLOCK_LAYOUT_M =       "BLOCK_LAYOUT_M"
-    KEY_BLOCK_LAYOUT_N =       "BLOCK_LAYOUT_N"
-    KEY_WARP_LAYOUT_M =        "WARP_LAYOUT_M"
-    KEY_WARP_LAYOUT_N =        "WARP_LAYOUT_N"
+    KEY_BLOCK_LAYOUT_Y =       "BLOCK_LAYOUT_Y"
+    KEY_BLOCK_LAYOUT_X =       "BLOCK_LAYOUT_X"
+    KEY_WARP_LAYOUT_Y =        "WARP_LAYOUT_Y"
+    KEY_WARP_LAYOUT_X =        "WARP_LAYOUT_X"
     KEY_DTYPE_A =              "DATATYPE_A"
     KEY_DTYPE_B =              "DATATYPE_B"
     KEY_DTYPE_C =              "DATATYPE_C"
@@ -585,10 +594,10 @@ class ConfigKeywords :
     KEY_IS_A_TRANSPOSE =       "IS_ATRANS"
     KEY_GLOB_LOAD_WIDTH_A =     "GLOB_LOAD_WIDTH_A"
     KEY_GLOB_LOAD_WIDTH_B =     "GLOB_LOAD_WIDTH_B"
-    KEY_WARP_SCATTER_WIDTH_A =    "WARP_SCATTER_WIDTH_A"
-    KEY_WARP_SCATTER_WIDTH_B =    "WARP_SCATTER_WIDTH_B"
-    KEY_THREAD_SCATTER_WIDTH_A =    "THREAD_SCATTER_WIDTH_A"
-    KEY_THREAD_SCATTER_WIDTH_B =    "THREAD_SCATTER_WIDTH_B"
+    KEY_BLOCK_SCATTER_WIDTH_M =    "BLOCK_SCATTER_WIDTH_M"
+    KEY_BLOCK_SCATTER_WIDTH_N =    "BLOCK_SCATTER_WIDTH_N"
+    KEY_WARP_SCATTER_WIDTH_M =    "WARP_SCATTER_WIDTH_M"
+    KEY_WARP_SCATTER_WIDTH_N =    "WARP_SCATTER_WIDTH_N"
     KEY_LOCAL_SPLIT_U =     "LOCAL_SPLIT_U"
     KEY_BLOCK_MAPPING =     "BLOCK_MAPPING"
     KEY_GLOB_STORE_WIDTH =    "GLOB_STORE_WIDTH"
@@ -596,7 +605,7 @@ class ConfigKeywords :
     KEY_REG_PREFETCH =          "REG_PREFETCH"
     KEY_SHARED_PREFETCH =       "SHARED_PREFETCH"
     KEY_LOAD_CONTINUOUS =       "LOAD_CONTINUOUS"
-    KEY_REDUCE_C_CONTINUOUS =   "REDUCE_C_CONTINUOUS"
+    KEY_STORE_CONTINUOUS =   "STORE_CONTINUOUS"
     # attention
     KEY_Br = "Br"
     KEY_Bc = "Bc"

@@ -70,13 +70,13 @@ class CreateMatmulConfig:
         ty_num = int(bt[0] / tt[0])   # block y 方向的 thread 数量
         tx_num = int(bt[1] / tt[1])
         if max_thread_num >= ty_num * tx_num:   # max thread count
-          for wlm in self.cfg_dict[ConfigKeywords.KEY_WARP_LAYOUT_M]:
-            for wln in self.cfg_dict[ConfigKeywords.KEY_WARP_LAYOUT_N]:
+          for wlm in self.cfg_dict[ConfigKeywords.KEY_WARP_LAYOUT_Y]:
+            for wln in self.cfg_dict[ConfigKeywords.KEY_WARP_LAYOUT_X]:
               if (wlm * wln == self.cfg_dict[ConfigKeywords.KEY_WARP_SIZE][0]):  # warp_x * warp_y == 64
                 blm = int(ty_num / wlm)
                 bln = int(tx_num / wln)
                 if ty_num % wlm == 0 and tx_num % wln == 0 and blm >= 1 and bln >= 1:   # block_y % warp_y == 0 && block 至少有一个warp
-                  if blm in self.cfg_dict[ConfigKeywords.KEY_BLOCK_LAYOUT_M] and bln in self.cfg_dict[ConfigKeywords.KEY_BLOCK_LAYOUT_N]:  # 符合json中的设置
+                  if blm in self.cfg_dict[ConfigKeywords.KEY_BLOCK_LAYOUT_Y] and bln in self.cfg_dict[ConfigKeywords.KEY_BLOCK_LAYOUT_X]:  # 符合json中的设置
                     tileAndlayouts.append((bt, tt, (blm, bln), (wlm, wln)))
     return tileAndlayouts
 
@@ -103,11 +103,11 @@ class CreateMatmulConfig:
     # 离散化的宽度，受到 thread tile 的限制
     new_tals = []
     for tal in tileAndlayouts:
-      for wswa in self.cfg_dict[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_A]:
-        for tswa in self.cfg_dict[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_A]:
+      for wswa in self.cfg_dict[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_M]:
+        for tswa in self.cfg_dict[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_M]:
           if wswa >= tswa and wswa <= tal[1][0]:   # thread size >= warp 离散化的w >= thread 离散化的w
-            for wswb in self.cfg_dict[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_B]:
-              for tswb in self.cfg_dict[ConfigKeywords.KEY_THREAD_SCATTER_WIDTH_B]:
+            for wswb in self.cfg_dict[ConfigKeywords.KEY_BLOCK_SCATTER_WIDTH_N]:
+              for tswb in self.cfg_dict[ConfigKeywords.KEY_WARP_SCATTER_WIDTH_N]:
                 if wswb >= tswb and wswb <= tal[1][1]:
                   wsw = (wswa, wswb)
                   tsw = (tswa, tswb)
@@ -165,7 +165,7 @@ class CreateMatmulConfig:
         for sw in self.cfg_dict[ConfigKeywords.KEY_GLOB_STORE_WIDTH]:
           # 存储 smC 到 glob 设置的宽度 store_width，每个线程存储的 width % store_width == 0 && store_width <= width
           if sw <= asw and asw % sw == 0:
-            for rcc in self.cfg_dict[ConfigKeywords.KEY_REDUCE_C_CONTINUOUS]:
+            for rcc in self.cfg_dict[ConfigKeywords.KEY_STORE_CONTINUOUS]:
               line = (tal[0], tal[1], tal[2], tal[3], tal[4], tal[5], tal[6], tal[7], (tal[-1], sw, rcc))
               temp_tals.append(line)
       else:

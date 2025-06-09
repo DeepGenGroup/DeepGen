@@ -92,6 +92,7 @@ std::string translateLLVMIRToPTX(llvm::Module &module, int cc, int version) {
   tr.setOS(llvm::Triple::OSType::CUDA);
   tr.setEnvironment(llvm::Triple::EnvironmentType::GNU);
   module.setTargetTriple(tr);
+  
   std::string error;
   auto target = llvm::TargetRegistry::lookupTarget(module.getTargetTriple(), error);
   llvm::TargetOptions opt;
@@ -144,6 +145,7 @@ std::string translate_llvmir_to_ptx(const std::string llvmIR, int capability, in
   std::ofstream ofs(ptxSrc);
   ofs << ptxCode << std::endl;
   ofs.close();
+  // std::cout << "==== ptx code: \n" << ptxCode << "\n";
   return ptxSrc;
 }
 
@@ -167,7 +169,7 @@ std::string compile_ptx_to_cubin(const std::string &ptxPath, const std::string &
     std::ifstream _log(_flog);
     std::string log(std::istreambuf_iterator<char>(_log), {});
     if (err == 255) {
-      throw std::runtime_error("Internal PTX codegen error: \n" + log);
+      throw std::runtime_error("Internal DeepGen PTX codegen error: \n" + log);
     } else if (err == 128 + SIGSEGV) {
       throw std::runtime_error("Please run `ptxas " + ptxPath + "` to confirm that this is a bug in `ptxas`\n" + log);
     } else {

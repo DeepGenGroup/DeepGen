@@ -4,7 +4,8 @@ cmake_minimum_required(VERSION 3.15.0)
 project(KernelCodeGen LANGUAGES CXX C)    # delete CUDA
 set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
 set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
-
+set(CMAKE_CXX_COMPILER /usr/bin/g++)
+set(CMAKE_C_COMPILER /usr/bin/gcc)
 ############################ User config #####################
 set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
@@ -19,7 +20,11 @@ option(USE_STABLEHLO_EMBEDDED "Use embedded stableHLO(ON) or external stableHLO(
 
 #############################################################
 find_package(Python COMPONENTS Interpreter Development)
-
+# set(pybind11_DIR ${PYBIND11_INSTALL_DIR}/share/cmake/pybind11)
+# find_package(pybind11 REQUIRED)
+if(pybind11_FOUND)
+  message("==== Found pybind11 : ${pybind11_INCLUDE_DIRS}")
+endif()
 if(Python_FOUND)
     message(STATUS "=== Found Python: ${Python_EXECUTABLE}")
     message(STATUS "=== Python Include: ${Python_INCLUDE_DIRS}")
@@ -88,6 +93,11 @@ else()
   set(MLIR_GENERATED_INCLUDE_DIR ${LLVM_BINARY_DIR}/tools/mlir/include)
   set(MLIR_INCLUDE_DIRS "${MLIR_INCLUDE_DIR};${MLIR_GENERATED_INCLUDE_DIR}")
 endif()
+
+if(DEBUG_MODE)
+  add_definitions(-DKCG_DEBUG)
+endif()
+
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(KernelCodeGen_SOURCE_DIR ${PROJECT_SOURCE_DIR})
 set(KernelCodeGen_BINARY_DIR ${PROJECT_BINARY_DIR})

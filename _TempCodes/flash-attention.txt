@@ -1,0 +1,30 @@
+有关于flash-attention空间构建的限制条件（剪枝）
+  shape: {batch_size, head_num, seq_len, head_dim} (head_dim * head_num == hidden_dim)
+
+  std::map<std::string, std::map<std::string, int64_t>> tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 4}}}, 
+    {"softmax1", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 64}, {"THREAD_SIZE_X", 4}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", 64}, {"THREAD_SIZE_Y", 4}, {"BLOCK_SIZE_X", 128}, {"THREAD_SIZE_X", 8}}},
+  };
+  
+  std::map<std::string, std::map<std::string, int64_t>> tuneConfig = {
+    {"attention1", 
+      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+       {"PTr", 4}, {"PTc", 4}, {"OTr", 4}, {"OTc", 8}, 
+       // global to shared
+       {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
+       {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
+       // prefecth
+       {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
+       // P = Q * K
+       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 2}, {"WARP_LAYOUT_P_X", 16},
+       {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
+       // O = P * V
+       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
+       {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
+       {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
+  };
+
+  1. matmul2的BLOCK_SIZE_X == Hd: V矩阵的x方向不需要切
+  2. BLOCK_LAYOUT_P_X == 1: 使用warp的shlf特性
+  3. (Br / PTr) * (Bc / PTc) == (Br / OTr) * (Hd / OTc): 两个矩阵所需线程数量需要相等

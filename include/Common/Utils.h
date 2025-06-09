@@ -126,7 +126,7 @@ enum class KcgKernelType : int {
   // other operators ...
 };
 
-using Config = std::map<std::string, int>;
+using Config = std::map<std::string, int64_t>;
 
 struct KernelInfo {
   std::string m_binaryPath;
@@ -175,6 +175,13 @@ struct NVVMMetadata {
 #define BLOCKIDX          "blockIdx"
 #define THREADIDX         "threadIdx"
 /*-------------------------------------------*/
+#define FORDESC         "for.desc"
+#define FORINCFUNC      "for.inc.func"
+#define BATCHNUM        "batch.num"
+#define PARALLELDIMS    "parallel.dim"
+#define ITERVARDESC     "iter.var.desc"
+#define ARGTRAN         "arg.tran"
+#define APPLYDESC       "apply.desc"
 
 #define SHM_VAR_NAME(i) (std::string("kcg_shm")+std::to_string(i))
 
@@ -188,10 +195,10 @@ struct NVVMMetadata {
 #define  KEY_THREAD_SIZE_M        "THREAD_SIZE_M"
 #define  KEY_THREAD_SIZE_N        "THREAD_SIZE_N"
 #define  KEY_WARP_SIZE            "WARP_SIZE"
-#define  KEY_BLOCK_LAYOUT_M       "BLOCK_LAYOUT_M"
-#define  KEY_BLOCK_LAYOUT_N       "BLOCK_LAYOUT_N"
-#define  KEY_WARP_LAYOUT_M        "WARP_LAYOUT_M"
-#define  KEY_WARP_LAYOUT_N        "WARP_LAYOUT_N"
+#define  KEY_BLOCK_LAYOUT_Y       "BLOCK_LAYOUT_Y"
+#define  KEY_BLOCK_LAYOUT_X       "BLOCK_LAYOUT_X"
+#define  KEY_WARP_LAYOUT_Y        "WARP_LAYOUT_Y"
+#define  KEY_WARP_LAYOUT_X        "WARP_LAYOUT_X"
 #define  KEY_DTYPE_A              "DATATYPE_A"
 #define  KEY_DTYPE_B              "DATATYPE_B"
 #define  KEY_DTYPE_C              "DATATYPE_C"
@@ -202,33 +209,33 @@ struct NVVMMetadata {
 #define  KEY_IS_A_TRANSPOSE       "IS_ATRANS"
 #define  KEY_GLOB_LOAD_WIDTH_A     "GLOB_LOAD_WIDTH_A"
 #define  KEY_GLOB_LOAD_WIDTH_B     "GLOB_LOAD_WIDTH_B"
-#define  KEY_WARP_SCATTER_WIDTH_A    "WARP_SCATTER_WIDTH_A"
-#define  KEY_WARP_SCATTER_WIDTH_B    "WARP_SCATTER_WIDTH_B"
-#define  KEY_THREAD_SCATTER_WIDTH_A    "THREAD_SCATTER_WIDTH_A"
-#define  KEY_THREAD_SCATTER_WIDTH_B    "THREAD_SCATTER_WIDTH_B"
-#define  KEY_LOCAL_SPLIT_U     "LOCAL_SPLIT_U"
-#define  KEY_BLOCK_MAPPING     "BLOCK_MAPPING"
-#define  KEY_GLOB_STORE_WIDTH    "GLOB_STORE_WIDTH"
-// added
-#define KEY_UNROLL_NUM            "UNROLL_NUM"
-#define KEY_REG_PREFETCH          "REG_PREFETCH"
-#define KEY_SHARED_PREFETCH       "SHARED_PREFETCH"
-#define KEY_LOAD_CONTINUOUS       "LOAD_CONTINUOUS"
-#define KEY_REDUCE_C_CONTINUOUS   "REDUCE_C_CONTINUOUS"
+#define  KEY_BLOCK_SCATTER_WIDTH_M    "BLOCK_SCATTER_WIDTH_M"
+#define  KEY_BLOCK_SCATTER_WIDTH_N    "BLOCK_SCATTER_WIDTH_N"
+#define  KEY_WARP_SCATTER_WIDTH_M    "WARP_SCATTER_WIDTH_M"
+#define  KEY_WARP_SCATTER_WIDTH_N    "WARP_SCATTER_WIDTH_N"
+#define  KEY_LOCAL_SPLIT_U            "LOCAL_SPLIT_U"
+#define  KEY_BLOCK_MAPPING            "BLOCK_MAPPING"
+#define  KEY_GLOB_STORE_WIDTH           "GLOB_STORE_WIDTH"
+#define  KEY_UNROLL_NUM                   "UNROLL_NUM"
+#define  KEY_REG_PREFETCH                 "REG_PREFETCH"
+#define  KEY_SHARED_PREFETCH              "SHARED_PREFETCH"
+#define  KEY_LOAD_CONTINUOUS              "LOAD_CONTINUOUS"
+#define  KEY_STORE_CONTINUOUS          "STORE_CONTINUOUS"
+
 
 /****************** other macro ******************** */
 
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
-
 #ifdef KCG_DEBUG
 #define LOG_DEBUG(message,mod)  \
 {\
   llvm::outs() << message;llvm::outs().flush(); mod.dump();\
 }
 #else
-#define LOG_DEBUG(message,mod)  0
+#define LOG_DEBUG(message,mod)  ;
 #endif
+
 /*******************  common tool functions ****************/
 
 namespace tools {
@@ -252,18 +259,11 @@ namespace tools {
 namespace mapUtils {
   
   // map utils functions
-  mlir::AffineExpr waprId(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr wapr_x(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr wapr_y(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr laneId(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr lane_x(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr lane_y(mlir::AffineExpr tid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid_y(mlir::AffineExpr bid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid_x(mlir::AffineExpr bid, const std::map<std::string, int>& config);
-  mlir::AffineExpr bid(mlir::AffineExpr bx,mlir::AffineExpr by, const std::map<std::string, int>& config);
-  mlir::AffineExpr tid(mlir::AffineExpr tx,mlir::AffineExpr ty, const std::map<std::string, int>& config);
-
-  llvm::SmallVector<mlir::AffineExpr> reshapeBlock(mlir::AffineExpr tid, const std::vector<int> shape);
+  mlir::AffineExpr wapr_x(mlir::AffineExpr tid, int warpSize, int blockLayoutX);
+  mlir::AffineExpr wapr_y(mlir::AffineExpr tid, int warpSize, int blockLayoutX);
+  mlir::AffineExpr lane_x(mlir::AffineExpr tid, int warpSize, int warpLayoutX);
+  mlir::AffineExpr lane_y(mlir::AffineExpr tid, int warpSize, int warpLayoutX);
+  llvm::SmallVector<mlir::AffineExpr> reshapeThreadBlock(mlir::AffineExpr tid, const std::vector<int64_t> shape);
 
 }
 

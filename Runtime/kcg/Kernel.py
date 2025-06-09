@@ -292,7 +292,7 @@ class CompiledKernel:
 class OpBaseArgs(ABC) :
     def __init__(self):
         self.operatorKind = EnumOperator.Invalid
-        self.intValues = []  # arglist 中的参数为int类型 （int,torch.dtype）
+        self.intValues = []  # [问题规模+数据类型] , arglist 中的参数为int类型 （int,torch.dtype）
         self.argDict = {  # 参数字典。
             "kind" : self.operatorKind,
             "dtype" : 0
@@ -311,9 +311,7 @@ class OpBaseArgs(ABC) :
     @abstractmethod
     # 从json反序列化
     def parseFromJsonfile(self,path : str): ...
-    @abstractmethod
-    # 从TuningSpace的'template'字段反序列化
-    def parseFromTemplateDict(self,templateDict : Dict): ...
+
     @abstractmethod
     # 序列化
     def dumpToJson(self,path : str): ...
@@ -343,16 +341,24 @@ class TuningArgsInterface(ABC) :
     @abstractmethod
     def check(self) :  ...
     @abstractmethod
+    def generateKernelName(self) -> str : ...
+    @abstractmethod
     def __str__(self): ...
 
 # 算子接口
 class OpInterface(ABC) :
     def __init__(self):
         super().__init__()
-        self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，如dtypes，问题形状等（如M,N,K,batch）。为问题的基本属性
+        self.KernelName : str = None
+        self.BaseArgs : OpBaseArgs = None   # 基本参数，不能改变，定义了问题形状等（如M,N,K,batch）。为问题的基本属性
         self.InputTensors_Baseline : List[torch.Tensor] = None
         self.InputTensors_Benchmark : List[torch.Tensor] = None
         self.OutputTensor_Baseline : torch.Tensor = None
+
+    def GetKernelName(self) -> str : 
+        if self.KernelName is None:
+            self.KernelName = self.TuningArgs.generateKernelName()
+        return self.KernelName
     
     @abstractmethod
     ### [basearg, kernelRunINfo, packedKernel]

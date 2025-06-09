@@ -27,18 +27,31 @@ def delete_files_in_directory(directory):
 
 
 rr = 'a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,0,1,2,3,4,5,6,7,8,9'.split(',')
-count = 0
-for e1 in rr:
-    for e2 in rr:
-        count += 1
-        # cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.ptx"
-        # print(cmd)
-        # cmd = f"rm -rf /tmp/compile-ptx-src-{e}*.cubin"
+cc = 0
+for e0 in rr:
+    for e1 in rr:
+        cmd = f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.ptx &\n" + f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.cubin &\n"
+        if cc >= 40 :
+            cc = 0
+            cmd += "wait\n\n"
+        else:
+            cc += 1
+        print(cmd)
+print("wait")
 
-        cmd1 = f"rm -rf /tmp/compile-ptx-log-{e1}{e2}* &"
-        cmd2 = f"rm -rf /tmp/compile-ptx-src-{e1}{e2}* &"
-        cmd3 = f"rm -rf /tmp/kcg_kernel-{e1}{e2}* &"
-        # print(cmd1)
-        # print(cmd2)
-        print(cmd3)
-    print("wait")
+
+
+# for i in range(500):
+#     try:
+#         # dirs = glob.glob('/tmp/kcg_kernel-*')
+#         dirs = glob.glob('/tmp/compile-ptx-src-*')
+#         random.shuffle(dirs)
+#         for dir in dirs:
+#             delete_files_in_directory(dir)
+#             os.rmdir(dir)
+#         dirs.reverse()
+#         for dir in dirs:
+#             delete_files_in_directory(dir)
+#             os.rmdir(dir)
+#     except Exception:
+#         pass

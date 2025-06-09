@@ -1,0 +1,48 @@
+.version 8.0
+.target sm_80
+.address_size 64
+
+	// .globl	reduce
+
+.visible .entry reduce(
+	.param .u64 .ptr .global .align 1 reduce_param_0,
+	.param .u64 .ptr .global .align 1 reduce_param_1
+)
+{
+	.reg .b32 	%r<15>;
+	.reg .f32 	%f<10>;
+	.reg .b64 	%rd<6>;
+
+	ld.param.u64 	%rd1, [reduce_param_0];
+	ld.param.u64 	%rd2, [reduce_param_1];
+	mov.u32 	%r1, %ctaid.x;
+	mov.u32 	%r2, %tid.x;
+	shr.s32 	%r3, %r2, 31;
+	xor.b32  	%r4, %r3, %r2;
+	shr.s32 	%r5, %r4, 31;
+	shr.u32 	%r6, %r5, 28;
+	add.s32 	%r7, %r4, %r6;
+	shr.u32 	%r8, %r7, 4;
+	xor.b32  	%r9, %r8, %r3;
+	and.b32  	%r10, %r2, 15;
+	shl.b32 	%r11, %r9, 8;
+	shl.b32 	%r12, %r1, 4;
+	add.s32 	%r13, %r11, %r12;
+	or.b32  	%r14, %r13, %r10;
+	mul.wide.s32 	%rd3, %r14, 4;
+	add.s64 	%rd4, %rd1, %rd3;
+	ld.global.f32 	%f1, [%rd4];
+	shfl.sync.down.b32	%f2, %f1, 1, 4127, 65535;
+	add.f32 	%f3, %f1, %f2;
+	shfl.sync.down.b32	%f4, %f3, 2, 4127, 65535;
+	add.f32 	%f5, %f3, %f4;
+	shfl.sync.down.b32	%f6, %f5, 4, 4127, 65535;
+	add.f32 	%f7, %f5, %f6;
+	shfl.sync.down.b32	%f8, %f7, 8, 4127, 65535;
+	add.f32 	%f9, %f7, %f8;
+	add.s64 	%rd5, %rd2, %rd3;
+	st.global.f32 	[%rd5], %f9;
+	ret;
+
+}
+

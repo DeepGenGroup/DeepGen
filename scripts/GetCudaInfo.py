@@ -32,7 +32,7 @@ def ptx_get_version() -> int:
         return 70 + minor
     if major == 10:
         return 63 + minor
-    raise RuntimeError("Triton only support CUDA 10.0 or higher")
+    raise RuntimeError("Deepgen only support CUDA 10.0 or higher")
 
 print("cuda capability = ",get_cuda_capability(None))
 print("ptxas version = ", ptx_get_version()) 

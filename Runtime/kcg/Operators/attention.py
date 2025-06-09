@@ -4,7 +4,7 @@ from kcg.CompiledKernel import *
 from kcg.Kernel import *
 from kcg.Utils import *
 import torch.nn.functional as F
-
+from typing import Mapping
 
 
 @kcg_kernel
@@ -45,10 +45,6 @@ class AttentionBaseArgs(OpBaseArgs) :
         # get shape of attention
         return self.intValues[0]
     
-    def parseFromTemplateDict(self,templateDict : Dict):
-        shape : List[int] = templateDict['shape']
-        dtype : int = templateDict[ConfigKeywords.KEY_DTYPE_A][0]
-        self.intValues = [shape,dtype]
         
     def parseFromJsonfile(self,path : str):
         import json
@@ -56,7 +52,7 @@ class AttentionBaseArgs(OpBaseArgs) :
         with open(path) as f :
             obj = json.load(f)
         self.intValues = [obj['shape'] , obj['dtype']]
-        print(f"[ attention ] shape,dtype = {self.intValues}")
+        # print(f"[ attention ] shape,dtype = {self.intValues}")
         # self.operatorKind = obj['kind']
         
     def dumpToJson(self,path : str):
@@ -248,6 +244,45 @@ class AttentionTuningArgs(TuningArgsInterface) :
     #     config = tse.decode(cfgstr)
     #     self.assignWithDict(config)
     
+    def generateKernelName(self) -> str : 
+        ret = "kcg_Attention_"
+        ret += f"Br{ self.Br }"
+        ret += f"Bc{ self.Bc }"
+        ret += f"Hd{ self.Hd }"
+        ret += f"Slice1_{ self.Slice1 }"
+        ret += f"Slice2_{ self.Slice2 }"
+        ret += f"PTr{ self.PTr }"
+        ret += f"PTc{ self.PTc }"
+        ret += f"OTr{ self.OTr }"
+        ret += f"OTc{ self.OTc }"
+        ret += f"GLWQ{ self.GLOB_LOAD_WIDTH_Q }"
+        ret += f"GLWK{ self.GLOB_LOAD_WIDTH_K }"
+        ret += f"GLWV{ self.GLOB_LOAD_WIDTH_V }"
+        ret += f"BLPY{ self.BLOCK_LAYOUT_P_Y }"
+        ret += f"BLPX{ self.BLOCK_LAYOUT_P_X }"
+        ret += f"WLPY{ self.WARP_LAYOUT_P_Y }"
+        ret += f"WLPX{ self.WARP_LAYOUT_P_X }"
+        ret += f"BSWQ{ self.BLOCK_SCATTER_WIDTH_Q }"
+        ret += f"BSWK{ self.BLOCK_SCATTER_WIDTH_K }"
+        ret += f"WSWQ{ self.WARP_SCATTER_WIDTH_Q }"
+        ret += f"WSWK{ self.WARP_SCATTER_WIDTH_K }"
+        ret += f"BLOY{ self.BLOCK_LAYOUT_O_Y }"
+        ret += f"BLOX{ self.BLOCK_LAYOUT_O_X }"
+        ret += f"WLOY{ self.WARP_LAYOUT_O_Y }"
+        ret += f"WLOX{ self.WARP_LAYOUT_O_X }"
+        ret += f"BSWP{ self.BLOCK_SCATTER_WIDTH_P }"
+        ret += f"BSWV{ self.BLOCK_SCATTER_WIDTH_V }"
+        ret += f"WSWP{ self.WARP_SCATTER_WIDTH_P }"
+        ret += f"WSWV{ self.WARP_SCATTER_WIDTH_V }"
+        ret += f"Un{ self.UNROLL_NUM }"
+        ret += f"W{ self.WARP_SIZE }"
+        ret += f"LCP{ self.LOAD_CONTINUOUS_P }"
+        ret += f"LCO{ self.LOAD_CONTINUOUS_O }"
+        ret += f"SPP{ self.SHARED_PREFETCH_P }"
+        ret += f"RPP{ self.REG_PREFETCH_P }"
+        ret += f"RPO{ self.REG_PREFETCH_O }"
+        return ret
+    
     def assignWithJson(self, jsonObj) : 
         kw = ConfigKeywords    
         self.Br = jsonObj[kw.KEY_Br]
@@ -313,9 +348,12 @@ class AttentionOp(OpInterface) :
         if self.InputTensors_Baseline is None :
             # [shape : List[int] , dtypeInt]
             [shapeList, dtypeInt] = self.BaseArgs.intValues 
-            assert len(shapeList)==4
+
+            assert len(shapeList)==4, f"shapeList= {shapeList}"
             [ b0, b1, m, n] = shapeList
+            # print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
+            # print("ety =", ety)
             a = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
             b = torch.rand((b0, b1, n,m),dtype=ety, device=f"cuda:{devId}" )
             c = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )
@@ -325,7 +363,8 @@ class AttentionOp(OpInterface) :
     def GetBenchmarkInputTensor(self,devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Benchmark is None :
             [q,k,v] = self.GetBaselineInputTensor(devId)
-            [shapeList, dtypeInt] = self.BaseArgs.intValues 
+            shapeList = self.BaseArgs.intValues[0] 
+            dtypeInt = self.BaseArgs.intValues[1] 
             assert len(shapeList)==4
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
@@ -337,13 +376,16 @@ class AttentionOp(OpInterface) :
     
     def InitLibInterface(self) :
         if self.CompileKernel is None or self.SetPlatform is None :
-            spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
+            print(f"libdeepgen = {PathManager.kcg_lib_deepgen_path()}",flush=True)
+            spec = importlib.util.spec_from_file_location("deepgen", PathManager.kcg_lib_deepgen_path())
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
             self.CompileKernel = mod.compile_attn
+            self.SetKernelName = mod.set_kernel_name
+            self.SetPlatform = mod.set_platform
 
     
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[TuningArgsInterface,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[List,KernelConfigs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -357,37 +399,45 @@ class AttentionOp(OpInterface) :
             assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
         
         self.InitLibInterface()
-        # self.SetPlatform(_backend,arch)
+        self.SetPlatform(_backend,arch)
+        print(f"set arch : {arch}")
         # Print("===== call compileKernel(kpm)[0] ========")
-        ta = self.TuningArgs
+        dataTypeInt = ToEnumIntDType(info.torchDataType)
+        self.InitBaseArgs([info.baseArgs, dataTypeInt])
+
         shape, config = info.tsArgs
+        assert info.kernelName is not None
+        kernelName = info.kernelName
+        self.SetKernelName( kernelName )
         res = self.CompileKernel(shape , config)
         # blockSize = [cfg[-1][0]]  # tx
         # sharedSize = cfg[-1][1]  # shared memroy size
 
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
         hsacoPath = res
-        blockDimX ,blockDimY ,blockDimZ = info.blockDims
-        gridDimX,gridDimY,gridDimZ = info.gridDims
-        kernelName = 'attention1'
+        blockDimX, blockDimY ,blockDimZ = info.blockDims
+        gridDimX, gridDimY, gridDimZ = info.gridDims
+        # kernelName = 'attention1'
         shmBytes = info.shmBytes
-        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         Print("========= hsacoPath = ",hsacoPath)
         Print("========= kernelName = ",kernelName)
-        print(f"==== backend is {backendtype}")
-        print(f"==== shmBytes is {shmBytes}")
+        # print(f"==== backend is {backendtype}")
+        # print(f"==== shmBytes is {shmBytes}")
         dt = self.BaseArgs.getTorchDType()
         inConfig = KernelConfigs(hsacoPath,kernelName, [dt,dt,dt,dt], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Attention
         inConfig.shmBytes = shmBytes
+        # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
         packedKernel = self.GetCompiledKernel(inConfig,deviceId)
-        return (ta,inConfig,packedKernel)  # 
+        return ([info.baseArgs, dataTypeInt], inConfig, packedKernel)  # 
   
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)
+        print(f"GetCompiledKernel attop : funame = {info.kernelFuncName}")
         return CompiledKernel(
             info.backend,
             info.binaryPath,
@@ -402,13 +452,11 @@ class AttentionOp(OpInterface) :
     def GetSignature(self, dtypes : List[torch.dtype]) -> dict :
             # signature只和输入的dtype有关，尺寸无关
         dtypeA = dtypes[0]
-        dtypeB = dtypes[1]
-        dtypeC = dtypes[2]
-        dtypeD = dtypes[3]
-        a = torch.randn((1,3,2,2), device='cpu', dtype=dtypeA)
-        b = torch.randn((1,3,2,2), device='cpu', dtype=dtypeB)
-        c = torch.randn((1,3,2,2), device='cpu', dtype=dtypeC)
-        d = torch.empty((1,3,2,2), device='cpu', dtype=dtypeD)
+
+        a = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        b = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        c = torch.randn((1,3,100,100), device='cpu', dtype=dtypeA)
+        d = torch.empty((1,3,100,100), device='cpu', dtype=dtypeA)
         # get function signature
         outSignature = _attention(a, b, c, d)
         return outSignature
@@ -416,7 +464,8 @@ class AttentionOp(OpInterface) :
     def SetTuningArgs(self, tuningArgs : List) :
         self.TuningArgs.assignWithList(*tuningArgs)
 
-    def InitBaseArgs(self, args : List[int]) :
+    def InitBaseArgs(self, args : List) :
+        # print("InitBaseArgs=", args)
         shape, dtypeInt = args
         self.BaseArgs.intValues = [shape, dtypeInt]
         ety = EnumKernelDType(dtypeInt)
@@ -428,31 +477,41 @@ class AttentionOp(OpInterface) :
         for i in range(0,warmupCount) : 
             # F.scaled_dot_product_attention(q, k, v)
             packedKernel.run(qq,kk,vv,out)
-
+            # print("out=",out)
+        return
+    
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
         [q,k,v] = self.GetBaselineInputTensor(devId)
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
         ev_start.record()
         a,b,m,n = self.BaseArgs.getIntDatalist()
-        # self.OutputTensor_Baseline = torch.matmul(torch.softmax(torch.matmul(q,k)),v)  
-        self.OutputTensor_Baseline = torch.empty(a,b,m,n,dtype=self.BaseArgs.getTorchDType())
+        self.OutputTensor_Baseline = torch.matmul(torch.softmax(torch.matmul(q,k),-1),v)  
+        # self.OutputTensor_Baseline = torch.empty(a,b,m,n,dtype=self.BaseArgs.getTorchDType(), device=f"cuda:{devId}")
         # self.OutputTensor_Baseline = F.scaled_dot_product_attention(q,k,v)
         ev_end.record()
         torch.cuda.synchronize()
         eps = ev_start.elapsed_time(ev_end)
         return (self.OutputTensor_Baseline, eps)
     
-    def Test_benchmark(self, packedKernel : CompiledKernel, devId : int) -> Tuple[torch.Tensor,float] : 
+    def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         a,b,c,d = self.GetBenchmarkInputTensor(devId)
-        assert self.InputTensors_Benchmark  is not None, "error benchmark"
+        # print("a.shape = ",a.shape)
+        # print("b.shape = ",b.shape)
+        # print("c.shape = ",c.shape)
+        # print("d.shape = ",d.shape)
+        # a = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
+        # b = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
+        # c = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
+        # d = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
+        # assert self.InputTensors_Benchmark  is not None, "error benchmark"
         st = torch.cuda.Event(enable_timing=True)
         et = torch.cuda.Event(enable_timing=True)
         st.record()
         packedKernel.run(a,b,c,d)
         et.record()
         torch.cuda.synchronize()
-        print(d)
+        # print(d)
         elapsed_time = st.elapsed_time(et)
         return (d,elapsed_time)
     

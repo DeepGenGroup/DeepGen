@@ -73,14 +73,14 @@ class CreateMatmulConfig:
           ty_num = int(bt[0] / tt[0])   # block y 方向的 thread 数量  block_size_m / thread_size_m
           tx_num = int(bt[1] / tt[1])
           if max_thread_num >= ty_num * tx_num * spu:  # 线程个数和splitU相关，layout不随着splitU的增大而翻倍
-            for wlm in self.cfg_dict[kw.KEY_WARP_LAYOUT_M]:
-              for wln in self.cfg_dict[kw.KEY_WARP_LAYOUT_N]:
+            for wlm in self.cfg_dict[kw.KEY_WARP_LAYOUT_Y]:
+              for wln in self.cfg_dict[kw.KEY_WARP_LAYOUT_X]:
                 if (wlm * wln == self.cfg_dict[kw.KEY_WARP_SIZE][0]):  # warp_x * warp_y == 64
                   blm = int(ty_num / wlm)
                   bln = int(tx_num / wln)
                   # block_y % warp_y == 0 && block 至少有一个warp
                   if ty_num % wlm == 0 and tx_num % wln == 0 and blm >= 1 and bln >= 1:
-                    if blm in self.cfg_dict[kw.KEY_BLOCK_LAYOUT_M] and bln in self.cfg_dict[kw.KEY_BLOCK_LAYOUT_N]:  # 符合json中的设置
+                    if blm in self.cfg_dict[kw.KEY_BLOCK_LAYOUT_Y] and bln in self.cfg_dict[kw.KEY_BLOCK_LAYOUT_X]:  # 符合json中的设置
                       tileAndlayouts.append((bt, tt, (blm, bln), (wlm, wln), spu))
     # (block_size_m/n, thread_size_m/n, block_layout_m/n, warp_layout_m/n, splitU)
     return tileAndlayouts
@@ -112,12 +112,12 @@ class CreateMatmulConfig:
     # 离散化的宽度，受到 thread tile 的限制
     new_tals = []
     for tal in tileAndlayouts:
-      for wswa in self.cfg_dict[kw.KEY_WARP_SCATTER_WIDTH_A]:
-        for tswa in self.cfg_dict[kw.KEY_THREAD_SCATTER_WIDTH_A]:
+      for wswa in self.cfg_dict[kw.KEY_BLOCK_SCATTER_WIDTH_M]:
+        for tswa in self.cfg_dict[kw.KEY_WARP_SCATTER_WIDTH_M]:
           # WARP_SCATTER_WIDTH_A >= THREAD_SCATTER_WIDTH_A  &  WARP_SCATTER_WIDTH_A <= thread_size_m
           if wswa >= tswa and wswa <= tal[1][0]:
-            for wswb in self.cfg_dict[kw.KEY_WARP_SCATTER_WIDTH_B]:
-              for tswb in self.cfg_dict[kw.KEY_THREAD_SCATTER_WIDTH_B]:
+            for wswb in self.cfg_dict[kw.KEY_BLOCK_SCATTER_WIDTH_N]:
+              for tswb in self.cfg_dict[kw.KEY_WARP_SCATTER_WIDTH_N]:
                 if wswb >= tswb and wswb <= tal[1][1]:
                   wsw = (wswa, wswb)  # (warp_scatter_a/b)
                   tsw = (tswa, tswb)  # (thread_scatter_a/b)
@@ -164,7 +164,7 @@ class CreateMatmulConfig:
         for sw in self.cfg_dict[kw.KEY_GLOB_STORE_WIDTH ]:
           # 存储 smC 到 glob 设置的宽度 store_width，每个线程存储的 width % store_width == 0 && store_width <= width
           if sw <= total_store_width and total_store_width % sw == 0:
-            for rcc in self.cfg_dict[kw.KEY_REDUCE_C_CONTINUOUS]:
+            for rcc in self.cfg_dict[kw.KEY_STORE_CONTINUOUS]:
               line = (tal[0], tal[1], tal[2], tal[3], tal[4], tal[5], tal[6], tal[7], (tal[-1], sw, rcc))
               temp_tals.append(line)
       else:
@@ -201,7 +201,7 @@ class CreateMatmulConfig:
         m = self.cfg_dict[kw.KEY_M][0], 
         n = self.cfg_dict[kw.KEY_N][0],
         k= self.cfg_dict[kw.KEY_K][0],
-        batch= self.cfg_dict[kw.KEY_BATCH][0] ,
+        batch= self.cfg_dict[kw.KEY_BATCH] ,
         enumDType= self.cfg_dict[kw.KEY_DTYPE_A][0]
       ) 
       # self.cfg_dict[kw.KEY_DTYPE_B][0], 
@@ -220,40 +220,38 @@ class CreateMatmulConfig:
         self.cfg_dict[kw.KEY_WARP_SIZE][0], self.cfg_dict[kw.KEY_IS_A_TRANSPOSE][0],   # warp_size, is_Atran
       )
       ta.assignWithList(*config)
+      for e in ta.batch:
+        if e == 1:
+          ta.batch.remove(e)
+      kernelName = ta.generateKernelName()
+      configDict = {
+        kernelName : ta.jsonfy()
+      }
       ret = CompileNeededInfo()
+      ret.kernelName = kernelName
       ret.baseArgs = [ta.batch, ta.M, ta.N, ta.K, int(ta.dtA)]
-      ret.tsArgs = [            
-          ta.BLOCK_SIZE_M,
-          ta.BLOCK_SIZE_N,
-          ta.BLOCK_SIZE_K,
-          ta.THREAD_SIZE_M,
-          ta.THREAD_SIZE_N,
-          ta.WARP_SIZE,
-          ta.BLOCK_LAYOUT_M,
-          ta.BLOCK_LAYOUT_N,
-          ta.WARP_LAYOUT_M,
-          ta.WARP_LAYOUT_N,
-          ta.GLOB_LOAD_WIDTH_A,
-          ta.GLOB_LOAD_WIDTH_B,
-          ta.WARP_SCATTER_WIDTH_A,
-          ta.WARP_SCATTER_WIDTH_B,
-          ta.THREAD_SCATTER_WIDTH_A,
-          ta.THREAD_SCATTER_WIDTH_B,
-          ta.LOCAL_SPLIT_U,
-          ta.BLOCK_MAPPING,
-          ta.GLOB_STORE_WIDTH,
-          ta.UNROLL_NUM,
-          ta.REG_PREFETCH,
-          ta.SHARED_PREFETCH,
-          ta.LOAD_CONTINUOUS,
-          ta.REDUCE_C_CONTINUOUS,
-          ta.dtA, # A
-          ta.dtB, # B
-          ta.dtC, # C
-          ta.M, ta.N, ta.K, ta.batch,
-          ta.isATranspose
-        ]
+      ret.tsArgs = [[ta.batch, ta.M, ta.N, ta.K] , configDict  ]
       ret.torchDataType = ToTorchType(ta.dtA)
+      gridDim = ta.M / ta.BLOCK_SIZE_M * ta.N / ta.BLOCK_SIZE_N
+      blockDim = (ta.BLOCK_SIZE_M / ta.THREAD_SIZE_M) * ( ta.BLOCK_SIZE_N / ta.THREAD_SIZE_N )
+      shmBytes = (ta.BLOCK_SIZE_M + ta.BLOCK_SIZE_N) * ta.BLOCK_SIZE_K
+      if ta.SHARED_PREFETCH > 0 :
+        shmBytes *= 2
+      if ta.LOCAL_SPLIT_U > 1 :
+        blockDim *= ta.LOCAL_SPLIT_U
+        shm_reduce = ta.BLOCK_SIZE_M * ta.BLOCK_SIZE_N * ta.LOCAL_SPLIT_U
+        if shm_reduce > shmBytes :
+          shmBytes = shm_reduce
+      ret.blockDims = [int(blockDim),1,1]
+      
+      ret.gridDims = [int(gridDim)]
+      if len(ta.batch) > 0 :
+        ret.gridDims += ta.batch  # 处理方式： 将batch维度加到griddim的y,z上. 即batch数组的维度不超过2
+      assert len(ret.gridDims) <= 3
+      while len(ret.gridDims) < 3:
+        ret.gridDims.append(1)   # 不够三维的部分用1 补全
+      ret.shmBytes = int(shmBytes * sizeof(ta.dtA))
+      
       yield ret
     
 

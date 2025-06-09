@@ -100,14 +100,15 @@ int main(int argc, char** argv) {
   void* args[] = {&d_A, &d_B, &d_C};
   dim3 dimBlock = {16, 16};
   dim3 dimGrid = {(N + dimBlock.x - 1) / dimBlock.x, (M + dimBlock.y - 1) / dimBlock.y};
-
+  int shmBytes = std::stoi(argv[8]);
   for(int i=0;i<7;++i){
-    hipModuleLaunchKernel(kernel, std::stoi(argv[4]), 1, 1, std::stoi(argv[5]), 1, 1, 50000, 0, args, NULL);  
+    hipModuleLaunchKernel(kernel, std::stoi(argv[4]), 1, 1, std::stoi(argv[5]), 1, 1, shmBytes, 0, args, NULL);  
   }
-  gemm_kernel<<<dimGrid, dimBlock>>>(d_A, d_B, d_D, M, N, K);
-  verify_kernel<<<dimGrid, dimBlock>>>(d_C, d_D, M, N);
+  // gemm_kernel<<<dimGrid, dimBlock>>>(d_A, d_B, d_D, M, N, K);
+  // verify_kernel<<<dimGrid, dimBlock>>>(d_C, d_D, M, N);
 
   freeBufs({A, B, C, D}, {d_A, d_B, d_C, d_D});
   hipModuleUnload(module);
+  std::cout << "Done" << std::endl;
   return 0;
 }

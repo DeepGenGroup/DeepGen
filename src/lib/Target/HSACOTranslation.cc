@@ -104,6 +104,7 @@ initialize_module(llvm::Module *module, const std::string &triple,
     llvm::legacy::PassManager pm;
     pm.add(llvm::createVerifierPass());
     pm.run(*module);
+
     llvm::Triple tr;
     tr.setArch(llvm::Triple::ArchType::amdgcn);
     tr.setVendor(llvm::Triple::VendorType::AMD);

@@ -30,17 +30,17 @@ Config _parseCfgItem(cJSON* item){
       {KEY_BLOCK_SIZE_M, 0}, {KEY_BLOCK_SIZE_N, 0}, {KEY_BLOCK_SIZE_K, 0}, 
       {KEY_THREAD_SIZE_M, 0}, {KEY_THREAD_SIZE_N, 0}, 
       {KEY_WARP_SIZE, 0}, 
-      {KEY_BLOCK_LAYOUT_M, 0}, {KEY_BLOCK_LAYOUT_N, 0}, 
-      {KEY_WARP_LAYOUT_M, 0}, {KEY_WARP_LAYOUT_N, 0},
+      {KEY_BLOCK_LAYOUT_Y, 0}, {KEY_BLOCK_LAYOUT_X, 0}, 
+      {KEY_WARP_LAYOUT_Y, 0}, {KEY_WARP_LAYOUT_X, 0},
       {KEY_DTYPE_A, (int)0},{KEY_DTYPE_B, (int)0},{KEY_DTYPE_C, (int)0},
       {KEY_M, (int)0},{KEY_N, (int)0},{KEY_K, (int)0},
       {KEY_IS_A_TRANSPOSE,(int)0},
       {KEY_GLOB_LOAD_WIDTH_A,(int)0},
       {KEY_GLOB_LOAD_WIDTH_B,(int)0},
-      {KEY_WARP_SCATTER_WIDTH_A,(int)0},
-      {KEY_WARP_SCATTER_WIDTH_B,(int)0},
-      {KEY_THREAD_SCATTER_WIDTH_A,(int)0},
-      {KEY_THREAD_SCATTER_WIDTH_B,(int)0},
+      {KEY_BLOCK_SCATTER_WIDTH_M,(int)0},
+      {KEY_BLOCK_SCATTER_WIDTH_N,(int)0},
+      {KEY_WARP_SCATTER_WIDTH_M,(int)0},
+      {KEY_WARP_SCATTER_WIDTH_N,(int)0},
       {KEY_LOCAL_SPLIT_U,(int)0},
       {KEY_BLOCK_MAPPING,(int)0},
       {KEY_GLOB_STORE_WIDTH,(int)0}
@@ -52,10 +52,10 @@ Config _parseCfgItem(cJSON* item){
   assert(_parseKeyInt(item,ret,KEY_THREAD_SIZE_M)) ;
   assert(_parseKeyInt(item,ret,KEY_THREAD_SIZE_N)) ;
   assert(_parseKeyInt(item,ret,KEY_WARP_SIZE)) ;
-  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_M)) ;
-  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_N)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_M)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_N)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_Y)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_LAYOUT_X)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_Y)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_LAYOUT_X)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_A)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_B)) ;
   assert(_parseKeyInt(item,ret,KEY_DTYPE_C)) ;
@@ -65,10 +65,10 @@ Config _parseCfgItem(cJSON* item){
   assert(_parseKeyInt(item,ret,KEY_IS_A_TRANSPOSE)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_LOAD_WIDTH_A)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_LOAD_WIDTH_B)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_A)) ;
-  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_B)) ;
-  assert(_parseKeyInt(item,ret,KEY_THREAD_SCATTER_WIDTH_A)) ;
-  assert(_parseKeyInt(item,ret,KEY_THREAD_SCATTER_WIDTH_B)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_SCATTER_WIDTH_M)) ;
+  assert(_parseKeyInt(item,ret,KEY_BLOCK_SCATTER_WIDTH_N)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_M)) ;
+  assert(_parseKeyInt(item,ret,KEY_WARP_SCATTER_WIDTH_N)) ;
   assert(_parseKeyInt(item,ret,KEY_LOCAL_SPLIT_U)) ;
   assert(_parseKeyInt(item,ret,KEY_BLOCK_MAPPING)) ;
   assert(_parseKeyInt(item,ret,KEY_GLOB_STORE_WIDTH)) ;
@@ -162,16 +162,16 @@ std::string KcgDtypeToStr(KcgDtype type){
 }
 
 std::string typeToStr(mlir::Type type) {
-  if(type.isF16()) return {"float16"};
-  if(type.isF32()) return {"float32"};
-  if(type.isF64()) return {"float64"};
+  if(mlir::isa<mlir::Float16Type>(type)) return {"float16"};
+  if(mlir::isa<mlir::Float32Type>(type)) return {"float32"};
+  if(mlir::isa<mlir::Float64Type>(type)) return {"float64"};
   if(auto int_type = mlir::dyn_cast<mlir::IntegerType>(type)) {
     if (int_type.getWidth() == 1) return {"bool"};
     else if (int_type.getWidth() == 16) return {"int16"};
     else if (int_type.getWidth() == 32) return {"int32"};
     else if (int_type.getWidth() == 64) return {"int64"};
   }
-  if(type.isIndex()) return {"index"};
+  if(mlir::isa<mlir::IndexType>(type)) return {"index"};
   assert(false && "not supported type!");
   return "";
 }
@@ -250,47 +250,23 @@ std::string getLocationString(mlir::Location loc){
 
 namespace mapUtils {
   
-mlir::AffineExpr waprId(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return tid.floorDiv(config.at(KEY_WARP_SIZE));
+mlir::AffineExpr wapr_x(mlir::AffineExpr tid, int warpSize, int blockLayoutX) {
+  return tid.floorDiv(warpSize) % blockLayoutX;
 }
 
-mlir::AffineExpr wapr_x(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return waprId(tid,config) % config.at(KEY_BLOCK_LAYOUT_N);
+mlir::AffineExpr wapr_y(mlir::AffineExpr tid, int warpSize, int blockLayoutX) {
+  return tid.floorDiv(warpSize).floorDiv(blockLayoutX);
 }
 
-mlir::AffineExpr wapr_y(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return waprId(tid,config).floorDiv(config.at(KEY_BLOCK_LAYOUT_N));
+mlir::AffineExpr lane_x(mlir::AffineExpr tid, int warpSize, int warpLayoutX) {
+  return tid % warpSize % warpLayoutX;
 }
 
-mlir::AffineExpr laneId(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return tid % (config.at(KEY_WARP_SIZE));
+mlir::AffineExpr lane_y(mlir::AffineExpr tid, int warpSize, int warpLayoutX) {
+  return (tid % warpSize).floorDiv(warpLayoutX);
 }
 
-mlir::AffineExpr lane_x(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return laneId(tid,config) % config.at(KEY_WARP_LAYOUT_N);
-}
-
-mlir::AffineExpr lane_y(mlir::AffineExpr tid, const std::map<std::string, int>& config){
-  return laneId(tid,config).floorDiv(config.at(KEY_WARP_LAYOUT_N));
-}
-
-mlir::AffineExpr bid_y(mlir::AffineExpr bid, const std::map<std::string, int>& config){
-  return bid.floorDiv(config.at(KEY_N) / config.at(KEY_BLOCK_SIZE_N));
-}
-
-mlir::AffineExpr bid_x(mlir::AffineExpr bid, const std::map<std::string, int>& config){
-  return bid % (config.at(KEY_N) / config.at(KEY_BLOCK_SIZE_N));
-}
-
-mlir::AffineExpr bid(mlir::AffineExpr bx,mlir::AffineExpr by, const std::map<std::string, int>& config){
-  return bx + by * (config.at(KEY_N) / config.at(KEY_BLOCK_SIZE_N));
-}
-
-mlir::AffineExpr tid(mlir::AffineExpr tx,mlir::AffineExpr ty, const std::map<std::string, int>& config){
-  return tx + ty * (config.at(KEY_BLOCK_SIZE_N) / config.at(KEY_THREAD_SIZE_N));
-}
-
-llvm::SmallVector<mlir::AffineExpr> reshapeBlock(mlir::AffineExpr tid, const std::vector<int> shape) {
+llvm::SmallVector<mlir::AffineExpr> reshapeThreadBlock(mlir::AffineExpr tid, const std::vector<int64_t> shape) {
   llvm::SmallVector<mlir::AffineExpr> exprs;
   for (int i=0; i<shape.size(); i++) {
     int64_t stride = 1;

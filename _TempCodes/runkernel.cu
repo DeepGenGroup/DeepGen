@@ -20,35 +20,50 @@ void display(T *host, int len) {
 }
 
 // cublas gemm
-cublasStatus_t cublasMatMulTransA(cublasHandle_t handle, const float* A, const float* B, float* C, int M, int N, int K) {
-  float alpha = 1.0f;
-  float beta = 0.0f;
-  cublasStatus_t status;
-  bool handleCreated = false;
-  if (!handle) {
-      status = cublasCreate(&handle);
-      if (status != CUBLAS_STATUS_SUCCESS) {
-          return status;
-      }
-      handleCreated = true;
-  }
-  status = cublasSgemm(handle,
-                      CUBLAS_OP_N,   // A不转置
-                      CUBLAS_OP_T,   // B转置
-                      M,             // 结果矩阵行数
-                      N,             // 结果矩阵列数
-                      K,             // 公共维度
-                      &alpha,
-                      A, M,          // A的维度M×K，lda=M
-                      B, N,          // B的维度NxK，ldb=N
-                      &beta,
-                      C, M);         // C的维度M×N，ldc=M
+cublasStatus_t cublasMatMulTransA(cublasHandle_t handle, const float* A, const float* B, float* C, int M, int N, int K, bool isTranA, bool isTranB) {
+    float alpha = 1.0f;
+    float beta = 0.0f;
+    cublasStatus_t status;
+    bool handleCreated = false;
+    if (!handle) {
+        status = cublasCreate(&handle);
+        if (status != CUBLAS_STATUS_SUCCESS) {
+            return status;
+        }
+        handleCreated = true;
+    }
+    cublasOperation_t tranA, tranB;
+    int lda, ldb;
+    if (isTranA && isTranB) {
+        tranA = CUBLAS_OP_N; tranB = CUBLAS_OP_N;
+        lda = M; ldb = K;
+    } else if (!isTranA && isTranB) {
+        tranA = CUBLAS_OP_T; tranB = CUBLAS_OP_N;
+        lda = K; ldb = K;
+    } else if (isTranA && !isTranB) {
+        tranA = CUBLAS_OP_N; tranB = CUBLAS_OP_T;
+        lda = M; ldb = N;
+    } else {
+        tranA = CUBLAS_OP_T; tranB = CUBLAS_OP_T;
+        lda = K; ldb = N;
+    }
+    status = cublasSgemm(handle,
+                        tranA,   // A不转置
+                        tranB,   // B转置
+                        M,             // 结果矩阵行数
+                        N,             // 结果矩阵列数
+                        K,             // 公共维度
+                        &alpha,
+                        A, lda,          // A的维度M×K，lda=M
+                        B, ldb,          // B的维度NxK，ldb=N
+                        &beta,
+                        C, M);         // C的维度M×N，ldc=M
 
-  // 清理临时创建的句柄
-  if (handleCreated) {
-      cublasDestroy(handle);
-  }
-  return status;
+    // 清理临时创建的句柄
+    if (handleCreated) {
+        cublasDestroy(handle);
+    }
+    return status;
 }
 
 // gpu 验证
@@ -64,7 +79,7 @@ __global__ void verify_kernel(float* C, float* D, int m, int n) {
     }
 }
 
-// nvcc -o ./bin/runkernel runkernel.cu -lcuda -lcublas
+// nvcc -o ./bin/runkernel runkernel.cu -lcuda -lcublas -arch=sm_80
 int main(int argc, char** argv) {
     if (argc <= 8){
         std::cout << "Usage : M N K gridDims blockDims shmBytes cubinPath cubinFunc" << std::endl;
@@ -113,12 +128,12 @@ int main(int argc, char** argv) {
     float *C = new float[N * M];
     float *D = new float[N * M];
     for (int i = 0; i < M * K; i++) {
-        // A[i] = (rand() % 1000) * 0.01f;
-        A[i] = 1.0f;
+        A[i] = (rand() % 1000) * 0.01f;
+        // A[i] = 1.0f;
     } 
     for (int i = 0; i < N * K; i++) {
-        // B[i] = (rand() % 1000) * 0.01f;
-        B[i] = 1.0f;
+        B[i] = (rand() % 1000) * 0.01f;
+        // B[i] = 1.0f;
     }
 
     float *d_A, *d_B, *d_C, *d_D;
@@ -145,7 +160,7 @@ int main(int argc, char** argv) {
 
     cublasHandle_t handle;
     cublasCreate(&handle);
-    cublasMatMulTransA(handle, d_A, d_B, d_D, M, N, K);
+    cublasMatMulTransA(handle, d_A, d_B, d_D, M, N, K, true, false);
     verify_kernel<<<dimGrid, dimBlock>>>(d_C, d_D, M, N);
 
     // 同步设备
