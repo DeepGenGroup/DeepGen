@@ -173,6 +173,7 @@ def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
 
 def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType : 
   # shape = [1, 32, 2048, 128]
+  # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
   kw = ConfigKeywords
   if len(cfgs) <= 0:
     cfgs = get_cfgs(shape)
