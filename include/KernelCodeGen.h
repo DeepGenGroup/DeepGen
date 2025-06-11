@@ -20,7 +20,14 @@ namespace KernelCodeGen {
   class KernelCodeGenerator {
   public:
     KernelCodeGenerator(Target target, const std::string& arch) : target(target), arch(arch) {
-      // mlir::MLIRContext context;
+      this->initContext();
+    }
+    KernelCodeGenerator(const KernelCodeGenerator& other);
+    KernelCodeGenerator() {
+      this->initContext();
+    };
+
+    void initContext() {
       context.getOrLoadDialect<mlir::affine::AffineDialect>();
       context.getOrLoadDialect<mlir::memref::MemRefDialect>();
       context.getOrLoadDialect<mlir::func::FuncDialect>();
@@ -31,11 +38,13 @@ namespace KernelCodeGen {
       context.getOrLoadDialect<mlir::math::MathDialect>();
       context.getOrLoadDialect<mlir::cf::ControlFlowDialect>();
       context.getOrLoadDialect<mlir::LLVM::LLVMDialect>();
-      // this->conetxt = conetxt;
+    }
+    
+    void setPaltform(Target tg, const std::string& ac) {
+      this->target = tg;
+      this->arch = ac;
     }
 
-    KernelCodeGenerator(const KernelCodeGenerator& other);
-    
     template <typename OperatorType, typename... Args> 
     void create(mlir::ModuleOp mod,
                 const std::vector<std::vector<int64_t>>& intputShape,
@@ -70,7 +79,7 @@ namespace KernelCodeGen {
 
   private:
     Target target;
-    const std::string arch;
+    std::string arch;
     mlir::MLIRContext context;
   };
 

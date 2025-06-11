@@ -236,7 +236,6 @@ static bool py_list_to_vector(PyObject* py_list, std::vector<int64_t>& vec) {
   return true;
 }
 
-
 static bool py_dict_to_config(PyObject* py_dict, TuneConfig& config) {
   // dict to config
   if (!PyDict_Check(py_dict)) {

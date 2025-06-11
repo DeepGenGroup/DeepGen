@@ -13,7 +13,6 @@ struct KernelData {
   /* kernel的数据结构 */
   std::string name;
   std::string type;
-  std::vector<std::string> argNames;
   std::vector<std::vector<int64_t>> shapes;
   std::vector<std::string> dtypes;
   std::vector<bool> isTrans;

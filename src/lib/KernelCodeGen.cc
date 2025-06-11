@@ -191,9 +191,9 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
 bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig) {
   // optimize
   // create opt tool pools
-  std::cout << "[lib] ========= optimize start " << std::endl;
+  // std::cout << "[lib] ========= optimize start " << std::endl;
   auto KernelTypes = Analyzer::collectFuncTypes(mod);
-  std::cout << "[lib] ========= optimize 0 " << std::endl;
+  // std::cout << "[lib] ========= optimize 0 " << std::endl;
   std::map<std::string, std::unique_ptr<Optimizer>> opts;
   for (auto KernelType : KernelTypes) {
     if (KernelType == "Matmul") {
@@ -205,19 +205,19 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
       return false;
     }
   }
-  std::cout << "[lib] ========= optimize mid " << std::endl;
+  // std::cout << "[lib] ========= optimize mid " << std::endl;
   // optimize all kernel
   auto ntMap = Analyzer::collectNameTypeMap(mod);
   for (auto nt : ntMap) {  // {matmul1 : Matmul}
     auto opt = std::move(opts[nt.second]);
     auto funcOps = getSpecifiedKernels(mod, {nt.first});
     if (!opt->applicable(funcOps[0], tuneConfig.at(nt.first))) {
-      std::cout << "[lib] ========= optimize false " << std::endl;
+      // std::cout << "[lib] ========= optimize false " << std::endl;
       return false;   // collect matmul datas
     }
     opt->applyOptimzer(funcOps[0]);
   }
-  std::cout << "[lib] ========= optimize ends " << std::endl;
+  // std::cout << "[lib] ========= optimize ends " << std::endl;
   return true;
 }
 
@@ -380,9 +380,9 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
     // llvm::outs() << " =========== after LLVM IR ============\n";
     // llvm::outs() << llvmIR << "\n";
-    const int capability = CUDA_CAP;
+    // const int capability = CUDA_CAP;
     const int version = PTXAS_VERSION;
-    auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, capability, version);
+    auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, std::stoi(arch), version);
     return paths.second;
   }
 #endif
