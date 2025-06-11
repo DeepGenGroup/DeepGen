@@ -1,0 +1,101 @@
+import torch
+from torch import nn
+import torch.nn.functional as F
+from typing import Callable
+from kcg.TorchInjector import *
+
+
+# 定义Llama模型的参数
+class ModelArgs:
+    dim = 512
+    n_layers = 8
+    n_heads = 8
+    vocab_size = 50000
+    max_seq_len = 256
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+
+# 定义RMSNorm层
+class RMSNorm(nn.Module):
+    def __init__(self, dim, eps=1e-6):
+        super().__init__()
+        self.eps = eps
+        self.weight = nn.Parameter(torch.ones(dim))
+
+    def forward(self, x):
+        return x * torch.rsqrt(x.pow(2).mean(dim=-1, keepdim=True) + self.eps) * self.weight
+
+# 定义注意力机制
+class Attention(nn.Module):
+    def __init__(self, args, f_matmul : Callable = torch.matmul):
+        super().__init__()
+        self.args = args
+        self.wq = nn.Linear(args.dim, args.n_heads * (args.dim // args.n_heads), bias=False)
+        self.wk = nn.Linear(args.dim, args.n_heads * (args.dim // args.n_heads), bias=False)
+        self.wv = nn.Linear(args.dim, args.n_heads * (args.dim // args.n_heads), bias=False)
+        self.wo = nn.Linear(args.n_heads * (args.dim // args.n_heads), args.dim, bias=False)
+        self.F_matmul = f_matmul
+        
+    def forward(self, x):
+        q = self.wq(x)
+        k = self.wk(x)
+        v = self.wv(x)
+        scores = self.F_matmul(q, k.transpose(-2, -1)) / (self.args.dim ** 0.5)
+        # scores = torch.matmul(q, k.transpose(-2, -1)) / (self.args.dim ** 0.5)
+        attn_weights = F.softmax(scores, dim=-1)
+        context = self.F_matmul(attn_weights, v)
+        # context = torch.matmul(attn_weights, v)
+        return self.wo(context)
+
+# 定义前馈网络
+class FeedForward(nn.Module):
+    def __init__(self, dim):
+        super().__init__()
+        self.fc1 = nn.Linear(dim, 4 * dim)
+        self.fc2 = nn.Linear(4 * dim, dim)
+
+    def forward(self, x):
+        return self.fc2(F.gelu(self.fc1(x)))
+
+# 定义Transformer块
+class TransformerBlock(nn.Module):
+    def __init__(self, args, f_matmul = torch.matmul):
+        super().__init__()
+        self.attention_norm = RMSNorm(args.dim)
+        self.attention = Attention(args,f_matmul)
+        self.ffn_norm = RMSNorm(args.dim)
+        self.feedforward = FeedForward(args.dim)
+
+    def forward(self, x):
+        h = x + self.attention(self.attention_norm(x))
+        return h + self.feedforward(self.ffn_norm(h))
+
+# 定义Llama模型
+class Llama(nn.Module):
+    def __init__(self, args, opProxy : OpProxy | None):
+        super().__init__()
+        self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
+        if opProxy is None :
+            self.layers = nn.ModuleList([TransformerBlock(args) for _ in range(args.n_layers)])
+        else:
+            self.layers = nn.ModuleList([TransformerBlock(args, opProxy.f_matmul) for _ in range(args.n_layers)])
+            
+        self.norm = RMSNorm(args.dim)
+        self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
+
+    def forward(self, x):
+        h = self.tok_embeddings(x)
+        for layer in self.layers:
+            h = layer(h)
+            h = self.norm(h)
+        return self.output(h)
+
+if __name__ == "__main__":
+    # 测试Llama模型
+    DeviceInfo.init_cuda(7)
+    args = ModelArgs()
+    proxy = OpProxy()
+    # proxy = None
+    model = Llama(args, proxy).to(args.device)
+    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
+    output = model(input_ids)
+    print(output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)

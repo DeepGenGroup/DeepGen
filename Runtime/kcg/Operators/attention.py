@@ -359,7 +359,7 @@ class AttentionOp(OpInterface) :
             c = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )
             self.InputTensors_Baseline = [a,b,c]
         return self.InputTensors_Baseline
-            
+
     def GetBenchmarkInputTensor(self,devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Benchmark is None :
             [q,k,v] = self.GetBaselineInputTensor(devId)

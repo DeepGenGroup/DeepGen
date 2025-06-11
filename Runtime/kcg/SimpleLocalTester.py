@@ -77,7 +77,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
     return iterationEnds
     
 
-def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> float :
+def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> Tuple[float, str] :
     op.InitBaseArgs(baseArg)
     op.GetBaselineInputTensor(devId)
     kernel = op.GetCompiledKernel(cfg,devId)
@@ -103,6 +103,8 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
             maxSppedups = obj['testResult']
     name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
     pkls = glob.glob(name_format)
+    bestConfig = None
+    bestConfigBA = None
     if len(pkls) > 0 :
         for pkl in pkls :
             try:
@@ -115,10 +117,19 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
                 os.remove(pkl)
                 if acc > 0 :
                     obj = {"name" : funName, "speedup" : acc}
-                    maxSppedups.append(obj)
-                    maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
-                    if len(maxSppedups) > benchConfig.keepTopNum :
-                        maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+                    if benchConfig.keepTopNum > 1:
+                        maxSppedups.append(obj)
+                        maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
+                        if len(maxSppedups) > benchConfig.keepTopNum :
+                            maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+                    else:
+                        # 仅保留最佳时，同时记录其 kernelConfig 信息
+                        if len(maxSppedups) <= 0:
+                            maxSppedups = obj
+                        elif maxSppedups[0]['speedup'] < acc :
+                            maxSppedups[0] = obj
+                        bestConfig = config
+                        bestConfigBA = ba
             except BaseException as e: 
                 print('[Deepgen Exception] ',e)
                 traceback.print_exc()
@@ -130,6 +141,13 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
         with open(save_to,'w+') as f:
             result = {"testResult" : maxSppedups}
             json.dump(result,f,indent=2)
+    if bestConfig is not None :
+        ba_str = ""
+        for e in bestConfigBA :
+            ba_str += f"{e}:"
+        pklPath = PathManager().tmp_dir() + f"/bestConfig_{OpTy.__name__}_{ba_str}.pkl"
+        serialize_to_file(pklPath, bestConfig)
+        print(f"===== Best kernel config has been saved to {pklPath}")
     
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
     if OpTy is matmul.MatmulOp :
@@ -199,8 +217,9 @@ if __name__ == '__main__' :
     print("get_tune_space",flush=True)
     ts = get_tuning_space(opty, cfgFile)
     cc = BenchmarkConfig()
+    cc.keepTopNum = 1
     cc.max_kernel_per_iter = 1
-    cc.result_json_path = "/home/xushilong/DeepGen/testResult_att.json"
+    cc.result_json_path = "/home/xushilong/DeepGen/testResult.json"
     
     st = time.time()
     print(f"=====  start at : {st}")

@@ -404,7 +404,7 @@ class MatmulOp(OpInterface) :
         inConfig.shmBytes = shmBytes
         packedKernel = self.GetCompiledKernel(inConfig,deviceId)
         return (info.baseArgs, inConfig, packedKernel)  # 
-  
+
     def GetCompiledKernel(self, info : KernelConfigs, deviceId : int) -> CompiledKernel :
         signature = self.GetSignature(info.dtypes)
         return CompiledKernel(

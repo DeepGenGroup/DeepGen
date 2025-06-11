@@ -1,10 +1,9 @@
 # 存放 Kernel 相关的类
 from dataclasses import dataclass
 import inspect
-from Loader import *
-from CUDALauncher import CUDALauncher
-from HIPLauncher import HIPLauncher
-from kcg.Utils import *
+from kcg.Loader import *
+from kcg.CUDALauncher import *
+from kcg.HIPLauncher import *
 from functools import cached_property
 import ast
 import functools
@@ -14,7 +13,7 @@ import textwrap
 from collections import defaultdict, namedtuple
 from typing import Callable, Generic, Iterable, List, Optional, TypeVar, Union, cast, overload
 from abc import ABC, abstractmethod
-from kcg.Cache import *
+
 # from kcg.CompiledKernel import CompiledKernel
 
 
@@ -262,28 +261,42 @@ class CompiledKernel:
         self.signature = kernel_signature
         self.m_loader = None
         self.m_launcher = None
-        if backend.value == EnumBackendType.HIP.value :
+        self.backend = backend
+        self.kernelBinaryPath = kernelBinaryPath
+        self.kernelName = kernelName
+        self.kernel_signature = kernel_signature
+        self.gridDims = gridDims
+        self.blockDims = blockDims
+        self.device = device
+        self.shmSize = shmSize
+    
+    def buildLoaderAndLauncher(self) :
+        if self.backend.value == EnumBackendType.HIP.value :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = HIPLoaderST()
-            self.m_launcher = HIPLauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
-        elif backend.value == EnumBackendType.CUDA.value :
+            self.m_launcher = HIPLauncher(self.kernelBinaryPath,self.kernelName,self.shmSize,self.signature,self.gridDims,self.blockDims,self.device)
+        elif self.backend.value == EnumBackendType.CUDA.value :
             # print(f"[D] gridDims={gridDims} , blockDims={blockDims}, device ={device}")
             self.m_loader = CudaLoaderST()
-            self.m_launcher = CUDALauncher(kernelBinaryPath,kernelName,shmSize,self.signature,gridDims,blockDims,device)
+            self.m_launcher = CUDALauncher(self.kernelBinaryPath,self.kernelName,self.shmSize,self.signature,self.gridDims,self.blockDims,self.device)
         else:
-            assert False, f"Invalid backend value {backend.value}"
+            assert False, f"Invalid backend value {self.backend.value}"
         
     def deleteBinary(self):
-        if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
-            os.remove(self.m_launcher.m_kernelLib.m_filePath)
+        if self.m_launcher is not None :
+            if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
+                os.remove(self.m_launcher.m_kernelLib.m_filePath)
             # print(f"deleted {self.m_launcher.m_kernelLib.m_filePath}")
 
     def setDevice(self,devId : int) :
+        if self.m_launcher is None:
+            self.buildLoaderAndLauncher()
         self.m_launcher.m_kernelLib.m_device = devId
     
     def run(self,*args):
-        if self.m_launcher is not None:
-            self.m_launcher.launchKernel(*args)
+        if self.m_launcher is None :
+            self.buildLoaderAndLauncher()
+        self.m_launcher.launchKernel(*args)
     
 
 ##################################### 算子统一接口定义 ############################################

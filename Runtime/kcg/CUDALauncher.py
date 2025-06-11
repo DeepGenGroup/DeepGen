@@ -39,7 +39,7 @@ def make_stub(kernelLibFile : KernelLibFile) -> str :
     if cache_path is None:
         # with tempfile.TemporaryDirectory() as tmpdir:
         tmpdir = PathManager().default_cache_dir()
-        src = generate_launcher_cuda(kernelLibFile)
+        src = generate_launcher_cuda(kernelLibFile.m_signature)
         src_path = os.path.join(tmpdir, "stub_main_cuda.c")
         with open(src_path, "w") as f:
             for line in src:
@@ -73,10 +73,10 @@ def ty_to_cpp(ty):
     }[ty]
 
 
-def generate_launcher_cuda(kernelLib : KernelLibFile):
+def generate_launcher_cuda(kernelSignature : dict):
     # start_desc = len(signature)
     # warp_size = DeviceInfo.get_warp_size()
-    kernelSignature : dict = kernelLib.m_signature
+    # kernelSignature : dict = kernelLib.m_signature
     # gridDims = kernelLib.m_gridDims
     # blockDims = kernelLib.m_blockDims
     print(type(kernelSignature))

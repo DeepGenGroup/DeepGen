@@ -453,6 +453,16 @@ class DeviceInfo :
             return 64
         else:
             return 32
+    
+    @staticmethod
+    def init_cuda(_devId) :
+        DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
+        print("init_cuda devid=",_devId)
+        DeviceInfo.set_visible_devices([_devId])
+        DeviceInfo.set_current_device(_devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
+        if not torch.cuda.is_available() :
+            torch.cuda.init()
+            torch.cuda.empty_cache()
 
 # 路径管理器。存放了各种路径设置
 class PathManager :
@@ -679,7 +689,7 @@ class KernelLibFile :
         backendType : EnumBackendType,   # 后端类型（CUDA | HIP）
         kernelFuncName ,  # 核函数名字
         sharedMemSize,   # shm大小
-        signature,   # kernel signature
+        signature : dict,   # kernel signature
         gridDims : list,
         blockDims : list,
         device= 0): # device号
