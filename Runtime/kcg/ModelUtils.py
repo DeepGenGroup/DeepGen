@@ -83,8 +83,8 @@ class MatmulReplacer:
         torch.matmul = self.custom_fn
         
         # 替换特殊方法（用于操作符重载）
-        torch.Tensor.__matmul__ = lambda self, other: custom_matmul(self, other)
-        torch.Tensor.__rmatmul__ = lambda self, other: custom_matmul(other, self)
+        torch.Tensor.__matmul__ = lambda self, other: self.custom_fn(self, other)
+        torch.Tensor.__rmatmul__ = lambda self, other: self.custom_fn(other, self)
         
         return self
     
