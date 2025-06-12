@@ -2,8 +2,7 @@ import json
 import importlib.util
 from typing import List
 
-from kcg.Kernel import *
-from Operators.attention import *
+from kcg.Operators.attention import *
 
 class CreateConfig:
   def __init__(self, json_path, shape):

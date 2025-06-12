@@ -1,9 +1,6 @@
 # 存放 Kernel 相关的类
 from dataclasses import dataclass
 import inspect
-from kcg.Loader import *
-from kcg.CUDALauncher import *
-from kcg.HIPLauncher import *
 from functools import cached_property
 import ast
 import functools
@@ -13,6 +10,9 @@ import textwrap
 from collections import defaultdict, namedtuple
 from typing import Callable, Generic, Iterable, List, Optional, TypeVar, Union, cast, overload
 from abc import ABC, abstractmethod
+from kcg.HIPLauncher import *
+from kcg.CUDALauncher import *
+from kcg.Loader import *
 
 # from kcg.CompiledKernel import CompiledKernel
 

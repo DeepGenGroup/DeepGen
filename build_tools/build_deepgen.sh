@@ -2,7 +2,7 @@
 project_dir="$HOME/DeepGen"
 cd $project_dir
 is_as_pymodule='ON'
-debug_mode='ON'
+debug_mode='OFF'
 mkdir build
 mkdir _dump
 cd build  
@@ -12,5 +12,5 @@ cmake .. \
     -DCOMPILE_AS_PYMODULE=$is_as_pymodule \
     -DDEBUG_MODE=$debug_mode \
     -Dpybind11_DIR=$HOME/anaconda3/envs/py310/lib/python3.10/site-packages/pybind11/share/cmake/pybind11 \
-    -Dnanobind_DIR=/home/xushilong/anaconda3/envs/py310/lib/python3.10/site-packages/nanobind/cmake 
+    -Dnanobind_DIR=/home/xushilong/anaconda3/envs/triton_rocm/lib/python3.8/site-packages/nanobind/cmake
 make -j16

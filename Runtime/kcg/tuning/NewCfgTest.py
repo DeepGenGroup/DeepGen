@@ -245,6 +245,10 @@ class CreateMatmulConfig:
       ret.blockDims = [int(blockDim),1,1]
       
       ret.gridDims = [int(gridDim)]
+      if int(gridDim) >= 65535 :
+        continue
+      if int(blockDim) >= 65535 :
+        continue
       if len(ta.batch) > 0 :
         ret.gridDims += ta.batch  # 处理方式： 将batch维度加到griddim的y,z上. 即batch数组的维度不超过2
       assert len(ret.gridDims) <= 3
@@ -261,6 +265,20 @@ def getTuneSpace(geemConfigPath : str) -> TsGeneratorType :
   kams = cmc.createMatMulConfig(thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256)  # KernelArgMatmul
   return kams
 
+def getTuneSpaceWithBaseargs(geemConfigPath : str, baseargs : List) -> TsGeneratorType :
+  cfg_dict = readConfigJson(geemConfigPath)
+  datatype = baseargs[-1]
+  batch,m,n,k = baseargs[0:-1]
+  cfg_dict[kw.KEY_BATCH] = batch
+  cfg_dict[kw.KEY_M] = [m]
+  cfg_dict[kw.KEY_N] = [n]
+  cfg_dict[kw.KEY_K] = [k]
+  cfg_dict[kw.KEY_DTYPE_A] = [ToEnumIntDType(datatype)]
+  cfg_dict[kw.KEY_DTYPE_B] = [ToEnumIntDType(datatype)]
+  cfg_dict[kw.KEY_DTYPE_C] = [ToEnumIntDType(datatype)]
+  cmc = CreateMatmulConfig(cfg_dict, 4)
+  kams = cmc.createMatMulConfig(thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256)  # KernelArgMatmul
+  return kams
 
 # # example code 
 # if "__main__" == __name__:

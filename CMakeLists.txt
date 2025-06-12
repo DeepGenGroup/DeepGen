@@ -7,11 +7,11 @@ set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 set(CMAKE_CXX_COMPILER /usr/bin/g++)
 set(CMAKE_C_COMPILER /usr/bin/gcc)
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/rocm-llvm-install")
+set(LLVM_INSTALL_DIR "~/llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 # set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
 # After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available
-set(USER_LLD_PATH "/home/xushilong/rocm-llvm-install/bin/ld.lld") 
+set(USER_LLD_PATH "${LLVM_INSTALL_DIR}/bin/ld.lld") 
 set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas") 
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
@@ -128,14 +128,14 @@ include(AddMLIR)
 include(AddMLIRPython)
 
 # Use embedded stablehlo
-if (USE_STABLEHLO_EMBEDDED)
-  set(STABLEHLO_BUILD_EMBEDDED ON)
-  set(STABLEHLO_ENABLE_BINDINGS_PYTHON ON)
-  add_subdirectory(${KernelCodeGen_SOURCE_DIR}/externals/rocm-stablehlo
-    ${KernelCodeGen_BINARY_DIR}/rocm-stablehlo
-    EXCLUDE_FROM_ALL)
-  include_directories(${CMAKE_CURRENT_SOURCE_DIR}/externals/rocm-stablehlo)
-endif()
+# if (USE_STABLEHLO_EMBEDDED)
+#   set(STABLEHLO_BUILD_EMBEDDED ON)
+#   set(STABLEHLO_ENABLE_BINDINGS_PYTHON ON)
+#   add_subdirectory(${KernelCodeGen_SOURCE_DIR}/externals/rocm-stablehlo
+#     ${KernelCodeGen_BINARY_DIR}/rocm-stablehlo
+#     EXCLUDE_FROM_ALL)
+#   include_directories(${CMAKE_CURRENT_SOURCE_DIR}/externals/rocm-stablehlo)
+# endif()
 
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)

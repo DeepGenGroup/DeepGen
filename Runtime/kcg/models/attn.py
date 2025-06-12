@@ -122,11 +122,25 @@ def run_model(model, args : ModelArgs, input_ids : torch.Tensor = None) :
 
 
 
-def compile_model(opProxy, model, args : ModelArgs) :
+def compile_model( model, args : ModelArgs, devId : int) :
     output = run_model(model,args)
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
-    for val in opProxy.GetCollectedKernelArgs() :
-        print('collected : ',val)
+    from kcg.KernelTuneUtils import kernel_tuning
+    for (Ty , args ) in OpProxy.GetCollectedKernelArgs() :
+        assert issubclass(Ty,OpInterface) , f"Ty must be inherited from OpInterface : invalid {Ty.__name__}"
+        assert isinstance(args,List)
+        assert isinstance(args[-1],torch.dtype)
+        ts = None
+        if Ty is matmul.MatmulOp :
+            import kcg.tuning.NewCfgTest as tune_mm
+            ts = tune_mm.getTuneSpaceWithBaseargs('/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json',args)
+        elif Ty is attention.AttentionOp :
+            import kcg.tuning.attn_FP32_test as tune_att
+            ts = tune_att.getTuneSpace([1,1,1,1],[])
+        else:
+            assert False, f"invalid ty : {Ty.__name__}"
+        kernel_tuning(Ty,'/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json',devId,ts)
+        
         
         # TODO: compile kernel using val
         # TODO: Regist compiled kernel info into OpProxy()
@@ -168,12 +182,11 @@ if __name__ == "__main__":
     input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
     out0 = run_model(model,args, input_ids)
     
-    optimizedModel = get_op_optimized_model(model).to(args.device)
-    out1 = run_model(optimizedModel,args, input_ids)
-    
+    optimizedModel = get_op_optimized_model(model).to(7)
+    compile_model(optimizedModel,args, 7)
+    out1 = run_model(optimizedModel,args,input_ids)
     if torch.allclose(out0,out1,atol=1e-5,rtol=1e-5):
         print("===== test correct ")
     else:
         print("===== test fail ")
-    for val in OpProxy.GetCollectedKernelArgs() :
-        print('collected : ',val)
+    

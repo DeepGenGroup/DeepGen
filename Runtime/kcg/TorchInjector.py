@@ -1,8 +1,5 @@
-from kcg.Utils import *
-from kcg.HIPLauncher import *
-from kcg.CUDALauncher import *
 from kcg.Operators import matmul, attention
-
+from kcg.Kernel import *
 # 注入器。通过反序列化 compile过程得到的最佳 kernelConfig，构造该kernel的调用器
 class OpInjector :
     def __init__(self, devId : int = 0):
@@ -17,6 +14,7 @@ class OpInjector :
         return kernelRun
 
 # op信息收集器。用于首次执行model时，采集需要编译的kenrel信息
+
 class OpBaseArgsCollector :
     def __init__(self):
         self.infoList = []
@@ -33,7 +31,17 @@ class OpBaseArgsCollector :
             self.__hashTable.append(hashkey)
             self.infoList.append(obj)
     
-    
+    def getInfo(self) :
+        for obj in self.infoList :
+            info : List = obj['baseArgs']
+            info.append(obj['dtype']) 
+            ty = None
+            if obj['optype'] == matmul.MatmulOp.__name__ :
+                ty = matmul.MatmulOp
+            elif obj['optype'] == attention.AttentionOp.__name__ :
+                ty = attention.AttentionOp
+            yield (ty,info)
+            
     
 # operator 代理人。f_matmul f_attention 用于代替 model中的对应算子。 collector用于在首次执行model时，收集需要编译的kernel信息（基础形状、dtype、op类型等）。
 # collector收集的信息可用于后续的 tuning空间生产、编译
@@ -41,15 +49,16 @@ class OpBaseArgsCollector :
 class OpProxy :
     collector = OpBaseArgsCollector()
     @staticmethod
-    def GetCollectedKernelArgs() -> List :
-        return OpProxy.collector.infoList
+    def GetCollectedKernelArgs() -> Generator :
+        return OpProxy.collector.getInfo()
     
     @staticmethod
     def f_matmul(a : torch.Tensor, b : torch.Tensor) :
-        m = a.shape[-2]
-        k = a.shape[-1]
-        n = b.shape[-1]
-        batch = a.shape[0:-2] 
+        m = int(a.shape[-2])
+        k = int(a.shape[-1])
+        n = int(b.shape[-1])
+        batch = [ int(x)  for x in a.shape[0:-2] ]
+        
         ret = torch._C._VariableFunctions.matmul(a, b)
         try:
             if [m,n,k] == [1024,1024,1024]: 

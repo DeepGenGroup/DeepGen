@@ -1,8 +1,6 @@
 import numpy as np
 import torch
-from kcg.CompiledKernel import *
 from kcg.Kernel import *
-from kcg.Utils import *
 
 
 @kcg_kernel

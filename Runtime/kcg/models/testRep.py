@@ -5,7 +5,7 @@ import contextlib
 import sys
 import types
 import math
-from kcg.TorchInjector import *
+
 # ===================== 1. 自定义实现 =====================
 class CustomLinear(nn.Module):
     def __init__(self, in_features, out_features, bias=True):
@@ -46,6 +46,9 @@ class CustomLinear(nn.Module):
     def extra_repr(self):
         return f'in_features={self.in_features}, out_features={self.out_features}, bias={self.bias is not None}'
 
+def custom_matmul(a, b):
+    print("使用自定义矩阵乘法")
+    return torch._C._VariableFunctions.matmul(a, b)  # 实际调用底层实现
 
 # ===================== 2. 模块替换工具 =====================
 def replace_module(module, target_class, replacement_class):
@@ -83,8 +86,8 @@ class MatmulReplacer:
         torch.matmul = self.custom_fn
         
         # 替换特殊方法（用于操作符重载）
-        torch.Tensor.__matmul__ = lambda self, other: self.custom_fn(self, other)
-        torch.Tensor.__rmatmul__ = lambda self, other: self.custom_fn(other, self)
+        torch.Tensor.__matmul__ = lambda self, other: custom_matmul(self, other)
+        torch.Tensor.__rmatmul__ = lambda self, other: custom_matmul(other, self)
         
         return self
     
@@ -96,99 +99,53 @@ class MatmulReplacer:
         torch.Tensor.__matmul__ = self.original_fn
         torch.Tensor.__rmatmul__ = self.original_fn
 
-# # ===================== 4. 模块方法包装器 =====================
-# def wrap_forward_method(module, pre_hook=None, post_hook=None):
-#     """包装模块的 forward 方法"""
-#     original_forward = module.forward
+# ===================== 4. 模块方法包装器 =====================
+def wrap_forward_method(module, pre_hook=None, post_hook=None):
+    """包装模块的 forward 方法"""
+    original_forward = module.forward
     
-#     @functools.wraps(original_forward)
-#     def wrapped_forward(*args, **kwargs):
-#         if pre_hook:
-#             args, kwargs = pre_hook(*args, **kwargs)
+    @functools.wraps(original_forward)
+    def wrapped_forward(*args, **kwargs):
+        if pre_hook:
+            args, kwargs = pre_hook(*args, **kwargs)
         
-#         result = original_forward(*args, **kwargs)
+        result = original_forward(*args, **kwargs)
         
-#         if post_hook:
-#             result = post_hook(result)
+        if post_hook:
+            result = post_hook(result)
         
-#         return result
+        return result
     
-#     module.forward = wrapped_forward
-#     return module
+    module.forward = wrapped_forward
+    return module
 
 # ===================== 5. 使用示例 =====================
-# if __name__ == "__main__":
-#     # 示例模型
-#     class SampleModel(nn.Module):
-#         def __init__(self):
-#             super().__init__()
-#             self.linear1 = nn.Linear(10, 20)
-#             self.linear2 = nn.Linear(20, 5)
-#             self.weight = torch.randn(20, 20)
+if __name__ == "__main__":
+    # 示例模型
+    class SampleModel(nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.linear1 = nn.Linear(10, 20)
+            self.linear2 = nn.Linear(20, 5)
+            self.weight = torch.randn(20, 20)
             
-#         def forward(self, x):
-#             x = self.linear1(x)
-#             x = torch.matmul(x, self.weight)
-#             x = self.linear2(x)
-#             return x
+        def forward(self, x):
+            x = self.linear1(x)
+            x = torch.matmul(x, self.weight)
+            x = self.linear2(x)
+            return x
     
-#     # 创建模型实例
-#     input_data = torch.randn(3, 10)
-#     model = SampleModel()
-#     print("原始模型结构:")
-#     print(model)
-#     out0 = model(input_data)
-    
-#     # 1. 替换所有 nn.Linear 模块
-#     replace_module(model, nn.Linear, CustomLinear)
-#     print("\n替换 Linear 后的模型结构:")
-#     print(model)
-    
-#     # 2. 创建包装器模型，在 forward 中应用 matmul 替换
-#     class WrappedModel(nn.Module):
-#         def __init__(self, model):
-#             super().__init__()
-#             self.model = model
-            
-#         def forward(self, *args, **kwargs):
-#             with MatmulReplacer(custom_matmul):
-#                 return self.model(*args, **kwargs)
-    
-#     wrapped_model = WrappedModel(model)
-    
-#     # 3. 测试
-#     print("\n测试模型:")
-#     output = wrapped_model(input_data)
-#     print("输出形状:", output.shape, output)
-#     print("输出形状0:", out0.shape, out0)
-    
-#     if torch.allclose(out0,output,atol=1e-5, rtol=1e-5) :
-#         print("out0 and out are same")
-#     else:
-#         print("out0 and out are diff")
-    
-#     # # 4. 另一种方法：直接修改 forward 方法
-#     # def pre_forward(x):
-#     #     print("前向传播开始")
-#     #     return (x,), {}
-    
-#     # def post_forward(result):
-#     #     print("前向传播结束")
-#     #     return result
-    
-#     # wrap_forward_method(model, pre_forward, post_forward)
-    
-#     # print("\n使用直接修改 forward 方法:")
-#     # output = model(input_data)
-#     # print("输出形状:", output.shape)
-
-
-def get_op_optimized_model(model : nn.Module) -> nn.Module :
     # 创建模型实例
-    # input_data = torch.randn(3, 10)
+    input_data = torch.randn(3, 10)
+    model = SampleModel()
+    print("原始模型结构:")
+    print(model)
+    out0 = model(input_data)
     
     # 1. 替换所有 nn.Linear 模块
     replace_module(model, nn.Linear, CustomLinear)
+    print("\n替换 Linear 后的模型结构:")
+    print(model)
     
     # 2. 创建包装器模型，在 forward 中应用 matmul 替换
     class WrappedModel(nn.Module):
@@ -197,17 +154,33 @@ def get_op_optimized_model(model : nn.Module) -> nn.Module :
             self.model = model
             
         def forward(self, *args, **kwargs):
-            with MatmulReplacer(OpProxy.f_matmul):
+            with MatmulReplacer(custom_matmul):
                 return self.model(*args, **kwargs)
     
     wrapped_model = WrappedModel(model)
-    return wrapped_model
-
-
-def model_info_collect(model, run_model, *run_args) :
-    output = run_model(model, *run_args)
-    for val in OpProxy.GetCollectedKernelArgs() :
-        print('collected : ',val)
-        
-        # TODO: compile kernel using val
-        # TODO: Regist compiled kernel info into OpProxy()
+    
+    # 3. 测试
+    print("\n测试模型:")
+    output = wrapped_model(input_data)
+    print("输出形状:", output.shape, output)
+    print("输出形状0:", out0.shape, out0)
+    
+    if torch.allclose(out0,output,atol=1e-5, rtol=1e-5) :
+        print("out0 and out are same")
+    else:
+        print("out0 and out are diff")
+    
+    # # 4. 另一种方法：直接修改 forward 方法
+    # def pre_forward(x):
+    #     print("前向传播开始")
+    #     return (x,), {}
+    
+    # def post_forward(result):
+    #     print("前向传播结束")
+    #     return result
+    
+    # wrap_forward_method(model, pre_forward, post_forward)
+    
+    # print("\n使用直接修改 forward 方法:")
+    # output = model(input_data)
+    # print("输出形状:", output.shape)

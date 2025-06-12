@@ -1,10 +1,7 @@
 import importlib
 import torch
-from kcg.CompiledKernel import *
-from kcg.Kernel import *
-from kcg.Utils import *
 import torch.nn.functional as F
-from typing import Mapping
+from kcg.Kernel import *
 
 
 @kcg_kernel
