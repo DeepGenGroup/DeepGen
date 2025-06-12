@@ -26,6 +26,6 @@ if __name__ == "__main__":
   A = torch.randn(1024, 128, dtype=torch.float32, device='cuda')
   B = torch.randn(128, 1024, dtype=torch.float32, device='cuda')
   C = torch.empty((1024, 1024), dtype=torch.float32, device='cuda')
-  compile("matmul", [A.t().contiguous(), B, C], target="cuda")
+  compile("matmul", [A.t().contiguous(), B, C], target="rocm")
   print(C)
   print(torch.mm(A, B))

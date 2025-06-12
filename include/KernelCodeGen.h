@@ -68,6 +68,10 @@ namespace KernelCodeGen {
 
     bool optimize(mlir::ModuleOp& mod, const std::map<std::string, std::map<std::string, int64_t>>& tuneConfig);
 
+    bool transform(mlir::ModuleOp& mod);
+
+    bool lowering_(mlir::ModuleOp& mod);
+
     bool lowering(mlir::ModuleOp& mod/*, std::vector<int>& griddims, std::vector<int>& blockdims, int& shmbytes*/);
 
     std::string translate(mlir::ModuleOp& mod);

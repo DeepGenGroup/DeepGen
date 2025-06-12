@@ -21,10 +21,16 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   auto result = generator.fusing(module, fkds);  // fusing
   result = generator.mapping(module, tileCfg);  // mpping
   generator.optimize(module, tuneCfg);  // optimize
-  generator.lowering(module);  // lowering
-  auto path = generator.translate(module);  // translate
-  // std::cout << "[lib] ===========4" << std::endl;
-  return path;
+  result = generator.transform(module);
+  llvm::outs() << "transform result: " << result << "\n";
+  llvm::outs() << module << "\n";
+  // result = generator.lowering_(module);  // lowering
+  // llvm::outs() << "lowering_ result: " << result << "\n";
+  return "";
+  // generator.lowering(module);  // lowering
+  // auto path = generator.translate(module);  // translate
+  // // std::cout << "[lib] ===========4" << std::endl;
+  // return path;
 }
 
 std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
@@ -102,7 +108,25 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
 }
 
 int main() {
-  TuneConfig mm_cfg = {
-    "matmul": 
-  }
+  std::vector<int64_t> shape{1, 32, 4096, 128};
+  generator.setPaltform(Target::ROCm, "906");
+  TuneConfig attn_cfg = {
+    {"attention", 
+      {{"Br", 128}, {"Bc", 128}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+       {"PTr", 2}, {"PTc", 8}, {"OTr", 4}, {"OTc", 8}, 
+       // global to shared
+       {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
+       {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
+       // prefecth
+       {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
+       // P = Q * K
+       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 8},
+       {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
+       // O = P * V
+       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
+       {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
+       {"WARP_SIZE", 64}, {"UNROLL_NUM", 16}}}
+  };
+  std::string path = attention(shape, attn_cfg);
+  llvm::outs() << "DCU hsaco file path: " << path << "\n";
 }

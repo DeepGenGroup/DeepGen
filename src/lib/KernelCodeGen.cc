@@ -221,6 +221,53 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
   return true;
 }
 
+bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
+  // dialect optimize
+  mlir::MLIRContext* context = &(this->context);
+  mlir::PassManager pm1(context);
+  pm1.addPass(createParallelToGPUPass());
+  pm1.addPass(createCombineMemrefPass());
+  pm1.addPass(ReplaceAllocToGetglobalPass());
+  pm1.addPass(createAmendAllocaOpAddrSpacePass(this->target));
+  // pm1.addPass(createAffineUnrollPass());
+  pm1.addPass(createSymbolDCEPass());   // 死代码消除/化简
+  pm1.addPass(createCSEPass());         // 冗余消除
+  if (mlir::failed(pm1.run(mod)))
+    return false;
+  return true;
+}
+
+bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
+  // new lowering
+  mlir::MLIRContext* context = &(this->context);
+  
+  mlir::PassManager pm2(context);
+  pm2.addPass(mlir::createLowerAffinePass());                     // affine -> scf/vector
+  pm2.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
+  pm2.addPass(mlir::createSCFToControlFlowPass());                    // scf -> cf
+
+  ConvertControlFlowToLLVMPassOptions cfOptions;
+  cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  pm2.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));        // cf -> llvm
+  pm2.addPass(createVectorToLLVMPass(/*indexBitwidth*/INDEX_BIT_WIDTH));                    // 自定义 vector to llvm pass
+
+  FinalizeMemRefToLLVMConversionPassOptions memrefOptions;
+  memrefOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // 这个32会将malloc func的参数也定义为i32，以及将ptrtointOp的返回也是i32，llvm malloc func不支持i32
+  // memrefOptions.useAlignedAlloc = true;                                    // 这个如果不开启的话，且上为i32，则llir转换失败，解决使用pass - createMallocFuncOpArgTypeI32ToI64Pass
+  pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));  // memref -> llvm
+
+  ConvertFuncToLLVMPassOptions funcOptions;                                 // passes.h.inc文件中有通过tablegen生成的pass base类型 以及createxxx()
+  funcOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // func loewring 到 llvm 时，其index转到llvm上是使用i32类型
+  funcOptions.useBarePtrCallConv = true;                                    // 使用裸指针，而不使用结构体指针表示memref类型
+  pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));               // func -> llvm
+
+  pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));                       // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
+  pm2.addPass(createGPUToROCDLOrNVVMPass(target, INDEX_BIT_WIDTH));          // GPU indexOp to rocdl/nvvm indexOp
+  if (mlir::failed(pm2.run(mod)))
+    return false;
+  llvm::outs() << "Pm 2: \n" << mod << "\n";
+  return true;
+}
 
 bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target, const std::string& arch) {
 #define FLAG 1

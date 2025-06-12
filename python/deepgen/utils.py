@@ -8,6 +8,7 @@ import subprocess
 import setuptools
 import subprocess
 import tempfile
+from pathlib import Path
 from torch.utils import cpp_extension
 
 dirname = os.path.dirname(os.path.realpath(__file__))
@@ -15,7 +16,7 @@ dirname = os.path.dirname(os.path.realpath(__file__))
 # print(torch_include_dir)
 # compile dependent
 dep_lib = {
-  "rocm": (["/opt/rocm/lib"], ["/opt/rocm/include"], ["hip_hcc", "hsa-runtime64", "amdhip64"]), 
+  "rocm": (["/opt/rocm/lib"], ["/opt/rocm/include"], ["hsa-runtime64", "amdhip64"]), 
   "cuda": (["/usr/local/cuda/lib64", "/usr/lib/x86_64-linux-gnu"], ["/usr/local/cuda/include"], ["cuda", "cudart"])
 }
 
@@ -53,7 +54,7 @@ def _build(name, src, srcdir, library_dirs, include_dirs, libraries):
   py_include_dir = sysconfig.get_paths(scheme=scheme)["include"]
   include_dirs = include_dirs + [srcdir, py_include_dir]
   # for -Wno-psabi, see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=111047
-  cc_cmd = [cc, src, "-O3", "-shared", "-std=c++17", "-fPIC", "-Wno-psabi", "-o", so]
+  cc_cmd = [cc, src, "-O3", "-shared", "-fPIC", "-Wno-psabi", "-o", so]
   cc_cmd += [f'-l{lib}' for lib in libraries]
   cc_cmd += [f"-L{dir}" for dir in library_dirs]
   cc_cmd += [f"-I{dir}" for dir in include_dirs if dir is not None]
@@ -102,6 +103,8 @@ def compileModuleFromFile(name: str, src_path: str, lib_path:str, target="rocm")
   # compile from src file
   name_ = f"{name}_{target}"
   dep = dep_lib[target]
+  if not Path(lib_path).exists():
+    os.mkdir(lib_path)
   so = _build(name_, src_path, lib_path, *dep)
   return loadLibModule(name, so)
 
