@@ -27,7 +27,7 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   // generator.lowering(module);  // lowering
   // return "";
   auto path = generator.translate(module);  // translate
-  std::cout << "[lib] ===========4" << std::endl;
+  // std::cout << "[lib] ===========4" << std::endl;
   return path;
 }
 

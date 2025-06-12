@@ -129,7 +129,7 @@ class Runtime:
   def compile(self, kernel: str, cfg: dict):
     if kernel == "matmul":  # compile_mm 应该接受 cfg["type"]
       kernel_dir = self.compile_mm(cfg["shape"], cfg["config"])
-    elif (kernel == "attetion"):
+    elif (kernel == "attention"):
       kernel_dir = self.compile_attn(cfg["shape"], cfg["config"])
     host_src = makeHostSrc(kernel, len(cfg["type"]), cfg["grid"], cfg["block"], cfg["smem"], kernel_dir, self.target)
     # print(host_src)

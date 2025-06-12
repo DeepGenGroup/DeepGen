@@ -21,7 +21,9 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   auto result = generator.fusing(module, fkds);  // fusing
   result = generator.mapping(module, tileCfg);  // mpping
   generator.optimize(module, tuneCfg);  // optimize
-  generator.lowering(module);  // lowering
+  // generator.lowering(module);  // lowering
+  generator.transform(module);
+  generator.lowering_(module);  // lowering
   auto path = generator.translate(module);  // translate
   // std::cout << "[lib] ===========4" << std::endl;
   return path;
@@ -40,7 +42,7 @@ std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
   std::vector<int64_t> b(shape.begin(), shape.begin()+bl);  // batch
   std::vector<int64_t> sha{k, m}, shb{k, n}, shc{m, n};
   for (int i=b.size()-1; i>=0; i--) {  // add batch
-    sha.insert(sha.begin(), b[i]); shb.insert(shc.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
   }
   // create kernel info
   KernelData kd = {
