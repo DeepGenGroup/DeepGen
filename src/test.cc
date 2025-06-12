@@ -22,15 +22,13 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   result = generator.mapping(module, tileCfg);  // mpping
   generator.optimize(module, tuneCfg);  // optimize
   result = generator.transform(module);
-  llvm::outs() << "transform result: " << result << "\n";
-  llvm::outs() << module << "\n";
-  // result = generator.lowering_(module);  // lowering
-  // llvm::outs() << "lowering_ result: " << result << "\n";
-  return "";
+  // llvm::outs() << "transform result: " << result << "\n";
+  generator.lowering_(module);  // lowering
   // generator.lowering(module);  // lowering
-  // auto path = generator.translate(module);  // translate
-  // // std::cout << "[lib] ===========4" << std::endl;
-  // return path;
+  // return "";
+  auto path = generator.translate(module);  // translate
+  std::cout << "[lib] ===========4" << std::endl;
+  return path;
 }
 
 std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
@@ -108,23 +106,41 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
 }
 
 int main() {
-  std::vector<int64_t> shape{1, 32, 4096, 128};
+  std::vector<int64_t> shape{1, 1, 128, 128};
+  // generator.setPaltform(Target::CUDA, "90");
+  // TuneConfig attn_cfg = {
+  //   {"attention", 
+  //     {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+  //      {"PTr", 4}, {"PTc", 4}, {"OTr", 4}, {"OTc", 8}, 
+  //      // global to shared
+  //      {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
+  //      {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
+  //      // prefecth
+  //      {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
+  //      // P = Q * K
+  //      {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 2}, {"WARP_LAYOUT_P_X", 16},
+  //      {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 4}, {"WARP_SCATTER_WIDTH_Q", 2}, {"WARP_SCATTER_WIDTH_K", 2},
+  //      // O = P * V
+  //      {"BLOCK_LAYOUT_O_Y", 4}, {"BLOCK_LAYOUT_O_X", 2}, {"WARP_LAYOUT_O_Y", 4}, {"WARP_LAYOUT_O_X", 8},
+  //      {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 8}, {"WARP_SCATTER_WIDTH_P", 2}, {"WARP_SCATTER_WIDTH_V", 4},
+  //      {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
+  // };
   generator.setPaltform(Target::ROCm, "906");
   TuneConfig attn_cfg = {
     {"attention", 
-      {{"Br", 128}, {"Bc", 128}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
-       {"PTr", 2}, {"PTc", 8}, {"OTr", 4}, {"OTc", 8}, 
+      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+       {"PTr", 4}, {"PTc", 4}, {"OTr", 4}, {"OTc", 8}, 
        // global to shared
        {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
        {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
        // prefecth
        {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
        // P = Q * K
-       {"BLOCK_LAYOUT_P_Y", 8}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 8},
-       {"BLOCK_SCATTER_WIDTH_Q", 2}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
+       {"BLOCK_LAYOUT_P_Y", 4}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 16},
+       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 4}, {"WARP_SCATTER_WIDTH_Q", 2}, {"WARP_SCATTER_WIDTH_K", 2},
        // O = P * V
-       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
-       {"BLOCK_SCATTER_WIDTH_P", 2}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
+       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 2}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 8},
+       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 8}, {"WARP_SCATTER_WIDTH_P", 2}, {"WARP_SCATTER_WIDTH_V", 4},
        {"WARP_SIZE", 64}, {"UNROLL_NUM", 16}}}
   };
   std::string path = attention(shape, attn_cfg);

@@ -224,68 +224,91 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
 bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
   // dialect optimize
   mlir::MLIRContext* context = &(this->context);
-  mlir::PassManager pm1(context);
-  pm1.addPass(createParallelToGPUPass());
-  pm1.addPass(createCombineMemrefPass());
-  pm1.addPass(ReplaceAllocToGetglobalPass());
-  pm1.addPass(createAmendAllocaOpAddrSpacePass(this->target));
-  // pm1.addPass(createAffineUnrollPass());
-  pm1.addPass(createSymbolDCEPass());   // 死代码消除/化简
-  pm1.addPass(createCSEPass());         // 冗余消除
-  if (mlir::failed(pm1.run(mod)))
+  mlir::PassManager pm(context);
+  pm.addPass(createParallelToGPUPass());
+  pm.addPass(createCombineMemrefPass());
+  pm.addPass(ReplaceAllocToGetglobalPass());
+  pm.addPass(createAmendAllocaOpAddrSpacePass(this->target));
+  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopInvariantCodeMotionPass());
+  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopNormalizePass());
+  pm.addPass(createAffineUnrollPass());
+  pm.addPass(mlir::createCSEPass());  // 冗余消除
+  pm.addPass(mlir::createSymbolDCEPass());  // 死代码消除/化简
+  if (mlir::failed(pm.run(mod)))
     return false;
   return true;
 }
 
 bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
-  // new lowering
+  // lowering
   mlir::MLIRContext* context = &(this->context);
+  // == lowering to other dialect ==
+  mlir::PassManager pm1(context);
+  // affine to scf/vector
+  pm1.addPass(mlir::createLowerAffinePass());
+  pm1.addNestedPass<func::FuncOp>(mlir::createLoopInvariantCodeMotionPass());
+  pm1.addPass(mlir::createCanonicalizerPass());         // 代数简化、死代码消除、冗余操作合并
+  pm1.addPass(mlir::createCSEPass());                   // 冗余消除
+  pm1.addPass(mlir::createSymbolDCEPass());             // 死代码消除/化简
+  // scf to cf
+  pm1.addPass(mlir::createSCFToControlFlowPass());
+  if (mlir::failed(pm1.run(mod)))
+    return false;
   
+  // == lowering to llvm  ==
   mlir::PassManager pm2(context);
-  pm2.addPass(mlir::createLowerAffinePass());                     // affine -> scf/vector
-  pm2.addNestedPass<mlir::func::FuncOp>(createLoopInvariantCodeMotionPass());
-  pm2.addPass(mlir::createSCFToControlFlowPass());                    // scf -> cf
-
+  // cf to llvm
   ConvertControlFlowToLLVMPassOptions cfOptions;
   cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  pm2.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));        // cf -> llvm
-  pm2.addPass(createVectorToLLVMPass(/*indexBitwidth*/INDEX_BIT_WIDTH));                    // 自定义 vector to llvm pass
-
+  pm2.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));
+  // vector to llvm
+  pm2.addPass(createVectorToLLVMPass(INDEX_BIT_WIDTH));
+  // memref to llvm
   FinalizeMemRefToLLVMConversionPassOptions memrefOptions;
-  memrefOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // 这个32会将malloc func的参数也定义为i32，以及将ptrtointOp的返回也是i32，llvm malloc func不支持i32
-  // memrefOptions.useAlignedAlloc = true;                                    // 这个如果不开启的话，且上为i32，则llir转换失败，解决使用pass - createMallocFuncOpArgTypeI32ToI64Pass
-  pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));  // memref -> llvm
-
-  ConvertFuncToLLVMPassOptions funcOptions;                                 // passes.h.inc文件中有通过tablegen生成的pass base类型 以及createxxx()
-  funcOptions.indexBitwidth = INDEX_BIT_WIDTH;                              // func loewring 到 llvm 时，其index转到llvm上是使用i32类型
-  funcOptions.useBarePtrCallConv = true;                                    // 使用裸指针，而不使用结构体指针表示memref类型
-  pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));               // func -> llvm
-
-  pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));                       // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
-  pm2.addPass(createGPUToROCDLOrNVVMPass(target, INDEX_BIT_WIDTH));          // GPU indexOp to rocdl/nvvm indexOp
+  memrefOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  // memrefOptions.useAlignedAlloc = true;
+  pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));
+  pm2.addPass(createGlobalShmSetZeroPass());
+  // func to llvm
+  ConvertFuncToLLVMPassOptions funcOptions;
+  funcOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  funcOptions.useBarePtrCallConv = true;
+  pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));
+  pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));  // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
+  // gpu to rocdl/nvvm
+  pm2.addPass(createGPUToROCDLOrNVVMPass(this->target, INDEX_BIT_WIDTH));
+  // math to llvm
+  pm2.addPass(mlir::createConvertMathToLLVMPass());  // ConvertMathToLLVMPassOptions options.approximateLog1p 精度换性能(true)
+  // arith to llvm
+  ArithToLLVMConversionPassOptions arithOptions;
+  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
+  pm2.addPass(mlir::createArithToLLVMConversionPass(arithOptions));
+  // simipfy
+  pm2.addPass(mlir::createCanonicalizerPass());
+  pm2.addPass(mlir::createCSEPass());
+  pm2.addPass(mlir::createSymbolDCEPass());
   if (mlir::failed(pm2.run(mod)))
     return false;
-  llvm::outs() << "Pm 2: \n" << mod << "\n";
   return true;
 }
 
 bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target, const std::string& arch) {
-#define FLAG 1
+  #define FLAG 1
   mlir::PassManager pm(context);
   // pm.addPass(createAddDebugLogPass());
   pm.addPass(createAddExternalLibPass(target, arch));      // 给mlir module添加lib属性
 
   // pm.addPass(createExtractAffineParallelPass());         // affine.parallel 根据内外层，将loopIvs 替换为bid、tid
   pm.addPass(createParallelToGPUPass());                   // affine paralleOp to GPU indexOp
-#if FLAG
+  #if FLAG
   pm.addPass(createCombineMemrefPass());
   // pm.addPass(createFlattenMemrefPass());
-#endif
+  #endif
   pm.addPass(ReplaceAllocToGetglobalPass());
-#if FLAG
+  #if FLAG
   pm.addPass(createAffineUnrollPass());                      // 对打了unroll属性的affine loop进行循环展开，展开次数和性能有很大关系
   // pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createSimplifyAffineStructuresPass());   // if的简化
-#endif
+  #endif
   pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createAffineLoopInvariantCodeMotionPass());   // 循环不变量移动
   // pm.addNestedPass<mlir::func::FuncOp>(mlir::affine::createSimplifyAffineStructuresPass());  // 加入后会导致shm conflict 增加
   pm.addPass(createAmendAllocaOpAddrSpacePass(target));    // 按照 target 给 allocaOp 修改地址空间

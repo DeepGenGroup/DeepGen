@@ -10,42 +10,42 @@ namespace KernelCodeGen {
 // ===================================================================
 // 将memref.alloca的地址空间进行修改，local=0为cuda/loacl=5为rocm
 struct AmendAllocaOpAddrSpace : public OpRewritePattern<memref::AllocaOp> {
-  using OpRewritePattern<memref::AllocaOp>::OpRewritePattern;
-private:
-  Target target;
-public:
-  AmendAllocaOpAddrSpace(MLIRContext *context, Target target) 
-  : OpRewritePattern<memref::AllocaOp>(context),  target(target) {}
+  AmendAllocaOpAddrSpace(MLIRContext *context, Target target)
+    : OpRewritePattern(context), target(target) {}
 
-  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp, PatternRewriter &rewriter) const final {
+  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp, PatternRewriter &rewriter) const override {
     MemRefType originalType = allocaOp.getType();
-    int newAddressSpace = 0;
-    if (target == Target::ROCm) {
-      newAddressSpace = 5;
+    int requiredSpace = (target == Target::ROCm) ? 5 : 0;
+    if (static_cast<int>(originalType.getMemorySpaceAsInt()) == requiredSpace) {
+      return failure();
     }
-    MemRefType newType = MemRefType::get(originalType.getShape(), 
-                                         originalType.getElementType(),{}, newAddressSpace);
-    allocaOp.getResult().setType(newType);
+    MLIRContext *ctx = allocaOp.getContext();
+    Attribute memorySpaceAttr = IntegerAttr::get(IntegerType::get(ctx, 64), requiredSpace);
+    MemRefType newType = MemRefType::get(originalType.getShape(), originalType.getElementType(), 
+                                         originalType.getLayout(),memorySpaceAttr);
+
+    rewriter.setInsertionPoint(allocaOp);
+    auto newAlloca = rewriter.create<memref::AllocaOp>(allocaOp.getLoc(), newType);
+    rewriter.replaceOp(allocaOp, newAlloca.getResult());
     return success();
   }
-};
-
-// memref.alloca的地址空间进行修改pass
-struct AmendAllocaOpAddrSpacePass : public PassWrapper<AmendAllocaOpAddrSpacePass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AmendAllocaOpAddrSpacePass)
-    explicit AmendAllocaOpAddrSpacePass(Target target) : target(target) {};
   private:
     Target target;
-  
+};
+
+struct AmendAllocaOpAddrSpacePass : public PassWrapper<AmendAllocaOpAddrSpacePass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AmendAllocaOpAddrSpacePass)
+
+  AmendAllocaOpAddrSpacePass(Target target) : target(target) {}
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-
     patterns.add<AmendAllocaOpAddrSpace>(&getContext(), target);
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))){
-      return signalPassFailure();
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
+      signalPassFailure();
     }
-
   }
+  private:
+    Target target;
 };
 
 
@@ -183,8 +183,8 @@ public:
     }
 
     Operation *function;
-    if (auto gpuFunc = op->template getParentOfType<gpu::GPUFuncOp>())
-      function = gpuFunc;
+    if (auto Func = op->template getParentOfType<func::FuncOp>())
+      function = Func;
     if (auto llvmFunc = op->template getParentOfType<LLVM::LLVMFuncOp>())
       function = llvmFunc;
     if (!boundsAttrName.empty() && function) {
@@ -214,17 +214,22 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
   LogicalResult
   matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
     Location loc = op->getLoc();
+    Value initShflValue = adaptor.getValue();
+    Type shflType = initShflValue.getType();
     // TODO: Add support for non 32-bit shuffle values.
-    if (adaptor.getValue().getType().getIntOrFloatBitWidth() != 32)
-      return failure();
+    if (!shflType.isIntOrFloat() || shflType.getIntOrFloatBitWidth() != 32)
+      return rewriter.notifyMatchFailure(op, "only 32-bit int/float types are supported");
+
     const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
+
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+    Value zero_ = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
     Value minus1 = rewriter.create<arith::ConstantIntOp>(loc, -1, 32);
-    Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type, ValueRange{minus1, zero});
+    Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type, ValueRange{minus1, zero_});
     Value srcLaneId = rewriter.create<ROCDL::MbcntHiOp>(loc, int32Type, ValueRange{minus1, mbcntLo});
 
     Value width = adaptor.getWidth();
+    Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
     Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
     Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
     Value widthOrZeroIfOutside = rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);
@@ -233,6 +238,9 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     // TODO: Use ds_swizzle for XOR when step/offsets are constants for better
     // perf.
     switch (op.getMode()) {
+    case gpu::ShuffleMode::DOWN:
+      dstLane = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, adaptor.getOffset());
+      break;
     case gpu::ShuffleMode::XOR:
       dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId, adaptor.getOffset());
       break;
@@ -242,17 +250,17 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     default:
       return failure();
     }
-    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
+    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
+        loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
     Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane, dstLane, srcLaneId);
     Value two = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 2);
     Value dwordAlignedDstLane = rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);
-    Value initShflValue = adaptor.getValue();
-    if (adaptor.getValue().getType().isF32()) {
+    if (shflType.isF32()) {
       initShflValue = rewriter.create<LLVM::BitcastOp>(loc, int32Type, initShflValue);
     }
     Value shflValue = rewriter.create<ROCDL::DsBpermuteOp>(loc, int32Type, dwordAlignedDstLane, initShflValue);
-    if (adaptor.getValue().getType().isF32()) {
-      shflValue = rewriter.create<LLVM::BitcastOp>(loc, adaptor.getValue().getType(), shflValue);
+    if (shflType.isF32()) {
+      shflValue = rewriter.create<LLVM::BitcastOp>(loc, shflType, shflValue);
     }
     rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
     return success();
@@ -385,9 +393,10 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
     LLVMTypeConverter typeConverter(&getContext(), options);
 
     Codetarget.addIllegalDialect<gpu::GPUDialect>();
-    Codetarget.addLegalDialect<ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
+    Codetarget.addLegalDialect<LLVM::LLVMDialect, ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
 
     if (target == Target::ROCm) {
+      Codetarget.addLegalDialect<arith::ArithDialect>();
       // populateGpuToROCDLConversionPatterns(typeConverter, patterns, gpu::amd::Runtime::HIP);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, ROCDL::BlockIdXOp, 
                                                ROCDL::BlockIdYOp, ROCDL::BlockIdZOp>>(typeConverter, AttrGridDim);
@@ -395,7 +404,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                ROCDL::ThreadIdYOp, ROCDL::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToROCDLLowering>(typeConverter);
       patterns.add<GPUBarrierToROCDLLowering>(&getContext());
-      populateMathToROCDLConversionPatterns(typeConverter, patterns);
+      populateMathToROCDLConversionPatterns(typeConverter, patterns);  // exp仅支持fp64/16
     } else if (target == Target::CUDA) {
       // populateGpuToNVVMConversionPatterns(typeConverter, patterns, 10);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, NVVM::BlockIdXOp, 
@@ -404,7 +413,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                NVVM::ThreadIdYOp, NVVM::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToNVVMLowering>(typeConverter);
       patterns.add<GPUBarrierToNVVMLowering>(&getContext());
-      populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);
+      populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);  // 大部分只支持fp32/fp16
     }
 
     if (failed(applyPartialConversion(getOperation(), Codetarget, std::move(patterns)))){
@@ -492,9 +501,13 @@ struct VectorToLLVMPass : public PassWrapper<VectorToLLVMPass, OperationPass<Mod
 
     LowerToLLVMOptions options(&getContext());
     options.overrideIndexBitwidth(indexBitWidth);
+    bool force32BitVectorIndices = false;
+    if (indexBitWidth == 32) {
+      force32BitVectorIndices = true;
+    }
 
     LLVMTypeConverter converter(&getContext(), options);
-    mlir::populateVectorToLLVMConversionPatterns(converter, patterns, false, true);
+    mlir::populateVectorToLLVMConversionPatterns(converter, patterns, false, force32BitVectorIndices);
     // mlir::populateVectorToLLVMMatrixConversionPatterns(converter, patterns);
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
