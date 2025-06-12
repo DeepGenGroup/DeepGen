@@ -71,7 +71,7 @@ class TransformerBlock(nn.Module):
 
 # 定义Llama模型
 class Llama(nn.Module):
-    def __init__(self, args, opProxy : OpProxy | None):
+    def __init__(self, args, opProxy : OpProxy ):
         super().__init__()
         self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
         if opProxy is None :

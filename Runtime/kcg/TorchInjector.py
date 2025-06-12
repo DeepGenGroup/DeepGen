@@ -50,26 +50,32 @@ class OpProxy :
         k = a.shape[-1]
         n = b.shape[-1]
         batch = a.shape[0:-2] 
-        if [m,n,k] == [1024,1024,1024]: 
-            c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
-            def _f() :
-                f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp.pkl',matmul.MatmulOp)
-                aT = a.transpose(-1,-2).contiguous()
-                f(aT,b,c)
-                return c
-            return _f()
-        elif [m,n,k] == [256,256,512] : 
-            c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
-            def _f() :
-                f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl',matmul.MatmulOp)
-                aT = a.transpose(-1,-2).contiguous()
-                f(aT,b,c)
-                return c
-            return _f()
-        else:
-            print("shapeA = ",a.shape, 'shapeB =',b.shape)
-            OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
-            return torch.matmul(a,b)
+        ret = torch.matmul(a,b)
+        try:
+            if [m,n,k] == [1024,1024,1024]: 
+                c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
+                def _f() :
+                    f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp.pkl',matmul.MatmulOp)
+                    aT = a.transpose(-1,-2).contiguous()
+                    f(aT,b,c)
+                    return c
+                return _f()
+            elif [m,n,k] == [256,256,512] : 
+                c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
+                def _f() :
+                    f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl',matmul.MatmulOp)
+                    aT = a.transpose(-1,-2).contiguous()
+                    f(aT,b,c)
+                    return c
+                return _f()
+            else:
+                print("shapeA = ",a.shape, 'shapeB =',b.shape)
+                OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
+        except Exception as e:
+            print(e)
+        except IOError as e:
+            print(e)
+        return ret
     
     @staticmethod
     def f_attention(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor) :
