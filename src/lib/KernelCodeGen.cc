@@ -292,6 +292,17 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   return true;
 }
 
+std::string KernelCodeGenerator::readMLIRAndLowering(const std::string& filePath) {
+  // read mlir file
+  mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<mlir::ModuleOp>(filePath, &(this->context));
+  mlir::ModuleOp module = *mod;
+  this->transform(module);
+  this->lowering_(module);
+  LOG_DEBUG("===== llvm: =======\n", module);
+  auto path = this->translate(module);
+  return path;
+}
+
 bool transforms(mlir::ModuleOp& mod, mlir::MLIRContext* context, Target target, const std::string& arch) {
   #define FLAG 1
   mlir::PassManager pm(context);
@@ -444,7 +455,8 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
     // llvm::outs() << " =========== after LLVM IR ============\n";
     // llvm::outs() << llvmIR << "\n";
     const std::string gfx_triple{"amdgcn-amd-amdhsa"};
-    const std::string gfx_features{"+code-object-v4"};
+    // const std::string gfx_features{"+code-object-v4"};
+    const std::string gfx_features{""};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
   } else {
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));

@@ -228,7 +228,7 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type, ValueRange{minus1, zero_});
     Value srcLaneId = rewriter.create<ROCDL::MbcntHiOp>(loc, int32Type, ValueRange{minus1, mbcntLo});
 
-    Value width = adaptor.getWidth();
+    Value width = adaptor.getWidth();  // 这是自己设置的
     Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
     Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
     Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
@@ -250,8 +250,7 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     default:
       return failure();
     }
-    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
-        loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
+    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
     Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane, dstLane, srcLaneId);
     Value two = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 2);
     Value dwordAlignedDstLane = rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);

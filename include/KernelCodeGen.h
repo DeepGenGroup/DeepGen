@@ -72,6 +72,8 @@ namespace KernelCodeGen {
 
     bool lowering_(mlir::ModuleOp& mod);
 
+    std::string readMLIRAndLowering(const std::string& filePath);
+
     bool lowering(mlir::ModuleOp& mod/*, std::vector<int>& griddims, std::vector<int>& blockdims, int& shmbytes*/);
 
     std::string translate(mlir::ModuleOp& mod);

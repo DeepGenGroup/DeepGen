@@ -27,7 +27,7 @@ if __name__ == "__main__":
   # A = torch.randn(128, 1024, 128, dtype=torch.float32, device='cuda')
   # B = torch.randn(128, 128, 1024, dtype=torch.float32, device='cuda')
   # C = torch.empty((128, 1024, 1024), dtype=torch.float32, device='cuda')
-  # compile("matmul", [A.transpose(-1, -2).contiguous(), B, C], target="cuda")
+  # compile("matmul", [A.transpose(-1, -2).contiguous(), B, C], target="rocm")
   # print(C)
   # print(torch.matmul(A, B))
 
@@ -35,7 +35,7 @@ if __name__ == "__main__":
   K = torch.randn(1, 32, 4096, 128, dtype=torch.float32, device='cuda')
   V = torch.randn(1, 32, 4096, 128, dtype=torch.float32, device='cuda')
   O = torch.empty((1, 32, 4096, 128), dtype=torch.float32, device='cuda')
-  compile("attention", [Q.transpose(2, 3).contiguous(), K.transpose(2, 3).contiguous(), V, O], target="cuda")
+  compile("attention", [Q.transpose(2, 3).contiguous(), K.transpose(2, 3).contiguous(), V, O], target="rocm")
   print(O)
   P = F.softmax(torch.matmul(Q, K.transpose(2, 3)), dim=-1)
   print(torch.matmul(P, V))

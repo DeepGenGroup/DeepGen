@@ -24,6 +24,7 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   result = generator.transform(module);
   // llvm::outs() << "transform result: " << result << "\n";
   generator.lowering_(module);  // lowering
+  llvm::outs() << module << "\n";
   // generator.lowering(module);  // lowering
   // return "";
   auto path = generator.translate(module);  // translate
@@ -105,6 +106,17 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
   return compile_kernel(config, tileConfig, kds, fkds);
 }
 
+#define READ 1
+#if READ
+
+int main(int argc, char* argv[]) {
+  generator.setPaltform(Target::ROCm, "906");
+  generator.readMLIRAndLowering(argv[1]);
+  return 0;
+}
+
+#else
+
 int main() {
   std::vector<int64_t> shape{1, 1, 128, 128};
   // generator.setPaltform(Target::CUDA, "90");
@@ -146,3 +158,4 @@ int main() {
   std::string path = attention(shape, attn_cfg);
   llvm::outs() << "DCU hsaco file path: " << path << "\n";
 }
+#endif
