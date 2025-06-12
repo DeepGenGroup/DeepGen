@@ -4,7 +4,7 @@ from kcg.HIPLauncher import *
 from kcg.CUDALauncher import *
 from kcg.Operators import matmul, attention
 import multiprocessing
-import attn_FP32_test as ATT
+import Runtime.kcg.tuning.attn_FP32_test as ATT
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process

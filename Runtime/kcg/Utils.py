@@ -397,6 +397,9 @@ def calculate_file_hash(file_path ,algorithm='md5',hash_len=10) -> int:
 
 
 class DeviceInfo :
+    __gpuInfoLibPath = None
+    __get_gpu_info = None
+    __get_device_count = None
     @staticmethod
     def get_cuda_stream(idx=None):
         if idx is None:
@@ -463,7 +466,39 @@ class DeviceInfo :
         if not torch.cuda.is_available() :
             torch.cuda.init()
             torch.cuda.empty_cache()
-
+    
+    @staticmethod
+    def __init_gpu_info() :
+        if DeviceInfo.__gpuInfoLibPath is None :
+            if is_hip() :
+                src = Path(PathManager.gpuinfo_c_path_hip()).read_text()
+                fname = "gpuinfo_hip.so"
+            else:
+                src = Path(PathManager.gpuinfo_c_path_cuda()).read_text()
+                fname = "gpuinfo_cuda.so"
+            tmpdir = PathManager.default_cache_dir()
+            src_path = tmpdir + "/main_gpuinfo.c"
+            with open(src_path, "w") as f:
+                f.write(src)
+            DeviceInfo.__gpuInfoLibPath = build(fname, src_path, tmpdir)
+        if DeviceInfo.__get_gpu_info is None or DeviceInfo.__get_device_count is None :
+            import importlib.util
+            spec = importlib.util.spec_from_file_location("gpu_info", DeviceInfo.__gpuInfoLibPath)
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            DeviceInfo.__get_gpu_info = getattr(mod, "get_gpu_info")
+            DeviceInfo.__get_device_count = getattr(mod, "get_device_count")
+    
+    @staticmethod
+    def get_gpu_info() :
+        DeviceInfo.__init_gpu_info()
+        return DeviceInfo.__get_gpu_info()
+    
+    @staticmethod
+    def get_device_count() :
+        DeviceInfo.__init_gpu_info()
+        return DeviceInfo.__get_device_count()
+    
 # 路径管理器。存放了各种路径设置
 class PathManager :
     _s_cuda_install_dir = ""
@@ -522,9 +557,18 @@ class PathManager :
     @staticmethod
     def loader_c_path_hip()->str:
         return os.path.join(PathManager.project_dir(),"Runtime/kcg/loaderCCode/hip.c")
+    
     @staticmethod
     def loader_c_path_cuda()->str:
         return os.path.join(PathManager.project_dir(),"Runtime/kcg/loaderCCode/cuda.c")
+    
+    @staticmethod
+    def gpuinfo_c_path_hip()->str:
+        return os.path.join(PathManager.project_dir(),"Runtime/kcg/gpuInfoCode/HipGPUInfo.cc")
+    
+    @staticmethod
+    def gpuinfo_c_path_cuda()->str:
+        return os.path.join(PathManager.project_dir(),"Runtime/kcg/gpuInfoCode/CudaGPUInfo.cc")
     
     @staticmethod
     def kcg_compiler_path()->str:

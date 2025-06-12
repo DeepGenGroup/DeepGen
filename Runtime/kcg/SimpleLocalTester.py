@@ -6,7 +6,7 @@ from kcg.HIPLauncher import *
 from kcg.CUDALauncher import *
 from kcg.Operators import matmul, attention
 import multiprocessing
-import attn_FP32_test as ATT
+import Runtime.kcg.tuning.attn_FP32_test as ATT
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process
@@ -151,10 +151,10 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
     if OpTy is matmul.MatmulOp :
-        import NewCfgTest as ns_mm
+        import Runtime.kcg.tuning.NewCfgTest as ns_mm
         return ns_mm.getTuneSpace(cfgPath)
     if OpTy is attention.AttentionOp :
-        import attn_FP32_test as ns_attentiopn
+        import Runtime.kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace([1, 32, 2048, 128],[])
         # return ns_attentiopn.getTuneSpace([1, 32, 128, 128],[])
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'

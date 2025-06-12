@@ -89,13 +89,39 @@ class Llama(nn.Module):
             h = self.norm(h)
         return self.output(h)
 
-if __name__ == "__main__":
-    # 测试Llama模型
+    
+def get_model(args : ModelArgs, opProxy = OpProxy() ):
     DeviceInfo.init_cuda(7)
-    args = ModelArgs()
-    proxy = OpProxy()
     # proxy = None
-    model = Llama(args, proxy).to(args.device)
+    model = Llama(args, opProxy).to(args.device)
+    return model
+
+def run_model(model, args) :
     input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
     output = model(input_ids)
-    print(output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
+    return output
+
+
+
+def compile_model(opProxy, model, args : ModelArgs) :
+    output = run_model(model,args)
+    print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
+    for val in opProxy.GetCollectedKernelArgs() :
+        print(val)
+        # TODO: compile kernel using val
+        # TODO: Regist compiled kernel info into OpProxy()
+    
+
+if __name__ == "__main__":
+    # 测试Llama模型
+    args = ModelArgs()
+    opProxy = OpProxy()
+    # build model
+    model = get_model(args,opProxy)
+    # first run, then compile and tuning kernels
+    compile_model(opProxy,model,args)
+    # benchmark
+    run_model(model,args)
+    
+    print( DeviceInfo.get_gpu_info() ) 
+    print( DeviceInfo.get_device_count() ) 

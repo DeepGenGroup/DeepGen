@@ -6,8 +6,9 @@ from kcg.HIPLauncher import *
 from kcg.CUDALauncher import *
 from kcg.Operators import matmul, attention
 import multiprocessing
-import attn_FP32_test as ATT
+import Runtime.kcg.tuning.attn_FP32_test as ATT
+from torch import nn
 
-def compile_model_kernels(mdl) :
+def compile_model_kernels(model : nn.Module) :
     ...
 

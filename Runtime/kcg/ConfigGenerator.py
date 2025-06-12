@@ -4,7 +4,7 @@ from Utils import *
 import multiprocessing
 from Operators.matmul import *
 # from CreateCfgAndCompile import CreateMatmulConfig
-from NewCfgTest import CreateMatmulConfig
+from Runtime.kcg.tuning.NewCfgTest import CreateMatmulConfig
 
 
 def _process_cfg(encoder : TuningSpaceEncoder, cfgs : List[Dict], check_funcs : List[callable], tempfilename:str ) :

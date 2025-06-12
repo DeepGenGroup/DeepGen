@@ -261,6 +261,7 @@ def getTuneSpace(geemConfigPath : str) -> TsGeneratorType :
   kams = cmc.createMatMulConfig(thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256)  # KernelArgMatmul
   return kams
 
+
 # # example code 
 # if "__main__" == __name__:
 #   path = "/home/xiebaokang/projects/mlir/DeepGen/TuningConfigs/GEMM_configs_1024.json"
