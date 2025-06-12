@@ -50,7 +50,7 @@ class OpProxy :
         k = a.shape[-1]
         n = b.shape[-1]
         batch = a.shape[0:-2] 
-        ret = torch.matmul(a,b)
+        ret = torch._C._VariableFunctions.matmul(a, b)
         try:
             if [m,n,k] == [1024,1024,1024]: 
                 c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
@@ -69,7 +69,7 @@ class OpProxy :
                     return c
                 return _f()
             else:
-                print("shapeA = ",a.shape, 'shapeB =',b.shape)
+                # print("shapeA = ",a.shape, 'shapeB =',b.shape)
                 OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
         except Exception as e:
             print(e)

@@ -3,7 +3,7 @@ from torch import nn
 import torch.nn.functional as F
 from typing import Callable
 from kcg.TorchInjector import *
-
+from kcg.ModelUtils import *
 
 # 定义Llama模型的参数
 class ModelArgs:
@@ -89,15 +89,34 @@ class Llama(nn.Module):
             h = self.norm(h)
         return self.output(h)
 
+
+# 定义Llama模型
+class LlamaOld(nn.Module):
+    def __init__(self, args ):
+        super().__init__()
+        self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
+        self.layers = nn.ModuleList([TransformerBlock(args) for _ in range(args.n_layers)])
+        self.norm = RMSNorm(args.dim)
+        self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
+
+    def forward(self, x):
+        h = self.tok_embeddings(x)
+        for layer in self.layers:
+            h = layer(h)
+            h = self.norm(h)
+        return self.output(h)
+
     
 def get_model(args : ModelArgs, opProxy = OpProxy() ):
     DeviceInfo.init_cuda(7)
     # proxy = None
-    model = Llama(args, opProxy).to(args.device)
+    model = LlamaOld(args).to(args.device)
+    # model = Llama(args, opProxy).to(args.device)
     return model
 
-def run_model(model, args) :
-    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
+def run_model(model, args : ModelArgs, input_ids : torch.Tensor = None) :
+    if input_ids is None :
+        input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
     output = model(input_ids)
     return output
 
@@ -107,21 +126,54 @@ def compile_model(opProxy, model, args : ModelArgs) :
     output = run_model(model,args)
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
     for val in opProxy.GetCollectedKernelArgs() :
-        print(val)
+        print('collected : ',val)
+        
         # TODO: compile kernel using val
         # TODO: Regist compiled kernel info into OpProxy()
+
+
+# 旧的实现方式：侵入式，对模型代码做修改替换算子
+# if __name__ == "__main__":
+#     # 测试Llama模型
+#     args = ModelArgs()
+#     opProxy = OpProxy()
+#     # build model
+#     model = get_model(args,opProxy)
     
+    
+#     # first run, then compile and tuning kernels
+#     compile_model(opProxy,model,args)
+#     # benchmark
+#     run_model(model,args)
+    
+#     info = DeviceInfo.get_gpu_info()
+#     print('info.compute_units = ',info.compute_units)
+#     print('info.shared_mem_per_block = ',info.shared_mem_per_block)
+#     print('info.regs_per_block = ',info.regs_per_block)
+#     print('info.warp_size = ',info.warp_size)
+#     print('info.global_mem = ',info.global_mem)
+#     print('info.max_thread_per_block = ',info.max_thread_per_block)
+#     print('info.clock_rate_khz = ',info.clock_rate_khz)
+#     print('info.mem_clock_rate_khz = ',info.mem_clock_rate_khz)
+#     print('info.mem_bus_width = ',info.mem_bus_width)
+#     print('info.l2_cache_size = ',info.l2_cache_size )
+#     print( DeviceInfo.get_device_count() ) 
+
 
 if __name__ == "__main__":
     # 测试Llama模型
     args = ModelArgs()
-    opProxy = OpProxy()
     # build model
-    model = get_model(args,opProxy)
-    # first run, then compile and tuning kernels
-    compile_model(opProxy,model,args)
-    # benchmark
-    run_model(model,args)
+    model = get_model(args)
+    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(args.device)
+    out0 = run_model(model,args, input_ids)
     
-    print( DeviceInfo.get_gpu_info() ) 
-    print( DeviceInfo.get_device_count() ) 
+    optimizedModel = get_op_optimized_model(model).to(args.device)
+    out1 = run_model(optimizedModel,args, input_ids)
+    
+    if torch.allclose(out0,out1,atol=1e-5,rtol=1e-5):
+        print("===== test correct ")
+    else:
+        print("===== test fail ")
+    for val in OpProxy.GetCollectedKernelArgs() :
+        print('collected : ',val)
