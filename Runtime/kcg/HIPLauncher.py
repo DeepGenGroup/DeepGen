@@ -177,7 +177,7 @@ static inline DevicePtrInfo getPointer(PyObject *obj, int idx) {{
 }}
 
 static PyObject* launch(PyObject* self, PyObject* args) {{
-  printf("[launcher] === 1\\n");
+  // printf("[launcher] === 1\\n");
   int gridX, gridY, gridZ;
   uint64_t _stream;
   uint64_t _function;
@@ -194,18 +194,18 @@ static PyObject* launch(PyObject* self, PyObject* args) {{
   if(!PyArg_ParseTuple(args, \"{format}\", &gridX, &gridY, &gridZ, &blockX,&blockY,&blockZ, &num_ctas, &clusterDimX, &clusterDimY, &clusterDimZ, &shared_memory, &_stream, &_function, &launch_enter_hook, &launch_exit_hook, &compiled_kernel{', ' + ', '.join(f"&_arg{i}" for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''})) {{
     return NULL;
   }}
-  printf("hiplauncher parsed : \\n");
-  printf("- gridX : %d \\n",gridX);
-  printf("- gridY : %d \\n",gridY);
-  printf("- gridZ : %d \\n",gridZ);
-  printf("- blockX : %d \\n",blockX);
-  printf("- blockY : %d \\n",blockY);
-  printf("- blockZ : %d \\n",blockZ);
-  printf("- num_ctas : %d \\n",num_ctas);
-  printf("- clusterDimX : %d \\n",clusterDimX);
-  printf("- clusterDimY : %d \\n",clusterDimY);
-  printf("- clusterDimZ : %d \\n",clusterDimZ);
-  printf("- shared_memory : %d \\n",shared_memory);
+  // printf("hiplauncher parsed : \\n");
+  // printf("- gridX : %d \\n",gridX);
+  // printf("- gridY : %d \\n",gridY);
+  // printf("- gridZ : %d \\n",gridZ);
+  // printf("- blockX : %d \\n",blockX);
+  // printf("- blockY : %d \\n",blockY);
+  // printf("- blockZ : %d \\n",blockZ);
+  // printf("- num_ctas : %d \\n",num_ctas);
+  // printf("- clusterDimX : %d \\n",clusterDimX);
+  // printf("- clusterDimY : %d \\n",clusterDimY);
+  // printf("- clusterDimZ : %d \\n",clusterDimZ);
+  // printf("- shared_memory : %d \\n",shared_memory);
   if (launch_enter_hook != Py_None) {{
     PyObject_CallObject(launch_enter_hook, args);
   }}
@@ -214,10 +214,10 @@ static PyObject* launch(PyObject* self, PyObject* args) {{
   // raise exception asap
   {"; ".join([f"DevicePtrInfo ptr_info{i} = getPointer(_arg{i}, {i}); if (!ptr_info{i}.valid) return NULL;" if ty[0] == "*" else "" for i, ty in kernelSignature.items()])};
   Py_BEGIN_ALLOW_THREADS;
-  printf("- call _launch function \\n");
+  // printf("- call _launch function \\n");
   _launch(gridX, gridY, gridZ, blockX, blockY, blockZ, num_ctas, clusterDimX, clusterDimY, clusterDimZ, shared_memory, (hipStream_t)_stream, (hipFunction_t)_function{', ' + ', '.join(f"ptr_info{i}.dev_ptr" if ty[0]=="*" else f"_arg{i}"for i, ty in kernelSignature.items()) if len(kernelSignature) > 0 else ''});
   Py_END_ALLOW_THREADS;
-  printf("[launcher] === 222\\n");
+  // printf("[launcher] === 222\\n");
 
   if (launch_exit_hook != Py_None) {{
     PyObject_CallObject(launch_exit_hook, args);

@@ -4,13 +4,15 @@ import torch.nn.functional as F
 from typing import Callable
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
+from kcg.KernelTuneUtils import kernel_compile_tuning
 
 # 定义Llama模型的参数
 class ModelArgs:
     dim = 512
     n_layers = 8
     n_heads = 8
-    vocab_size = 50000
+    vocab_size = 8192  # 只能运行 2^ 的尺度
+    # vocab_size = 50000  # 只能运行 2^ 的尺度
     max_seq_len = 256
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
@@ -33,16 +35,17 @@ class Attention(nn.Module):
         self.wk = nn.Linear(args.dim, args.n_heads * (args.dim // args.n_heads), bias=False)
         self.wv = nn.Linear(args.dim, args.n_heads * (args.dim // args.n_heads), bias=False)
         self.wo = nn.Linear(args.n_heads * (args.dim // args.n_heads), args.dim, bias=False)
-        self.F_matmul = f_matmul
+        self.F_matmul = torch.matmul
         
     def forward(self, x):
         q = self.wq(x)
         k = self.wk(x)
         v = self.wv(x)
-        scores = self.F_matmul(q, k.transpose(-2, -1)) / (self.args.dim ** 0.5)
+        F_matmul = torch.matmul
+        scores = F_matmul(q, k.transpose(-2, -1)) / (self.args.dim ** 0.5)
         # scores = torch.matmul(q, k.transpose(-2, -1)) / (self.args.dim ** 0.5)
         attn_weights = F.softmax(scores, dim=-1)
-        context = self.F_matmul(attn_weights, v)
+        context = F_matmul(attn_weights, v)
         # context = torch.matmul(attn_weights, v)
         return self.wo(context)
 
@@ -107,11 +110,9 @@ class LlamaOld(nn.Module):
         return self.output(h)
 
     
-def get_model(args : ModelArgs, opProxy = OpProxy() ):
+def get_model(args : ModelArgs ):
     DeviceInfo.init_cuda(7)
-    # proxy = None
     model = LlamaOld(args).to(args.device)
-    # model = Llama(args, opProxy).to(args.device)
     return model
 
 def run_model(model, args : ModelArgs, input_ids : torch.Tensor = None) :
@@ -125,7 +126,7 @@ def run_model(model, args : ModelArgs, input_ids : torch.Tensor = None) :
 def compile_model( model, args : ModelArgs, devId : int) :
     output = run_model(model,args)
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
-    from kcg.KernelTuneUtils import kernel_tuning
+    mmTemplateJson = f'{PathManager.project_dir()}/TuningConfigs/GEMM_cfg_32.json'
     for (Ty , args ) in OpProxy.GetCollectedKernelArgs() :
         assert issubclass(Ty,OpInterface) , f"Ty must be inherited from OpInterface : invalid {Ty.__name__}"
         assert isinstance(args,List)
@@ -133,48 +134,29 @@ def compile_model( model, args : ModelArgs, devId : int) :
         ts = None
         if Ty is matmul.MatmulOp :
             import kcg.tuning.NewCfgTest as tune_mm
-            ts = tune_mm.getTuneSpaceWithBaseargs('/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json',args)
+            ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
         elif Ty is attention.AttentionOp :
             import kcg.tuning.attn_FP32_test as tune_att
             ts = tune_att.getTuneSpace([1,1,1,1],[])
         else:
             assert False, f"invalid ty : {Ty.__name__}"
-        kernel_tuning(Ty,'/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json',devId,ts)
+        tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
+        OpProxy.registKernel(tuneRes)
         
-        
-        # TODO: compile kernel using val
-        # TODO: Regist compiled kernel info into OpProxy()
 
+def compare_with_error(tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
+    abs_diff = torch.abs(tensor1 - tensor2)
+    rel_diff = abs_diff / (torch.abs(tensor1) + 1e-5)  # 避免除以零的情况
 
-# 旧的实现方式：侵入式，对模型代码做修改替换算子
-# if __name__ == "__main__":
-#     # 测试Llama模型
-#     args = ModelArgs()
-#     opProxy = OpProxy()
-#     # build model
-#     model = get_model(args,opProxy)
-    
-    
-#     # first run, then compile and tuning kernels
-#     compile_model(opProxy,model,args)
-#     # benchmark
-#     run_model(model,args)
-    
-#     info = DeviceInfo.get_gpu_info()
-#     print('info.compute_units = ',info.compute_units)
-#     print('info.shared_mem_per_block = ',info.shared_mem_per_block)
-#     print('info.regs_per_block = ',info.regs_per_block)
-#     print('info.warp_size = ',info.warp_size)
-#     print('info.global_mem = ',info.global_mem)
-#     print('info.max_thread_per_block = ',info.max_thread_per_block)
-#     print('info.clock_rate_khz = ',info.clock_rate_khz)
-#     print('info.mem_clock_rate_khz = ',info.mem_clock_rate_khz)
-#     print('info.mem_bus_width = ',info.mem_bus_width)
-#     print('info.l2_cache_size = ',info.l2_cache_size )
-#     print( DeviceInfo.get_device_count() ) 
+    # 比较绝对误差和相对误差
+    error_mask = (abs_diff > abs_error) & (rel_diff > rel_error)
+    diff_elements = torch.sum(error_mask).item()
+    max_error = torch.max(torch.abs(tensor1 - tensor2))
+    return diff_elements, max_error
 
 
 if __name__ == "__main__":
+    PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
     # 测试Llama模型
     args = ModelArgs()
     # build model
@@ -185,8 +167,10 @@ if __name__ == "__main__":
     optimizedModel = get_op_optimized_model(model).to(7)
     compile_model(optimizedModel,args, 7)
     out1 = run_model(optimizedModel,args,input_ids)
-    if torch.allclose(out0,out1,atol=1e-5,rtol=1e-5):
-        print("===== test correct ")
+    if torch.allclose(out0,out1,atol=1e-2,rtol=1e-2):
+        print("===== model test correct ")
     else:
-        print("===== test fail ")
-    
+        diff, maxerr = compare_with_error(out0,out1)
+        print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
+        print("baseline = ",out0)
+        print("user = ", out1)

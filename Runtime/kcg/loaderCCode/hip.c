@@ -67,11 +67,12 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
                         &device)) {
     return NULL;
   }
-  printf("parsed info: name = %s\n",name);
-  printf("parsed info: data = %s\n",data);
-  printf("parsed info: data_size = %ld\n",data_size);
-  printf("parsed info: shared = %d\n",shared);
-  printf("parsed info: device = %d\n",device);
+  
+  // printf("parsed info: name = %s\n",name);
+  // printf("parsed info: data = %s\n",data);
+  // printf("parsed info: data_size = %ld\n",data_size);
+  // printf("parsed info: shared = %d\n",shared);
+  // printf("parsed info: device = %d\n",device);
 
 
   // Open HSACO file
@@ -107,19 +108,19 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
   hipModule_t mod;
   hipFunction_t fun;
   Py_BEGIN_ALLOW_THREADS;
-  printf("====1\n");
+  // printf("====1\n");
   HIP_CHECK_AND_RETURN_NULL_ALLOW_THREADS(hipModuleLoadDataEx(&mod, hsaco, 5, opt, optval));
-  printf("====2\n");
+  // printf("====2\n");
   HIP_CHECK_AND_RETURN_NULL_ALLOW_THREADS(hipModuleGetFunction(&fun, mod, name));
-  printf("====3\n") ;
+  // printf("====3\n") ;
   HIP_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
       hipFuncGetAttribute(&n_regs, HIP_FUNC_ATTRIBUTE_NUM_REGS, fun));
-  printf("====4\n") ;
+  // printf("====4\n") ;
   HIP_CHECK_AND_RETURN_NULL_ALLOW_THREADS(
       hipFuncGetAttribute(&n_spills, HIP_FUNC_ATTRIBUTE_LOCAL_SIZE_BYTES, fun));
   // somehow ISA dumping seems vgpr_spill_count always need minus 1
   if(n_spills != 0) n_spills = n_spills / 4 - 1;
-  printf("====5\n") ;
+  // printf("====5\n") ;
 
   Py_END_ALLOW_THREADS;
   free(hsaco);

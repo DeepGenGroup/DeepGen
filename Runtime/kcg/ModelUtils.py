@@ -183,12 +183,12 @@ class MatmulReplacer:
 #     # print("输出形状:", output.shape)
 
 
-def get_op_optimized_model(model : nn.Module) -> nn.Module :
+def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     # 创建模型实例
     # input_data = torch.randn(3, 10)
     
     # 1. 替换所有 nn.Linear 模块
-    replace_module(model, nn.Linear, CustomLinear)
+    # replace_module(original_model, nn.Linear, CustomLinear)
     
     # 2. 创建包装器模型，在 forward 中应用 matmul 替换
     class WrappedModel(nn.Module):
@@ -200,14 +200,7 @@ def get_op_optimized_model(model : nn.Module) -> nn.Module :
             with MatmulReplacer(OpProxy.f_matmul):
                 return self.model(*args, **kwargs)
     
-    wrapped_model = WrappedModel(model)
+    wrapped_model = WrappedModel(original_model)
     return wrapped_model
 
 
-def model_info_collect(model, run_model, *run_args) :
-    output = run_model(model, *run_args)
-    for val in OpProxy.GetCollectedKernelArgs() :
-        print('collected : ',val)
-        
-        # TODO: compile kernel using val
-        # TODO: Regist compiled kernel info into OpProxy()

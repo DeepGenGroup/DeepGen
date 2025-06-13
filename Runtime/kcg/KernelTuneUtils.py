@@ -16,6 +16,28 @@ class BenchmarkConfig :
         self.result_json_path = ""
         self.max_try_count = 20
 
+
+class TuneResult :
+    def __init__(self):
+        self.OpTy : Type[OpInterface] = None
+        self.bestSpeedup : float = 0.0
+        self.bestConfigPkl : str = None
+        self.bestKernelConfig : KernelConfigs = None
+        self.bestKernelBaseArg : List = None
+    
+    def saveToPkl(self) :
+        if self.bestKernelConfig is not None :
+            ba_str = ""
+        for e in self.bestKernelBaseArg :
+            ba_str += f"{e}:"
+        pklPath = PathManager().tmp_dir() + f"/bestConfig_{self.OpTy.__name__}_{ba_str}.pkl"
+        serialize_to_file(pklPath, self.bestKernelConfig)
+        print(f"===== Best kernel config has been saved to {pklPath}")
+        self.bestConfigPkl = pklPath
+        return pklPath
+
+
+
 def init_cuda(_devId) :
     DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
     print("init_cuda devid=",_devId)
@@ -86,14 +108,14 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     for i in range(benchCount):
         r,t = op.Test_benchmark(kernel, benchCount , devId)
     acc = 0
-    if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
+    if torch.allclose(r,r0,rtol=1e-6,atol=1e-6) :
         acc = t0 / t
         print(f"Test Correct! speedup = {acc}")
     else:
         print("Test Error!")
     return (acc,cfg.kernelFuncName)
-    
-def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict]):
+   
+def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tuneResult : TuneResult):
     init_cuda(devId)
     save_to = benchConfig.result_json_path
     if len(save_to) > 0 and os.path.exists(save_to) :
@@ -102,8 +124,6 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
             maxSppedups = obj['testResult']
     name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
     pkls = glob.glob(name_format)
-    bestConfig = None
-    bestConfigBA = None
     if len(pkls) > 0 :
         for pkl in pkls :
             try:
@@ -116,39 +136,29 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
                 os.remove(pkl)
                 if acc > 0 :
                     obj = {"name" : funName, "speedup" : acc}
-                    if benchConfig.keepTopNum > 1:
-                        maxSppedups.append(obj)
-                        maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
-                        if len(maxSppedups) > benchConfig.keepTopNum :
-                            maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
-                    else:
-                        # 仅保留最佳时，同时记录其 kernelConfig 信息
-                        if len(maxSppedups) <= 0:
-                            maxSppedups.append(obj)
-                        elif maxSppedups[0]['speedup'] < acc :
-                            maxSppedups[0] = obj
-                        bestConfig = config
-                        bestConfigBA = ba
+                    maxSppedups.append(obj)
+                    maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
+                    if len(maxSppedups) > benchConfig.keepTopNum :
+                        maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+                    # record best one
+                    if acc > tuneResult.bestSpeedup :
+                        tuneResult.OpTy = OpTy
+                        tuneResult.bestSpeedup = acc
+                        tuneResult.bestKernelBaseArg = ba
+                        tuneResult.bestKernelConfig = config
             except BaseException as e: 
                 print('[Deepgen Exception] ',e)
                 msg = traceback.format_exc()
                 print(msg, flush=True)
             except IOError as e: 
                 print('[Deepgen IOError] ',e)
-                    
     print(f" ======== benchmark end . maxSppedups = {maxSppedups} ===========")
     if len(save_to) > 0 :
         with open(save_to,'w+') as f:
-            result = {"testResult" : maxSppedups}
-            json.dump(result,f,indent=2)
-    if bestConfig is not None :
-        ba_str = ""
-        for e in bestConfigBA :
-            ba_str += f"{e}:"
-        pklPath = PathManager().tmp_dir() + f"/bestConfig_{OpTy.__name__}_{ba_str}.pkl"
-        serialize_to_file(pklPath, bestConfig)
-        print(f"===== Best kernel config has been saved to {pklPath}")
-    
+            rr = {"testResult" : maxSppedups}
+            json.dump(rr,f,indent=2)
+        
+        
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
     if OpTy is matmul.MatmulOp :
         import Runtime.kcg.tuning.NewCfgTest as ns_mm
@@ -184,22 +194,30 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 #     # op.Test_baseline(7)
 #     # op.Test_benchmark(kernel,dev)
 
+EXPECTED_SPEEDUP = 0
 
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
-def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) :
+def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) -> TuneResult:
     maxSpeedups = []
-    maxIter = 10
+    maxIter = 5
     currIter = 0
+    res = TuneResult()
     while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
-        do_benchmark(opty,devId,cc,maxSpeedups)
+        do_benchmark(opty,devId,cc,maxSpeedups,res)
         if currIter >= maxIter :
             break
-    do_benchmark(opty,devId,cc,maxSpeedups)
+    do_benchmark(opty,devId,cc,maxSpeedups,res)
+    if res.bestSpeedup > EXPECTED_SPEEDUP :
+        pklPath = res.saveToPkl()
+        print(f"==== good tuneRes has been saved to {pklPath}")
+        return res
+    else:
+        return None
 
     
-def kernel_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, tuningSpace : TsGeneratorType):
+def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, tuningSpace : TsGeneratorType) -> TuneResult :
 
     assert os.path.exists(cfgFile), f'Tuningparam file {cfgFile} not exist'
 
@@ -218,14 +236,16 @@ def kernel_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, tuningSpa
 
     cc = BenchmarkConfig()
     cc.keepTopNum = 1
-    cc.max_kernel_per_iter = 4
+    cc.max_kernel_per_iter = 1
     cc.result_json_path = resultPath
     
     st = time.time()
     print(f"=====  start at : {st}")
-    do_compile_and_benchmark_alternatively(opty,tuningSpace,cc,backend,arch,devId)
+    tuneRes = do_compile_and_benchmark_alternatively(opty,tuningSpace,cc,backend,arch,devId)
+    
     # compile_kernel(opty,tuningSpace,devId,backend,arch,kernelLimit=1)
     # do_benchmark(opty,devId,cc,[])
     et = time.time()
     print(f"=====  Total spends {(et - st)/ 60} minutes")
+    return tuneRes
     

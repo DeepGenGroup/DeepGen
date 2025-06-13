@@ -45,7 +45,7 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
-option(DEBUG_MODE "Enable debug log & add -g compile option" ON)
+option(DEBUG_MODE "Enable debug log & add -g compile option" OFF)
 # close some warnings
 add_compile_options(
   -Wno-maybe-uninitialized
