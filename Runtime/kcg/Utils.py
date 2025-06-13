@@ -764,6 +764,12 @@ class KernelLibFile :
 TsGeneratorType = Generator[CompileNeededInfo, Any, None]         
 
 
-# if __name__ == '__main__' :
-#     # PathManager.init()
-#     pass
+def compare_with_error(tensor1, tensor2, abs_error=1e-2, rel_error=1e-2):
+    abs_diff = torch.abs(tensor1 - tensor2)
+    rel_diff = abs_diff / (torch.abs(tensor1) + 1e-5)  # 避免除以零的情况
+
+    # 比较绝对误差和相对误差
+    error_mask = (abs_diff > abs_error) & (rel_diff > rel_error)
+    diff_elements = torch.sum(error_mask).item()
+    max_error = torch.max(torch.abs(tensor1 - tensor2))
+    return diff_elements, max_error

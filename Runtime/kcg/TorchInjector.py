@@ -20,6 +20,7 @@ class OpBaseArgsCollector :
     def __init__(self):
         self.infoList = []
         self.__hashTable = []
+        self.opCounter = dict()
     
     def addInfo(self, OpTy : Type[OpInterface], baseArgs : List, dtype : torch.dtype) :
         obj = {
@@ -31,7 +32,10 @@ class OpBaseArgsCollector :
         if hashkey not in self.__hashTable :
             self.__hashTable.append(hashkey)
             self.infoList.append(obj)
-    
+            if OpTy.__name__ not in self.opCounter.keys() :
+                self.opCounter[OpTy.__name__] = 0
+        self.opCounter[OpTy.__name__] += 1
+        
     def getInfo(self) :
         for obj in self.infoList :
             info : List = obj['baseArgs']
@@ -43,7 +47,8 @@ class OpBaseArgsCollector :
                 ty = attention.AttentionOp
             yield (ty,info)
             
-    
+    def getOpCallCount(self) -> Dict :
+        return self.opCounter
 # operator 代理人。f_matmul f_attention 用于代替 model中的对应算子。 collector用于在首次执行model时，收集需要编译的kernel信息（基础形状、dtype、op类型等）。
 # collector收集的信息可用于后续的 tuning空间生产、编译
 # f_ 开头的静态方法，参数列表和torch的保持相同，便于model直接替换对应算子。内部的 _f()通过调整参数，和 packedKernel的调用形式适配（如定义c）
@@ -51,9 +56,14 @@ class OpProxy :
     collector = OpBaseArgsCollector()
     __registedKernels_mm : List[TuneResult] = []
     __registedKernels_att : List[TuneResult] = []
+    n_matmulCallCount = 0
     @staticmethod
     def GetCollectedKernelArgs() -> Generator :
         return OpProxy.collector.getInfo()
+    
+    @staticmethod
+    def GetOpCallCounts() -> Dict :
+        return OpProxy.collector.getOpCallCount()
     
     @staticmethod
     def registKernel(tr : TuneResult) :

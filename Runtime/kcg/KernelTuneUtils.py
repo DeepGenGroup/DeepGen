@@ -58,10 +58,9 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
     serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
 
 
-g_index : int = 0
+
 def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
-    global g_index
     g_index = 0
     maxProcsLimit = 50
     procs : List[Process] = []
@@ -108,7 +107,7 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     for i in range(benchCount):
         r,t = op.Test_benchmark(kernel, benchCount , devId)
     acc = 0
-    if torch.allclose(r,r0,rtol=1e-6,atol=1e-6) :
+    if torch.allclose(r,r0,rtol=2e-6,atol=1e-15) :
         acc = t0 / t
         print(f"Test Correct! speedup = {acc}")
     else:
@@ -134,7 +133,7 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
                 print(f'[D] after desrialize : {ba}')
                 acc, funName = __runBenchmark(op, config, ba, 1, 5 , devId)
                 os.remove(pkl)
-                if acc > 0 :
+                if acc > EXPECTED_SPEEDUP :
                     obj = {"name" : funName, "speedup" : acc}
                     maxSppedups.append(obj)
                     maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
@@ -199,15 +198,15 @@ EXPECTED_SPEEDUP = 0
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
 def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) -> TuneResult:
     maxSpeedups = []
-    maxIter = 5
+    maxIter = 10
     currIter = 0
     res = TuneResult()
-    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
+    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) \
+        and currIter < maxIter :
+        # and res.bestSpeedup <= 1 \ 
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups,res)
-        if currIter >= maxIter :
-            break
     do_benchmark(opty,devId,cc,maxSpeedups,res)
     if res.bestSpeedup > EXPECTED_SPEEDUP :
         pklPath = res.saveToPkl()

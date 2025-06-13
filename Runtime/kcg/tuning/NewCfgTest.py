@@ -276,6 +276,10 @@ def getTuneSpaceWithBaseargs(geemConfigPath : str, baseargs : List) -> TsGenerat
   cfg_dict[kw.KEY_DTYPE_A] = [ToEnumIntDType(datatype)]
   cfg_dict[kw.KEY_DTYPE_B] = [ToEnumIntDType(datatype)]
   cfg_dict[kw.KEY_DTYPE_C] = [ToEnumIntDType(datatype)]
+  if is_hip() :
+    cfg_dict[kw.KEY_WARP_SIZE] = [64]
+  else:
+    cfg_dict[kw.KEY_WARP_SIZE] = [32]
   cmc = CreateMatmulConfig(cfg_dict, 4)
   kams = cmc.createMatMulConfig(thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256)  # KernelArgMatmul
   return kams

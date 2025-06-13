@@ -6,6 +6,8 @@ import sys
 import types
 import math
 from kcg.TorchInjector import *
+from kcg.KernelTuneUtils import kernel_compile_tuning
+
 # ===================== 1. 自定义实现 =====================
 class CustomLinear(nn.Module):
     def __init__(self, in_features, out_features, bias=True):
@@ -204,3 +206,33 @@ def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     return wrapped_model
 
 
+
+def compile_model(devId : int, f_run_model : Callable) :
+    output = f_run_model()
+    print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
+    mmTemplateJson = f'{PathManager.project_dir()}/TuningConfigs/GEMM_cfg_32.json'
+    for (Ty , args ) in OpProxy.GetCollectedKernelArgs() :
+        assert issubclass(Ty,OpInterface) , f"Ty must be inherited from OpInterface : invalid {Ty.__name__}"
+        assert isinstance(args,List)
+        assert isinstance(args[-1],torch.dtype)
+        ts = None
+        if Ty is matmul.MatmulOp :
+            import kcg.tuning.NewCfgTest as tune_mm
+            ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
+        elif Ty is attention.AttentionOp :
+            import kcg.tuning.attn_FP32_test as tune_att
+            ts = tune_att.getTuneSpace([1,1,1,1],[])
+        else:
+            assert False, f"invalid ty : {Ty.__name__}"
+        tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
+        OpProxy.registKernel(tuneRes)
+
+def evaluate_model_time(f : Callable) -> Tuple[torch.Tensor, float]:
+    ev_st = torch.cuda.Event(enable_timing=True)
+    ev_et = torch.cuda.Event(enable_timing=True)
+    ev_st.record()
+    out1 = f()
+    ev_et.record()
+    torch.cuda.synchronize()
+    eps = ev_st.elapsed_time(ev_et)
+    return (out1, eps)
