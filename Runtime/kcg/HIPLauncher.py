@@ -311,3 +311,6 @@ class HIPLauncher :
         else:
             # print("[D] success cwrapper")
             pass
+    def releaseKernel(self) :
+        HIPLoaderST().unloadBinary(self.m_kernelLib) 
+        

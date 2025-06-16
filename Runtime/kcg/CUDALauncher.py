@@ -362,3 +362,6 @@ class CUDALauncher :
         else:
             # print("[D] success cwrapper")
             pass
+          
+    def releaseKernel(self) :
+        CudaLoaderST().unloadBinary(self.m_kernelLib) 

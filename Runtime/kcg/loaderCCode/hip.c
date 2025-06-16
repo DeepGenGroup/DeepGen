@@ -57,6 +57,20 @@ static PyObject *getDeviceProperties(PyObject *self, PyObject *args) {
                        "mem_bus_width", props.memoryBusWidth);
 }
 
+static PyObject *unloadBinary(PyObject *self, PyObject *args) {
+  hipModule_t mod;
+  PyArg_ParseTuple(args,"K",&mod);
+  Py_BEGIN_ALLOW_THREADS;
+  HIP_CHECK_AND_RETURN_NULL_ALLOW_THREADS(hipModuleUnload(mod) == HIP_SUCCESS);
+  Py_END_ALLOW_THREADS;
+
+  // get allocated registers and spilled registers from the function
+  if (PyErr_Occurred()) {
+    return NULL;
+  }
+  return Py_None;
+}
+
 static PyObject *loadBinary(PyObject *self, PyObject *args) {
   const char *name;
   const char *data;
@@ -134,8 +148,8 @@ static PyObject *loadBinary(PyObject *self, PyObject *args) {
 }
 
 static PyMethodDef ModuleMethods[] = {
-    {"load_binary", loadBinary, METH_VARARGS,
-     "Load provided hsaco into HIP driver"},
+    {"load_binary", loadBinary, METH_VARARGS,"Load provided hsaco into HIP driver"},
+    {"unload_binary", unloadBinary, METH_VARARGS,"unload provided hipModule"},
     {"get_device_properties", getDeviceProperties, METH_VARARGS,
      "Get the properties for a given device"},
     {NULL, NULL, 0, NULL} // sentinel

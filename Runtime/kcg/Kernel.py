@@ -287,6 +287,7 @@ class CompiledKernel:
             if os.path.exists(self.m_launcher.m_kernelLib.m_filePath) :
                 os.remove(self.m_launcher.m_kernelLib.m_filePath)
             # print(f"deleted {self.m_launcher.m_kernelLib.m_filePath}")
+            self.release()
 
     def setDevice(self,devId : int) :
         if self.m_launcher is None:
@@ -298,6 +299,8 @@ class CompiledKernel:
             self.buildLoaderAndLauncher()
         self.m_launcher.launchKernel(*args)
     
+    def release(self):
+        self.m_launcher.releaseKernel()
 
 ##################################### 算子统一接口定义 ############################################
 

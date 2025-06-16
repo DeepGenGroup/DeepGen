@@ -20,7 +20,7 @@ class ModelArgs:
     n_heads = 8
     vocab_size = 8192  # 只能运行 2^ 的尺度
     # vocab_size = 50000  # 只能运行 2^ 的尺度
-    max_seq_len = 256
+    max_seq_len = 2048
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
 
 # 定义RMSNorm层
