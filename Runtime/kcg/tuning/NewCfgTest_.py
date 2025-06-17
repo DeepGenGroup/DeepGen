@@ -1,5 +1,4 @@
-import json, math
-from tqdm import tqdm
+import json
 import importlib.util
 from typing import Any, Generator, List
 from kcg.Operators.matmul import MatmulTuningArgs
@@ -16,12 +15,11 @@ def readConfigJson(path):
 
 # create configs
 class CreateMatmulConfig:
-  def __init__(self, cfg_dict, type_width=4, smem_size=65536, sm_num=60):
+  def __init__(self, cfg_dict, word_width):
     self.cfg_dict = cfg_dict
-    self.type_width = type_width  # 一个字 4 byte
-    self.max_reg_size = 256 * self.type_width   # byte
-    self.max_sm_size = smem_size  # byte
-    self.sm_num = sm_num
+    self.word_width = word_width  # 一个字 4 byte
+    self.max_reg_size = 256 * self.word_width   # byte
+    self.max_sm_size = 64 * 1024  # byte
     # self.encoder = TuningSpaceEncoder(self.cfg_dict)
 
   def getThreadTile(self, halfTag=True, squareTag=True):
@@ -189,146 +187,6 @@ class CreateMatmulConfig:
     # (splitU, glob_store_width, reduce_c_continuous), (unroll, block_mapping))
     return new_tals
 
-
-  def getBankConflict(self, sm_size, load_width, block_size_k, splitu, 
-                      block_layout_x, warp_layout_x, block_repeat, warp_repeat, 
-                      warp_size, thread_num, getAddrFunc, mat):
-    # sm_size(byte), word：一个bank(4byte)
-    def calculate_bank_conflict_count(bank_list):
-      # 获取bank_list中重复的bank_id的最大值
-      bank_set = set(bank_list)
-      max_bc_num = 0
-      for id_ in bank_set:
-        count_ = bank_list.count(id_)
-        if max_bc_num < count_:
-          max_bc_num = count_
-      return max_bc_num
-    
-    bank_width = 4
-    bank_num = 32  # bank的数量
-    word_num = int(sm_size / bank_width)  # 这块smem有多少个word
-    # print(word_num)
-    addr_bank_dict = {}
-    # 计算每一个word的地址对应的bank号
-    for word_id in range(word_num):
-      word_addr = word_id * bank_width  # byte
-      bank_id = word_id % 32
-      addr_bank_dict[word_addr] = bank_id
-    # print(addr_bank_dict)
-    
-    all_bank_list = []
-    for tz in range(splitu):  # tz
-      for bk in range(block_size_k):  # bk
-        for i in range(block_repeat):
-          for j in range(warp_repeat):
-            bank_list = []
-            for tid in range(thread_num):
-              wrap_id = int(tid / warp_size)
-              lane_id = tid % warp_size
-              warp_, lane_ = 0, 0
-              if mat == "A":
-                warp_ = int(wrap_id / block_layout_x)
-                lane_ = int(lane_id / warp_layout_x)
-              else:
-                warp_ = wrap_id % block_layout_x
-                lane_ = lane_id % warp_layout_x
-
-              thAddr = getAddrFunc(tz, bk, i, j, warp_, lane_)
-              # print(thAddr)
-              bank_list.append(addr_bank_dict[thAddr])
-            all_bank_list.append(bank_list)
-    
-    bank_conflict_count = 0
-    transcation_num = int(warp_size / bank_num)
-    group_size = load_width * transcation_num
-    for bank_list in all_bank_list:
-      for tid in range(len(bank_list)):
-        new_bank_lists = [bank_list[i:i + warp_size] for i in range(0, len(bank_list), warp_size)]
-        for new_bank_list in new_bank_lists:
-          new_bank_lists_ = [new_bank_list[i:i + group_size] for i in range(0, len(new_bank_list), group_size)]
-          for new_bank_list_ in new_bank_lists_:
-            bank_conflict_count += calculate_bank_conflict_count(new_bank_list_)
-    return bank_conflict_count
-  
-  
-  def ultimate(self, space):
-    # print(len(space))
-    new_space = []
-    # batch = self.cfg_dict[kw.KEY_BATCH][0]
-    # m, n, k = self.cfg_dict[kw.KEY_M][0], self.cfg_dict[kw.KEY_N][0], self.cfg_dict[kw.KEY_K][0]
-    # fix_wave_saturate = lambda x: self.sm_num if x == 0 else x  # 最后一波的sm数量
-    # best_wave, best_wave_num, best_bc_count = None, None, None
-    # for case in tqdm(space):
-    #   tm, tn = case[1][0], case[1][1]
-    #   bm, bn, bk = case[0][0], case[0][1], case[0][2] 
-    #   thread_num = int(bm * bn / tm / tn)
-    #   if bm <= 128 or bn <= 128:
-    #     # wave
-    #     waves_num = math.ceil(math.ceil(m/bm) * math.ceil(n/bn) * batch / self.sm_num)
-    #     last_wave_util = fix_wave_saturate(math.ceil(m/bm) * math.ceil(n/bn) % self.sm_num)
-        
-    #     # # bank_conflict
-    #     # def getAIdx(tz, bk, i, j, wid, lid):
-    #     #   if case[7][1] == 1:
-    #     #     return (((bk + 1) * case[8][0] + tz) * case[0][0] + 
-    #     #           (i * case[3][0] + wid) * case[4][0] * case[5][0] +  
-    #     #           (j * case[4][0] + lid) * case[6][0]) * self.type_width
-    #     #   else:
-    #     #     return ((bk * case[8][0] + tz) * case[0][0] + 
-    #     #           (i * case[3][0] + wid) * case[4][0] * case[5][0] +  
-    #     #           (j * case[4][0] + lid) * case[6][0]) * self.type_width
-
-    #     # def getBIdx(tz, bk, i, j, wid, lid):
-    #     #   if case[7][1] == 1:
-    #     #     return (((bk + 1) * case[8][0] + tz) * case[0][1] + 
-    #     #           (i * case[3][1] + wid) * case[4][1] * case[5][1] +  
-    #     #           (j * case[4][1] + lid) * case[6][1]) * self.type_width
-    #     #   else:
-    #     #     return ((bk * case[8][0] + tz) * case[0][1] + 
-    #     #           (i * case[3][1] + wid) * case[4][1] * case[5][1] +  
-    #     #           (j * case[4][1] + lid) * case[6][1]) * self.type_width
-    #     # bk = case[0][2]
-    #     # smA_size = case[0][0] * case[0][2] * self.type_width
-    #     # smB_size = case[0][1] * case[0][2] * self.type_width
-    #     # if case[7][1] == 1:
-    #     #   bk -= 1
-    #     # bc_count_a = self.getBankConflict(smA_size, case[6][0], bk, case[8][0], 
-    #     #                                   case[3][1], case[4][1], int(case[1][0] / case[5][0]), int(case[5][0] / case[6][0]), 
-    #     #                                   self.cfg_dict[kw.KEY_WARP_SIZE][0], thread_num, getAIdx, "A")
-    #     # bc_count_b = self.getBankConflict(smB_size, case[6][1], bk, case[8][0], 
-    #     #                                   case[3][1], case[4][1], int(case[1][0] / case[5][1]), int(case[5][1] / case[6][1]), 
-    #     #                                   self.cfg_dict[kw.KEY_WARP_SIZE][0], thread_num, getBIdx, "B")
- 
-    #     # total_bc_count = bc_count_a + bc_count_b
-    #     # iter
-    #     # if best_wave is None or best_wave_num is None or best_bc_count is None:
-    #     if best_wave is None or best_wave_num is None:
-    #       best_wave = last_wave_util
-    #       best_wave_num = waves_num
-    #       # best_bc_count = total_bc_count
-    #     # elif last_wave_util < best_wave and waves_num < best_wave_num and best_bc_count > total_bc_count:
-    #     elif last_wave_util < best_wave and waves_num < best_wave_num:
-    #       best_wave = last_wave_util
-    #       best_wave_num = waves_num
-          # best_bc_count = total_bc_count
-    
-    for case in space:
-      tm, tn = case[1][0], case[1][1]
-      bm, bn, bk = case[0][0], case[0][1], case[0][2] 
-      thread_num = bm * bn / tm / tn * case[8][0]
-      if bm <= 128 or bn <= 128:
-        # float4
-        load_width_per_thread_a = bm * bk / thread_num
-        load_width_per_thread_b = bn * bk / thread_num
-        if load_width_per_thread_a >= 4 and load_width_per_thread_b >= 4:
-          # waves_num = math.ceil(math.ceil(m/bm) * math.ceil(n/bn) * batch / self.sm_num)
-          # last_wave_util = fix_wave_saturate(math.ceil(m/bm) * math.ceil(n/bn) % self.sm_num)
-          # if waves_num == best_wave_num and last_wave_util == best_wave:
-          new_space.append(case)
-    print(len(new_space))
-    return new_space
-
-
   def createMatMulConfig(self, thalfTag=True, tsquareTag=True, bhalfTag=True, bsquareTag=True, max_thread_num=256) -> TsGeneratorType :
     # main
     ttiles = self.getThreadTile(halfTag=thalfTag, squareTag=tsquareTag)
@@ -338,7 +196,6 @@ class CreateMatmulConfig:
     temp_tals = self.getScatterWidth(temp_tals)
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
     temp_tals = self.getOther(temp_tals)
-    temp_tals = self.ultimate(temp_tals)
     for tal in temp_tals:
       ta = MatmulTuningArgs(
         m = self.cfg_dict[kw.KEY_M][0], 

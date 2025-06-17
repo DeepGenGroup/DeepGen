@@ -1,15 +1,13 @@
 import time
 import glob
 from typing import Generator
-from kcg.Utils import *
-from kcg.HIPLauncher import *
-from kcg.CUDALauncher import *
-from kcg.Operators import matmul, attention
 import multiprocessing
-import Runtime.kcg.tuning.attn_FP32_test as ATT
+from kcg.Kernel import *
+from kcg.Operators import matmul, attention
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process
+Value  = ctx.Value
 
 class BenchmarkConfig :
     def __init__(self):
@@ -43,8 +41,8 @@ g_index : int = 0
 def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     global g_index
-    g_index = 0
-    maxProcsLimit = 50
+    localIndex = 0
+    maxProcsLimit = 100
     procs : List[Process] = []
     iterationEnds = False
     print('========= compiling ============')
@@ -57,8 +55,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index))
             procs.append(p)
             p.start()
+            localIndex += 1
             g_index += 1
-            if g_index >= kernelLimit:
+            if localIndex >= kernelLimit:
                 break 
             if len(procs) >= maxProcsLimit :
                 for pp in procs :
@@ -68,7 +67,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             iterationEnds = True
             break
         except BaseException as e :
+            import traceback
             print('[Deepgen Exception during compiling] ', e)
+            traceback.print_exc()
             continue
     # wait all procs end
     for pp in procs :
@@ -77,84 +78,122 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
     return iterationEnds
     
 
-def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> Tuple[float, str] :
-    op.InitBaseArgs(baseArg)
-    op.GetBaselineInputTensor(devId)
-    kernel = op.GetCompiledKernel(cfg,devId)
+# def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> Tuple[float, str] :
+#     op.InitBaseArgs(baseArg)
+#     op.GetBaselineInputTensor(devId)
+#     kernel = op.GetCompiledKernel(cfg,devId)
     
-    op.Test_warmup(kernel,warmupCount,devId)
-    r0,t0 = op.Test_baseline(devId)
-    for i in range(benchCount):
-        r,t = op.Test_benchmark(kernel, benchCount , devId)
-    acc = 0
-    if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
-        acc = t0 / t
-        print(f"Test Correct! speedup = {acc}")
-    else:
-        print("Test Error!")
-    return (acc,cfg.kernelFuncName)
+#     op.Test_warmup(kernel,warmupCount,devId)
+#     r0,t0 = op.Test_baseline(devId)
+#     for i in range(benchCount):
+#         r,t = op.Test_benchmark(kernel, benchCount , devId)
+#     acc = 0
+#     if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
+#         acc = t0 / t
+#         print(f"Test Correct! speedup = {acc}")
+#     else:
+#         print("Test Error!")
+#     return (acc,cfg.kernelFuncName,t,t0)
+
+def is_tflops_ok(m,n,k,t) :
+    TargetTFLOPS = 12.2 * 0.6
+    return (2*m*n*k / t / 1e-3 / 1e12) >= TargetTFLOPS
     
-def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict]):
+
+def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, findGoodCase, devId, time_0 ,pkls : List) :
     init_cuda(devId)
     save_to = benchConfig.result_json_path
+    maxSppedups = []
     if len(save_to) > 0 and os.path.exists(save_to) :
         with open(save_to,'r') as f:
             obj = json.load(f)
             maxSppedups = obj['testResult']
-    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
-    pkls = glob.glob(name_format)
-    bestConfig = None
-    bestConfigBA = None
-    if len(pkls) > 0 :
-        for pkl in pkls :
-            try:
-                op = OpTy()
-                (ba ,config ) = deserialize_from_file(pkl) 
-                assert isinstance(ba, List)
-                assert isinstance(config, KernelConfigs)
-                print(f'[D] after desrialize : {ba}')
-                acc, funName = __runBenchmark(op, config, ba, 1, 5 , devId)
-                os.remove(pkl)
-                if acc > 0 :
-                    obj = {"name" : funName, "speedup" : acc}
-                    if benchConfig.keepTopNum > 1:
-                        maxSppedups.append(obj)
-                        maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
-                        if len(maxSppedups) > benchConfig.keepTopNum :
-                            maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
-                    else:
-                        # 仅保留最佳时，同时记录其 kernelConfig 信息
-                        if len(maxSppedups) <= 0:
-                            maxSppedups = obj
-                        elif maxSppedups[0]['speedup'] < acc :
-                            maxSppedups[0] = obj
-                        bestConfig = config
-                        bestConfigBA = ba
-            except BaseException as e: 
-                print('[Deepgen Exception] ',e)
-                traceback.print_exc()
-            except IOError as e: 
-                print('[Deepgen IOError] ',e)
-                    
-    print(f" ======== benchmark end . maxSppedups = {maxSppedups} ===========")
+    for pkl in pkls :
+        try:
+            (ba ,config ) = deserialize_from_file(pkl) 
+            os.remove(pkl)
+            assert isinstance(ba, List)
+            assert isinstance(config, KernelConfigs)
+            print(f'[D] after desrialize : {ba}')
+            m,n,k = ba[1:4]
+            # init tensors
+            op = OpTy()
+            op.InitBaseArgs(ba)
+            op.GetBaselineInputTensor(devId)
+            op.GetBenchmarkInputTensor(devId)
+            
+            kernel = op.GetCompiledKernel(config,devId)
+            # warmup
+            # op.Test_warmup(kernel,1,devId)
+            r0, t0 = op.Test_baseline(7)
+            if time_0.value <= 0 :
+                time_0.value = t0
+            else:
+                t0 = time_0.value
+            # benchmark
+            r,t = op.Test_benchmark(kernel, 5 , devId)
+            # verify result
+            acc = 0
+            if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
+                acc = t0 / t
+                print(f"Test Correct! speedup = {acc}")
+            else:
+                print("Test Error!")
+            funName = config.kernelFuncName
+            # save result
+
+            # kernel.release()
+            if acc > 0 :
+                obj = {"name" : funName, "speedup" : acc ,"time" : t, "time_base" : t0}
+                maxSppedups.append(obj)
+                maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
+                if len(maxSppedups) > benchConfig.keepTopNum :
+                    maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
+                if is_tflops_ok(m,n,k,t) :
+                    findGoodCase.value = 1
+        except BaseException as e: 
+            print('[Deepgen Exception] ',e)
+            traceback.print_exc()
+        except IOError as e: 
+            print('[Deepgen IOError] ',e)
+            traceback.print_exc()
     if len(save_to) > 0 :
         with open(save_to,'w+') as f:
             result = {"testResult" : maxSppedups}
             json.dump(result,f,indent=2)
-    if bestConfig is not None :
-        ba_str = ""
-        for e in bestConfigBA :
-            ba_str += f"{e}:"
-        pklPath = PathManager().tmp_dir() + f"/bestConfig_{OpTy.__name__}_{ba_str}.pkl"
-        serialize_to_file(pklPath, bestConfig)
-        print(f"===== Best kernel config has been saved to {pklPath}")
+
+g_time0 = Value('d',0.0)
+tensor_input_baseline = None
+tensor_input_benchmark = None
+g_result = None
+g_findAvaialbleCase = Value('d',0.0)
+def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict]):
+    global g_time0 
+    global tensor_input_baseline 
+    global tensor_input_benchmark 
+    global g_result 
+    global g_findAvaialbleCase
+    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
+    pkls = glob.glob(name_format)
+    p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls))
+    p.start()
+    p.join(timeout= 30)
+    # process terminated. clean undealed pkls
+    if p.is_alive():
+        p.terminate()
+        p.join(5)
+    for pkl in pkls :
+        if os.path.exists(pkl) :
+            os.remove(pkl)   # delete crashed pkl
+    
+    
     
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
     if OpTy is matmul.MatmulOp :
-        import Runtime.kcg.tuning.NewCfgTest as ns_mm
+        import kcg.tuning.NewCfgTest as ns_mm
         return ns_mm.getTuneSpace(cfgPath)
     if OpTy is attention.AttentionOp :
-        import Runtime.kcg.tuning.attn_FP32_test as ns_attentiopn
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace([1, 32, 2048, 128],[])
         # return ns_attentiopn.getTuneSpace([1, 32, 128, 128],[])
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'
@@ -188,15 +227,18 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
 def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) :
     maxSpeedups = []
-    maxIter = 10
     currIter = 0
     while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups)
-        if currIter >= maxIter :
-            break
+        if g_findAvaialbleCase.value > 0 :
+            print(f"=========== Find available Case ! Stopped ====== ")
+            return
     do_benchmark(opty,devId,cc,maxSpeedups)
+    if g_findAvaialbleCase.value > 0 :
+        print(f"=========== Find available Case ! Stopped ====== ")
+        return
 
     
 if __name__ == '__main__' :
@@ -204,7 +246,7 @@ if __name__ == '__main__' :
     cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     opty = matmul.MatmulOp
     devId = 7
-    
+
     if is_hip():
         backend = EnumBackendType.HIP
         arch = "906"
@@ -215,17 +257,29 @@ if __name__ == '__main__' :
     PathManager.init(clearPkl=True, clearCache=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
     print("get_tune_space",flush=True)
+    tssize = 0
+    for c in  get_tuning_space(opty, cfgFile):
+        tssize += 1
+    print(f"==== tune space size = {tssize}")
+    
     ts = get_tuning_space(opty, cfgFile)
     cc = BenchmarkConfig()
-    cc.keepTopNum = 1
-    cc.max_kernel_per_iter = 1
-    cc.result_json_path = "/home/xushilong/DeepGen/testResult.json"
-    
+    cc.keepTopNum = 10
+    cc.max_kernel_per_iter = 75
+    cc.result_json_path = "/home/xushilong/DeepGen/testResult:2048:4096:1024.json"
     st = time.time()
     print(f"=====  start at : {st}")
-    # do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
-    compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
-    do_benchmark(opty,devId,cc,[])
+    
+    # skip = 740
+    # i=0
+    # for _ in ts :
+    #    i+=1
+    #    if i > skip:
+    #        break 
+        
+    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
+    # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
+    # do_benchmark(opty,devId,cc,[])
     et = time.time()
     print(f"=====  Total spends {(et - st)/ 60} minutes")
     

@@ -104,8 +104,7 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     
     op.Test_warmup(kernel,warmupCount,devId)
     r0,t0 = op.Test_baseline(devId)
-    for i in range(benchCount):
-        r,t = op.Test_benchmark(kernel, benchCount , devId)
+    r,t = op.Test_benchmark(kernel, benchCount , devId)
     acc = 0
     if torch.allclose(r,r0,rtol=2e-6,atol=1e-15) :
         acc = t0 / t
@@ -198,12 +197,9 @@ EXPECTED_SPEEDUP = 0
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
 def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) -> TuneResult:
     maxSpeedups = []
-    maxIter = 10
     currIter = 0
     res = TuneResult()
-    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) \
-        and currIter < maxIter :
-        # and res.bestSpeedup <= 1 \ 
+    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups,res)

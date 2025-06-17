@@ -451,14 +451,19 @@ class MatmulOp(OpInterface) :
         torchMM = torch.matmul
         if len(matrixA.shape) == 3 :
             torchMM = torch.bmm
-        ev_start = torch.cuda.Event(enable_timing=True)
-        ev_end = torch.cuda.Event(enable_timing=True)
-        ev_start.record()
-        self.OutputTensor_Baseline = torchMM(matrixA, matrixB)
-        ev_end.record()
-        torch.cuda.synchronize()
-        eps = ev_start.elapsed_time(ev_end)
-        return (self.OutputTensor_Baseline, eps)
+        
+        epsList = []
+        for i in range(5) :
+            ev_start = torch.cuda.Event(enable_timing=True)
+            ev_end = torch.cuda.Event(enable_timing=True)
+            ev_start.record()
+            self.OutputTensor_Baseline = torchMM(matrixA, matrixB)
+            ev_end.record()
+            torch.cuda.synchronize()
+            eps = ev_start.elapsed_time(ev_end)
+            epsList.append(eps)
+            
+        return (self.OutputTensor_Baseline, np.median(epsList))
     
     def Test_benchmark(self, packedKernel : CompiledKernel,benchmarkCount : int , devId : int) -> Tuple[torch.Tensor,float] : 
         assert self.InputTensors_Benchmark  is not None, "error benchmark"

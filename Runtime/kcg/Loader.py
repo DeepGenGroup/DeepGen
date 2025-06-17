@@ -72,6 +72,7 @@ class HIPLoaderST(object):
         self.cache = FileCacheManager(self.key)
         self.fname = "loader_hip.so"
         self.cache_path = self.cache.get_file(self.fname)
+        self.mod = None
         self.load_binary = None
         self.unload_binary = None
         # print('cache_path=',self.cache_path)
@@ -91,9 +92,10 @@ class HIPLoaderST(object):
             spec = importlib.util.spec_from_file_location("loader_hip", self.cache_path)
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)
-            self.load_binary = mod.load_binary
-            self.unload_binary = mod.unload_binary
-            self.get_device_properties = mod.get_device_properties
+            self.mod = mod
+            self.load_binary = self.mod.load_binary
+            self.unload_binary = self.mod.unload_binary
+            self.get_device_properties = self.mod.get_device_properties
         if kernelFile.m_kernelInfo is None:
             binaryPath = kernelFile.m_filePath
             name = kernelFile.m_kernelFuncName
@@ -107,5 +109,7 @@ class HIPLoaderST(object):
         return kernelFile.m_kernelInfo
 
     def unloadBinary(self, kernelFile : KernelLibFile) :
+        if self.unload_binary is None :
+            self.unload_binary = self.mod.unload_binary 
         if kernelFile.m_kernelInfo is not None and kernelFile.m_kernelInfo.m_module is not None :
             self.unload_binary(kernelFile.m_kernelInfo.m_module)
