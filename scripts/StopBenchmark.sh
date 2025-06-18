@@ -1,6 +1,7 @@
 #!/bin/bash
 # 查找所有包含 "Get" 关键字的进程（排除 grep 自身）
-pids=$(pgrep -f "deepGenMain" -u $USER)
+kw="SimpleLocalTester"
+pids=$(pgrep -f $kw -u $USER)
 
 if [ -z "$pids" ]; then
     echo "未找到任何 deepGenMain 进程"
@@ -43,7 +44,7 @@ for pid in $pids; do
 done
 
 # 二次确认清理结果
-remaining=$(pgrep -f "deepGenMain")
+remaining=$(pgrep -f $kw)
 if [ -n "$remaining" ]; then
     echo "警告：以下进程未被终止: $remaining"
 else

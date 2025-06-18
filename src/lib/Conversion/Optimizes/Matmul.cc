@@ -371,7 +371,7 @@ void MatmulOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   // block mapping
   if (cfg["BLOCK_MAPPING"] > 0) {
     std::vector<int64_t> gridShape{this->gridShapeY, this->gridShapeX};
-    std::vector<int64_t> blockTiles{cfg["BLOCK_SIZE_M"], cfg["BLOCK_SIZE_M"]};
+    std::vector<int64_t> blockTiles{cfg["BLOCK_SIZE_M"], cfg["BLOCK_SIZE_N"]};
     auto result =  Rewriter::blockMapping(blockIdx, blockTiles, gridShape, cfg["BLOCK_MAPPING"]);
     this->byIdx = result[0]; this->bxIdx = result[1];
     LOG_DEBUG("===== after blockMapping =======\n",module);

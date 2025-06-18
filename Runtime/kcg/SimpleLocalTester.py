@@ -16,6 +16,7 @@ class BenchmarkConfig :
         self.keepTopNum = 10
         self.max_kernel_per_iter = 20
         self.result_json_path = ""
+        self.maxCount = 0
 
 def init_cuda(_devId) :
     DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
@@ -38,7 +39,7 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
 
 
 g_index : int = 0
-def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10) -> bool:
+def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10, globalLimit = 0) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     global g_index
     localIndex = 0
@@ -48,6 +49,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
     print('========= compiling ============')
     while True:
         try:
+            if globalLimit > 0 and g_index >= globalLimit:
+                iterationEnds = True
+                break
             needInfo = next(tsGenerator)
         # for needInfo in tsGenerator :
             print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
@@ -57,8 +61,8 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             p.start()
             localIndex += 1
             g_index += 1
-            if localIndex >= kernelLimit:
-                break 
+            if localIndex >= kernelLimit :
+                break
             if len(procs) >= maxProcsLimit :
                 for pp in procs :
                     pp.join()
@@ -95,9 +99,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
 #         print("Test Error!")
 #     return (acc,cfg.kernelFuncName,t,t0)
 
-def is_tflops_ok(m,n,k,t) :
+def is_tflops_ok(b,m,n,k,t) :
     TargetTFLOPS = 12.2 * 0.6
-    return (2*m*n*k / t / 1e-3 / 1e12) >= TargetTFLOPS
+    return (2*b*m*n*k / t / 1e-3 / 1e12) >= TargetTFLOPS
     
 
 def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, findGoodCase, devId, time_0 ,pkls : List) :
@@ -116,6 +120,9 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             assert isinstance(config, KernelConfigs)
             print(f'[D] after desrialize : {ba}')
             m,n,k = ba[1:4]
+            b = 1
+            if len(ba[0]) > 0:
+                b =  ba[0][0]
             # init tensors
             op = OpTy()
             op.InitBaseArgs(ba)
@@ -149,7 +156,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
                 if len(maxSppedups) > benchConfig.keepTopNum :
                     maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
-                if is_tflops_ok(m,n,k,t) :
+                if is_tflops_ok(b,m,n,k,t) :
                     findGoodCase.value = 1
         except BaseException as e: 
             print('[Deepgen Exception] ',e)
@@ -177,7 +184,7 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     pkls = glob.glob(name_format)
     p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls))
     p.start()
-    p.join(timeout= 30)
+    p.join(timeout= 40)
     # process terminated. clean undealed pkls
     if p.is_alive():
         p.terminate()
@@ -228,7 +235,7 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) :
     maxSpeedups = []
     currIter = 0
-    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
+    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter, cc.maxCount) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups)
@@ -240,10 +247,17 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
         print(f"=========== Find available Case ! Stopped ====== ")
         return
 
-    
+
+def getInputs() :
+    cfgFile = sys.argv[1]
+    result_json_path = sys.argv[2]
+    start = int(sys.argv[3])
+    maxCount = int(sys.argv[4])
+    return (cfgFile,result_json_path,start,maxCount)
+
 if __name__ == '__main__' :
-    # test_simple()
-    cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
+    cfgFile,result_json_path,start,maxCount = getInputs()
+    # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     opty = matmul.MatmulOp
     devId = 7
 
@@ -266,16 +280,18 @@ if __name__ == '__main__' :
     cc = BenchmarkConfig()
     cc.keepTopNum = 10
     cc.max_kernel_per_iter = 75
-    cc.result_json_path = "/home/xushilong/DeepGen/testResult:2048:4096:1024.json"
+    cc.result_json_path = result_json_path
+    cc.maxCount = maxCount
     st = time.time()
     print(f"=====  start at : {st}")
     
-    # skip = 740
-    # i=0
-    # for _ in ts :
-    #    i+=1
-    #    if i > skip:
-    #        break 
+    
+    if start > 0:
+        i=0
+        for _ in ts :
+            i+=1
+            if i >= start:
+                break 
         
     do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
     # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
