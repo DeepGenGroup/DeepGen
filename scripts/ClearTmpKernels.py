@@ -30,7 +30,8 @@ rr = 'a,b,c,d,e,f,g,h,i,j,k,l,m,n,o,p,q,r,s,t,u,v,w,x,y,z,0,1,2,3,4,5,6,7,8,9'.s
 cc = 0
 for e0 in rr:
     for e1 in rr:
-        cmd = f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.ptx &\n" + f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.cubin &\n"
+        cmd = f"rm -rf tmp/kcg_kernel-{e0}{e1}* &\n"
+        # cmd = f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.ptx &\n" + f"rm -rf /tmp/compile-ptx-src-{e0}{e1}*.cubin &\n"
         if cc >= 40 :
             cc = 0
             cmd += "wait\n\n"

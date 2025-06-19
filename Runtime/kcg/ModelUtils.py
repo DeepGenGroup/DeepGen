@@ -190,7 +190,7 @@ def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     # input_data = torch.randn(3, 10)
     
     # 1. 替换所有 nn.Linear 模块
-    # replace_module(original_model, nn.Linear, CustomLinear)
+    replace_module(original_model, nn.Linear, CustomLinear)
     
     # 2. 创建包装器模型，在 forward 中应用 matmul 替换
     class WrappedModel(nn.Module):
@@ -218,14 +218,15 @@ def compile_model(devId : int, f_run_model : Callable) :
         ts = None
         if Ty is matmul.MatmulOp :
             import kcg.tuning.NewCfgTest as tune_mm
-            ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
+            # ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
+            print("collected args = ",args)
         elif Ty is attention.AttentionOp :
             import kcg.tuning.attn_FP32_test as tune_att
             ts = tune_att.getTuneSpace([1,1,1,1],[])
         else:
             assert False, f"invalid ty : {Ty.__name__}"
-        tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
-        OpProxy.registKernel(tuneRes)
+        # tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
+        # OpProxy.registKernel(tuneRes)
 
 def evaluate_model_time(f : Callable) -> Tuple[torch.Tensor, float]:
     ev_st = torch.cuda.Event(enable_timing=True)

@@ -1,0 +1,132 @@
+{
+    "BLOCK_SIZE_M": [
+        32,
+        64,
+        128
+    ],
+    "BLOCK_SIZE_N": [
+        32,
+        64,
+        128
+    ],
+    "BLOCK_SIZE_K": [
+        8,
+        16
+    ],
+    "THREAD_SIZE_M": [
+        4,
+        8
+    ],
+    "THREAD_SIZE_N": [
+        4,
+        8
+    ],
+    "GLOB_LOAD_WIDTH_A": [
+        4
+    ],
+    "GLOB_LOAD_WIDTH_B": [
+        4
+    ],
+    "BLOCK_LAYOUT_Y": [
+        1,
+        2,
+        4,
+        8
+    ],
+    "BLOCK_LAYOUT_X": [
+        1,
+        2,
+        4,
+        8
+    ],
+    "WARP_LAYOUT_Y": [
+        8,
+        4,
+        16,
+        32
+    ],
+    "WARP_LAYOUT_X": [
+        8,
+        4,
+        16,
+        32
+    ],
+    "BLOCK_SCATTER_WIDTH_M": [
+        2,
+        4,
+        8
+    ],
+    "BLOCK_SCATTER_WIDTH_N": [
+        2,
+        4,
+        8
+    ],
+    "WARP_SCATTER_WIDTH_M": [
+        1,
+        2,
+        4
+    ],
+    "WARP_SCATTER_WIDTH_N": [
+        1,
+        2,
+        4
+    ],
+    "LOCAL_SPLIT_U": [
+        1,
+        2
+    ],
+    "BLOCK_MAPPING": [
+        4,
+        8
+    ],
+    "WARP_SIZE": [
+        64
+    ],
+    "GLOB_STORE_WIDTH": [
+        2,
+        4
+    ],
+    "DATATYPE_A": [
+        4
+    ],
+    "DATATYPE_B": [
+        4
+    ],
+    "DATATYPE_C": [
+        4
+    ],
+    "M_SIZE": [
+        2048
+    ],
+    "N_SIZE": [
+        2048
+    ],
+    "K_SIZE": [
+        128
+    ],
+    "BATCH_SIZE": [
+        1,
+        32
+    ],
+    "IS_ATRANS": [
+        1
+    ],
+    "UNROLL_NUM": [
+        8,
+        16
+    ],
+    "REG_PREFETCH": [
+        0,
+        1
+    ],
+    "SHARED_PREFETCH": [
+        0,
+        1
+    ],
+    "LOAD_CONTINUOUS": [
+        1
+    ],
+    "STORE_CONTINUOUS": [
+        1
+    ]
+}

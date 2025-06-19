@@ -104,7 +104,7 @@ def is_tflops_ok(b,m,n,k,t) :
     return (2*b*m*n*k / t / 1e-3 / 1e12) >= TargetTFLOPS
     
 
-def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, findGoodCase, devId, time_0 ,pkls : List) :
+def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, findGoodCase, devId, time_0 ,pkls : List, checkTFLOPS = False, checkACC : float = 0) :
     init_cuda(devId)
     save_to = benchConfig.result_json_path
     maxSppedups = []
@@ -156,8 +156,10 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
                 if len(maxSppedups) > benchConfig.keepTopNum :
                     maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
-                if is_tflops_ok(b,m,n,k,t) :
+                if checkTFLOPS and is_tflops_ok(b,m,n,k,t) :
                     findGoodCase.value = 1
+                if checkACC > 0 and acc >= checkACC :
+                    findGoodCase.value = 1 
         except BaseException as e: 
             print('[Deepgen Exception] ',e)
             traceback.print_exc()
@@ -174,7 +176,7 @@ tensor_input_baseline = None
 tensor_input_benchmark = None
 g_result = None
 g_findAvaialbleCase = Value('d',0.0)
-def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict]):
+def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], checkTflops : bool, checkAcc : float):
     global g_time0 
     global tensor_input_baseline 
     global tensor_input_benchmark 
@@ -182,7 +184,7 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     global g_findAvaialbleCase
     name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
     pkls = glob.glob(name_format)
-    p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls))
+    p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls, checkTflops, checkAcc))
     p.start()
     p.join(timeout= 40)
     # process terminated. clean undealed pkls
@@ -232,17 +234,18 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 
 
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
-def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) :
+def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int, checktflops:bool, checkAcc:float) :
     maxSpeedups = []
     currIter = 0
+
     while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter, cc.maxCount) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
-        do_benchmark(opty,devId,cc,maxSpeedups)
+        do_benchmark(opty,devId,cc,maxSpeedups, checktflops, checkAcc)
         if g_findAvaialbleCase.value > 0 :
             print(f"=========== Find available Case ! Stopped ====== ")
             return
-    do_benchmark(opty,devId,cc,maxSpeedups)
+    do_benchmark(opty,devId,cc,maxSpeedups, checktflops, checkAcc)
     if g_findAvaialbleCase.value > 0 :
         print(f"=========== Find available Case ! Stopped ====== ")
         return
@@ -253,10 +256,14 @@ def getInputs() :
     result_json_path = sys.argv[2]
     start = int(sys.argv[3])
     maxCount = int(sys.argv[4])
-    return (cfgFile,result_json_path,start,maxCount)
+    if len(sys.argv) > 5:
+        checktflops, checkAcc = int(sys.argv[5]) > 0 , float(sys.argv[6])
+    else:
+        checktflops, checkAcc = True, 0
+    return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc)
 
 if __name__ == '__main__' :
-    cfgFile,result_json_path,start,maxCount = getInputs()
+    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc = getInputs()
     # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     opty = matmul.MatmulOp
     devId = 7
@@ -275,7 +282,7 @@ if __name__ == '__main__' :
     for c in  get_tuning_space(opty, cfgFile):
         tssize += 1
     print(f"==== tune space size = {tssize}")
-    
+    print("=== checktflops, checkAcc",checktflops, checkAcc)
     ts = get_tuning_space(opty, cfgFile)
     cc = BenchmarkConfig()
     cc.keepTopNum = 10
@@ -293,9 +300,9 @@ if __name__ == '__main__' :
             if i >= start:
                 break 
         
-    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId)
-    # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
-    # do_benchmark(opty,devId,cc,[])
-    et = time.time()
-    print(f"=====  Total spends {(et - st)/ 60} minutes")
+    # do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId,checktflops, checkAcc)
+    # # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
+    # # do_benchmark(opty,devId,cc,[])
+    # et = time.time()
+    # print(f"===== Complete! Total spends {(et - st)/ 60} minutes")
     
