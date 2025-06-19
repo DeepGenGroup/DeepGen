@@ -3,6 +3,9 @@ import math
 import torch.nn as nn
 import torch.nn.functional as F
 from dataclasses import dataclass
+from kcg.TorchInjector import *
+from kcg.ModelUtils import *
+
 
 @dataclass
 class ModelArgs:

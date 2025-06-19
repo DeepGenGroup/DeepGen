@@ -1,4 +1,4 @@
-from model import LLAMA2
+from model import *
 import torch, json
 import torch.nn.functional as F
 
@@ -34,5 +34,61 @@ def run(max_seq_len=2048, max_batch_size=16, vocab_size=32000):
         print("batch: {} time cost: {}".format(batch, cost))
 
 
+# if __name__ == "__main__":
+#     DeviceInfo.init_cuda(7)
+#     model = LLAMA2()
+#     optimizedModel = get_op_optimized_model(model).to(7)
+#     compile_model(optimizedModel,ModelArgs(), 7)
+#     batchs = [1]
+#     max_seq_len=2048, max_batch_size=16, vocab_size=32000
+    
+#     print("seq_len: {}".format(max_seq_len))
+#     for batch in batchs:
+#         input = torch.randint(low=1, high=vocab_size, size=(batch, max_seq_len), dtype=torch.long, device='cuda:7')
+#         model = model.to(7)
+#         cost = test_model(model, input)
+#         print("batch: {} time cost: {}".format(batch, cost))
+    
+    
+# 如何运行模型
+def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
+    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
+    def _f() :
+        out = model(input_ids)
+        return out
+    return _f
+    
 if __name__ == "__main__":
-  run()
+    PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
+    # 测试Llama模型
+    args = ModelArgs()
+    # build model
+    DeviceInfo.init_cuda(7)
+    model = LLAMA2()
+    # model = LlamaOld(args).to(args.device)
+    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
+    
+    # optimizedModel = model
+    optimizedModel = get_op_optimized_model(model).to(7)
+    compile_model(7, run_model(optimizedModel,args,input_ids))
+    
+    # def f_benchmark():
+    #     return optimizedModel(input_ids)
+    # def f_base():
+    #     return model(input_ids)
+    
+    # out0,t0 = evaluate_model_time(f_base)
+    # out1,t1 = evaluate_model_time(f_benchmark)
+    
+    # print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {(t0-t1)/t0}")
+    # opCallCounter = OpProxy.GetOpCallCounts()
+    # print("==== call ops :",opCallCounter)
+    # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
+    
+    # if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
+    #     print("===== model test correct ")
+    # else:
+    #     diff, maxerr = compare_with_error(out0,out1)
+    #     print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
+    #     print("baseline = ",out0)
+    #     print("user = ", out1)
