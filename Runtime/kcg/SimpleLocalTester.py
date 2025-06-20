@@ -299,10 +299,9 @@ if __name__ == '__main__' :
             i+=1
             if i >= start:
                 break 
-        
-    # do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId,checktflops, checkAcc)
-    # # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
-    # # do_benchmark(opty,devId,cc,[])
-    # et = time.time()
-    # print(f"===== Complete! Total spends {(et - st)/ 60} minutes")
+    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId,checktflops, checkAcc)
+    # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
+    # do_benchmark(opty,devId,cc,[])
+    et = time.time()
+    print(f"===== Complete! Total spends {(et - st)/ 60} minutes")
     

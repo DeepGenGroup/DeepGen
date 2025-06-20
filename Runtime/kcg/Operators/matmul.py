@@ -335,6 +335,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         cfgstr = items[-1]
         basestr = items[-2]
         batches = items[2:-2]
+        print('items = ',items)
         if len(batches) > 0 :
             self.batch = []
             for _b in batches :
@@ -343,7 +344,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
                 self.batch.append(int(_b))
         else:
             self.batch = []
-
+            
         i_m = basestr.find('M')
         i_n = basestr.find('N')
         i_k = basestr.find('K')
@@ -353,7 +354,7 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.M = int(basestr[i_m+1:i_n])
         self.N = int(basestr[i_n+1:i_k])
         self.K = int(basestr[i_k+1:i_isAT])
-        self.isATranspose = int(basestr[i_isAT+1:i_w]) > 0
+        self.isATranspose = int(basestr[i_isAT + 4:i_w]) > 0
         self.WARP_SIZE = int(basestr[i_w+1:])
         
         i_BM = cfgstr.find('BM') 
@@ -380,29 +381,29 @@ class MatmulTuningArgs(TuningArgsInterface) :
         i_LC = cfgstr.find('LC') 
         i_RC = cfgstr.find('RC') 
         
-        self.BLOCK_SIZE_M = int(cfgstr[i_BM + 1 : i_BN]) 
-        self.BLOCK_SIZE_N = int(cfgstr[i_BN + 1 : i_BK]) 
-        self.BLOCK_SIZE_K = int(cfgstr[i_BK + 1 : i_TM]) 
-        self.THREAD_SIZE_M = int(cfgstr[i_TM + 1 : i_TN]) 
-        self.THREAD_SIZE_N = int(cfgstr[i_TN + 1 : i_BLY]) 
-        self.BLOCK_LAYOUT_Y = int(cfgstr[i_BLY + 1 : i_BLX]) 
-        self.BLOCK_LAYOUT_X = int(cfgstr[i_BLX + 1 : i_WLY]) 
-        self.WARP_LAYOUT_Y = int(cfgstr[i_WLY + 1 : i_WLX]) 
-        self.WARP_LAYOUT_X = int(cfgstr[i_WLX + 1 : i_GLWA]) 
-        self.GLOB_LOAD_WIDTH_A = int(cfgstr[i_GLWA + 1 : i_GLWB]) 
-        self.GLOB_LOAD_WIDTH_B = int(cfgstr[i_GLWB + 1 : i_BSWM]) 
-        self.BLOCK_SCATTER_WIDTH_M = int(cfgstr[i_BSWM + 1 : i_BSWN]) 
-        self.BLOCK_SCATTER_WIDTH_N = int(cfgstr[i_BSWN + 1 : i_WSWM]) 
-        self.WARP_SCATTER_WIDTH_M = int(cfgstr[i_WSWM + 1 : i_WSWN]) 
-        self.WARP_SCATTER_WIDTH_N = int(cfgstr[i_WSWN + 1 : i_LSU]) 
-        self.LOCAL_SPLIT_U = int(cfgstr[i_LSU + 1 : i_Map]) 
-        self.BLOCK_MAPPING = int(cfgstr[i_Map + 1 : i_GSW]) 
-        self.GLOB_STORE_WIDTH = int(cfgstr[i_GSW + 1 : i_UN]) 
-        self.UNROLL_NUM = int(cfgstr[i_UN + 1 : i_RP]) 
-        self.REG_PREFETCH = int(cfgstr[i_RP + 1 : i_SP]) 
-        self.SHARED_PREFETCH = int(cfgstr[i_SP + 1 : i_LC]) 
-        self.LOAD_CONTINUOUS = int(cfgstr[i_LC + 1 : i_RC]) 
-        self.STORE_CONTINUOUS = int(cfgstr[i_RC + 1 : ]) 
+        self.BLOCK_SIZE_M = int(cfgstr[i_BM + 2 : i_BN]) 
+        self.BLOCK_SIZE_N = int(cfgstr[i_BN + 2 : i_BK]) 
+        self.BLOCK_SIZE_K = int(cfgstr[i_BK + 2 : i_TM]) 
+        self.THREAD_SIZE_M = int(cfgstr[i_TM + 2 : i_TN]) 
+        self.THREAD_SIZE_N = int(cfgstr[i_TN + 2 : i_BLY]) 
+        self.BLOCK_LAYOUT_Y = int(cfgstr[i_BLY + 3 : i_BLX]) 
+        self.BLOCK_LAYOUT_X = int(cfgstr[i_BLX + 3 : i_WLY]) 
+        self.WARP_LAYOUT_Y = int(cfgstr[i_WLY + 3 : i_WLX]) 
+        self.WARP_LAYOUT_X = int(cfgstr[i_WLX + 3 : i_GLWA]) 
+        self.GLOB_LOAD_WIDTH_A = int(cfgstr[i_GLWA + 4 : i_GLWB]) 
+        self.GLOB_LOAD_WIDTH_B = int(cfgstr[i_GLWB + 4 : i_BSWM]) 
+        self.BLOCK_SCATTER_WIDTH_M = int(cfgstr[i_BSWM + 4 : i_BSWN]) 
+        self.BLOCK_SCATTER_WIDTH_N = int(cfgstr[i_BSWN + 4 : i_WSWM]) 
+        self.WARP_SCATTER_WIDTH_M = int(cfgstr[i_WSWM + 4 : i_WSWN]) 
+        self.WARP_SCATTER_WIDTH_N = int(cfgstr[i_WSWN + 4 : i_LSU]) 
+        self.LOCAL_SPLIT_U = int(cfgstr[i_LSU + 3 : i_Map]) 
+        self.BLOCK_MAPPING = int(cfgstr[i_Map + 3 : i_GSW]) 
+        self.GLOB_STORE_WIDTH = int(cfgstr[i_GSW + 3 : i_UN]) 
+        self.UNROLL_NUM = int(cfgstr[i_UN + 2 : i_RP]) 
+        self.REG_PREFETCH = int(cfgstr[i_RP + 2 : i_SP]) 
+        self.SHARED_PREFETCH = int(cfgstr[i_SP + 2 : i_LC]) 
+        self.LOAD_CONTINUOUS = int(cfgstr[i_LC + 2 : i_RC]) 
+        self.STORE_CONTINUOUS = int(cfgstr[i_RC + 2 : ]) 
         return True
         
     def __str__(self):

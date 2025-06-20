@@ -101,7 +101,7 @@ class HIPLoaderST(object):
             name = kernelFile.m_kernelFuncName
             shared = int(kernelFile.m_shmSize)
             device = int(kernelFile.m_device)
-            print(f"[loader] name,binaryPath,shared,device = {name,binaryPath,shared,device}")
+            # print(f"[loader] name,binaryPath,shared,device = {name,binaryPath,shared,device}")
             mod,func, n_regs, n_spills = self.load_binary(name,binaryPath,shared,device)
             info = KernelRuntimeInfo(mod,func,n_regs,n_spills)
             kernelFile.m_kernelInfo = info

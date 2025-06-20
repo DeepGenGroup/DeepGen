@@ -68,6 +68,7 @@ class OpProxy :
     @staticmethod
     def registKernel(tr : TuneResult) :
         if tr is None or tr.bestConfigPkl is None:
+            print("register failed : bestConfigPkl is None")
             return
         if tr.bestSpeedup > 1 :
             if tr.OpTy is matmul.MatmulOp :
@@ -94,7 +95,11 @@ class OpProxy :
                 if batch[0] == 1 and len(bb) == 0:
                     isBatchEqual = True
             else:
-                isBatchEqual = bool(bb == batch)
+                newbatch = []
+                for _b in batch :
+                    if _b != 1:
+                        newbatch.append(_b)
+                isBatchEqual = bool(bb == newbatch)
             if isBatchEqual and [m,n,k] == [mm,nn,kk]: 
                 def _f() :
                     shapeC = bb + [m,n]
@@ -114,7 +119,7 @@ class OpProxy :
         k = int(a.shape[-1])
         n = int(b.shape[-1])
         batch = [ int(x)  for x in a.shape[0:-2] ]
-        print(f"b,m,n,k = {batch,m,n,k}")
+        # print(f"b,m,n,k = {batch,m,n,k}")
         ret = torch._C._VariableFunctions.matmul(a, b)
         return OpProxy.__select_matmul(a,b,batch,m,n,k)
 # /home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl

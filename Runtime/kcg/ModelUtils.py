@@ -7,6 +7,7 @@ import types
 import math
 from kcg.TorchInjector import *
 from kcg.KernelTuneUtils import kernel_compile_tuning
+import numpy as np
 
 # ===================== 1. 自定义实现 =====================
 class CustomLinear(nn.Module):
@@ -14,7 +15,7 @@ class CustomLinear(nn.Module):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        
+        self.f_mm = torch.matmul
         # 初始化权重参数 (shape: [out_features, in_features])
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
         
@@ -37,7 +38,8 @@ class CustomLinear(nn.Module):
     
     def forward(self, x):
         # 使用 torch.matmul 进行矩阵乘法
-        output = torch.matmul(x, self.weight.t())
+        wt = self.weight.t()
+        output = self.f_mm(x, wt)
         
         # 添加偏置
         if self.bias is not None:
@@ -50,7 +52,7 @@ class CustomLinear(nn.Module):
 
 
 # ===================== 2. 模块替换工具 =====================
-def replace_module(module, target_class, replacement_class):
+def replace_LinearToCustomLlinear(module, target_class, replacement_class):
     """递归替换模型中的所有目标模块"""
     for name, child in module.named_children():
         if isinstance(child, target_class):
@@ -68,7 +70,7 @@ def replace_module(module, target_class, replacement_class):
             setattr(module, name, replacement)
         else:
             # 递归处理子模块
-            replace_module(child, target_class, replacement_class)
+            replace_LinearToCustomLlinear(child, target_class, replacement_class)
 
 # ===================== 3. 函数替换工具 =====================
 class MatmulReplacer:
@@ -190,7 +192,7 @@ def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     # input_data = torch.randn(3, 10)
     
     # 1. 替换所有 nn.Linear 模块
-    replace_module(original_model, nn.Linear, CustomLinear)
+    replace_LinearToCustomLlinear(original_model, nn.Linear, CustomLinear)
     
     # 2. 创建包装器模型，在 forward 中应用 matmul 替换
     class WrappedModel(nn.Module):
@@ -206,7 +208,6 @@ def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     return wrapped_model
 
 
-
 def compile_model(devId : int, f_run_model : Callable) :
     output = f_run_model()
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
@@ -218,22 +219,70 @@ def compile_model(devId : int, f_run_model : Callable) :
         ts = None
         if Ty is matmul.MatmulOp :
             import kcg.tuning.NewCfgTest as tune_mm
-            # ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
+            ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
             print("collected args = ",args)
         elif Ty is attention.AttentionOp :
             import kcg.tuning.attn_FP32_test as tune_att
             ts = tune_att.getTuneSpace([1,1,1,1],[])
         else:
             assert False, f"invalid ty : {Ty.__name__}"
-        # tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
-        # OpProxy.registKernel(tuneRes)
+        tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
+        OpProxy.registKernel(tuneRes)
 
 def evaluate_model_time(f : Callable) -> Tuple[torch.Tensor, float]:
-    ev_st = torch.cuda.Event(enable_timing=True)
-    ev_et = torch.cuda.Event(enable_timing=True)
-    ev_st.record()
-    out1 = f()
-    ev_et.record()
-    torch.cuda.synchronize()
-    eps = ev_st.elapsed_time(ev_et)
-    return (out1, eps)
+    ret = []
+    for i in range(5):
+        ev_st = torch.cuda.Event(enable_timing=True)
+        ev_et = torch.cuda.Event(enable_timing=True)
+        ev_st.record()
+        out1 = f()
+        ev_et.record()
+        torch.cuda.synchronize()
+        eps = ev_st.elapsed_time(ev_et)
+        ret.append(eps)
+    return (out1, np.median(ret))
+
+
+def registerPreCompiledKernelByJson(jsonpath : str,devid : int) :
+    if not os.path.exists(jsonpath) :
+        return False
+    info = None
+    with open(jsonpath) as f:
+        info = json.load(f)
+    for k in info['kernels']:
+        opty = None
+        if k['type'] == 'matmul':
+            opty = matmul.MatmulOp
+        elif k['type'] == 'attention' :
+            opty = attention.AttentionOp
+        else:
+            assert False, f"try to regist invalid opty {k['type']}"
+        registerPreCompiledKernel(opty,k['kernelName'],11,devid)
+    return True
+
+def registerPreCompiledKernel(opTy : Type[OpInterface] ,kernlName : str, speedup : float, devId : int) -> str :
+    # kernlName = 'kcg_MM_bM1024N1024K1024isAT1W64_BM32BN32BK8TM4TN4BLY1BLX1WLY8WLX8GLWA4GLWB4BSWM2BSWN2WSWM1WSWN2LSU1Map4GSW0UN8RP0SP0LC1RC0'
+    if opTy is matmul.MatmulOp :
+        ta = matmul.MatmulTuningArgs()
+        op = matmul.MatmulOp()
+    elif opTy is attention.AttentionOp :
+        ta = attention.AttentionTuningArgs()
+        op = attention.AttentionOp()
+        
+    ta.assignWithKernelName(kernlName)
+    info = ta.getCompileNeededInfo()
+    backendType = EnumBackendType.CUDA
+    arch = "80"
+    if is_hip() :
+        arch = "906"
+        backendType = EnumBackendType.HIP
+    ba, kernelCfg,  packedKernl = op.Compile(devId,backendType,arch,info)    
+    
+    tr = TuneResult()
+    tr.OpTy = opTy
+    tr.bestSpeedup = speedup
+    tr.bestKernelConfig = kernelCfg
+    tr.bestKernelBaseArg = info.baseArgs
+    tr.bestConfigPkl = tr.saveToPkl()
+    OpProxy.registKernel(tr)
+    return tr.bestConfigPkl

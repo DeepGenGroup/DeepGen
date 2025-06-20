@@ -67,23 +67,23 @@ if __name__ == "__main__":
     optimizedModel = get_op_optimized_model(model).to(7)
     compile_model(7, run_model(optimizedModel,args,input_ids))
     
-    # def f_benchmark():
-    #     return optimizedModel(input_ids)
-    # def f_base():
-    #     return model(input_ids)
+    def f_benchmark():
+        return optimizedModel(input_ids)
+    def f_base():
+        return model(input_ids)
     
-    # out0,t0 = evaluate_model_time(f_base)
-    # out1,t1 = evaluate_model_time(f_benchmark)
+    out0,t0 = evaluate_model_time(f_base)
+    out1,t1 = evaluate_model_time(f_benchmark)
     
-    # print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {(t0-t1)/t0}")
-    # opCallCounter = OpProxy.GetOpCallCounts()
-    # print("==== call ops :",opCallCounter)
-    # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
+    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {(t0-t1)/t0}")
+    opCallCounter = OpProxy.GetOpCallCounts()
+    print("==== call ops :",opCallCounter)
+    mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
     
-    # if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
-    #     print("===== model test correct ")
-    # else:
-    #     diff, maxerr = compare_with_error(out0,out1)
-    #     print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
-    #     print("baseline = ",out0)
-    #     print("user = ", out1)
+    if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
+        print("===== model test correct ")
+    else:
+        diff, maxerr = compare_with_error(out0,out1)
+        print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
+        print("baseline = ",out0)
+        print("user = ", out1)

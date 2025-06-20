@@ -4,6 +4,155 @@ from typing import List
 
 from kcg.Operators.attention import *
 
+def readConfigJson(path):
+  # read json file
+  with open(path, 'r') as f:
+    json_str = f.read().strip()
+  cfg_dict = json.loads(json_str)
+  return cfg_dict
+
+class CreateAttnConfig:
+  def __init__(self, cfg_dict ,shape, max_thread=256, type_width=4, smem_size=65536, sm_num=60):
+    self.cfg = cfg_dict
+    _, self.head_num, self.seq_len, self.head_dim = shape
+    # print(self.seq_len, shape)
+    self.max_thread = max_thread
+    self.type_width = type_width  # 一个字 4 byte
+    self.max_reg_size = 256 * self.type_width   # byte
+    self.max_sm_size = smem_size  # byte
+    self.sm_num = sm_num
+  
+  def threadTile(self):
+    result = []
+    for ptr in self.cfg["PTr"]:
+      for ptc in self.cfg["PTc"]:
+        for otr in self.cfg["OTr"]:
+          for otc in self.cfg["OTc"]:
+            result.append((ptr, ptc, otr, otc))
+    return result
+
+  def blockTile(self, old_cfgs):
+    result = []
+    for old_cfg in old_cfgs:
+      for br in self.cfg["Br"]:
+        for bc in self.cfg["Bc"]:
+          if br <= self.seq_len and bc <= self.seq_len:
+            thread_p = int(br / old_cfg[0]) * int(bc / old_cfg[1])
+            thread_o = int(br / old_cfg[2]) * int(self.cfg["Hd"][0] / old_cfg[3])
+            if thread_p == thread_o and self.max_thread >= thread_p:  # 线程相等
+              thread_num = thread_p
+              for s1 in self.cfg["Slice1"]:
+                for s2 in self.cfg["Slice2"]:
+                  for glwq in self.cfg["GLOB_LOAD_WIDTH_Q"]:
+                    for glwk in self.cfg["GLOB_LOAD_WIDTH_K"]:
+                      for glwv in self.cfg["GLOB_LOAD_WIDTH_V"]:
+                        ldtw_q = br * s1 / thread_num
+                        ldtw_k = bc * s1 / thread_num
+                        ldtw_v = self.cfg["Hd"][0] * s2 / thread_num
+                        if ldtw_q >= glwq and ldtw_k >= glwk and ldtw_v >= glwv:  # 保证能够正常glob load                    
+                          result.append((thread_num, (br, bc, self.cfg["Hd"][0], s1, s2), old_cfg, (glwq, glwk, glwv)))
+    return result # [thread_num, (br, bc, hd, slice1, slice2), (ptr, ptc, otr, otc), (glob_load_w_q, glwk, glwv)]
+  
+  def layoutAndScatterP(self, old_cfgs):
+    result = []
+    for old_cfg in old_cfgs:
+      for bly in self.cfg["BLOCK_LAYOUT_P_Y"]:
+        for blx in self.cfg["BLOCK_LAYOUT_P_X"]:
+          for wly in self.cfg["WARP_LAYOUT_P_Y"]:
+            for wlx in self.cfg["WARP_LAYOUT_P_X"]:
+              by = old_cfg[1][0] / old_cfg[2][0]  # by = br / ptr
+              bx = old_cfg[1][1] / old_cfg[2][1]  # bx = bc / ptc
+              if wly * wlx == self.cfg["WARP_SIZE"][0] and blx == 1 and bly * wly == by and wlx == bx:
+                for bswq in self.cfg["BLOCK_SCATTER_WIDTH_Q"]:
+                  for bswk in self.cfg["BLOCK_SCATTER_WIDTH_K"]:
+                    for wswq in self.cfg["WARP_SCATTER_WIDTH_Q"]:
+                      for wswk in self.cfg["WARP_SCATTER_WIDTH_K"]:
+                        if bswq <= old_cfg[2][0] and bswk <= old_cfg[2][1] and wswq <= bswq and wswk <= bswk:
+                          result.append(old_cfg + ((bly, blx, wly, wlx, bswq, bswk, wswq, wswk), ))
+    # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk))
+    return result
+
+  def layoutAndScatterO(self, old_cfgs):
+    result = []
+    for old_cfg in old_cfgs:
+      for bly in self.cfg["BLOCK_LAYOUT_O_Y"]:
+        for blx in self.cfg["BLOCK_LAYOUT_O_X"]:
+          for wly in self.cfg["WARP_LAYOUT_O_Y"]:
+            for wlx in self.cfg["WARP_LAYOUT_O_X"]:
+              by = old_cfg[1][0] / old_cfg[2][2]  # by = br / otr
+              bx = old_cfg[1][2] / old_cfg[2][3]  # bx = hd / otc
+              if wly * wlx == self.cfg["WARP_SIZE"][0] and bly * wly == by and wlx == bx:
+                for bswp in self.cfg["BLOCK_SCATTER_WIDTH_P"]:
+                  for bswv in self.cfg["BLOCK_SCATTER_WIDTH_V"]:
+                    for wswp in self.cfg["WARP_SCATTER_WIDTH_P"]:
+                      for wswv in self.cfg["WARP_SCATTER_WIDTH_V"]:
+                        if bswp <= old_cfg[2][2] and bswv <= old_cfg[2][3] and wswp <= bswp and wswv <= bswv:
+                          result.append(old_cfg + ((bly, blx, wly, wlx, bswp, bswv, wswp, wswv), ))
+    # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv))
+    return result
+  
+  # def storeSizeAndOther(self, old_cfgs):
+  #   result = []
+  #   for old_cfg in old_cfgs:
+  #     for spp in self.cfg["SHARED_PREFETCH_P"]:
+  #       smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+  #                   old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+  #       if spp == 1:
+  #         smem_size += old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3]
+  #       if smem_size <= self.max_sm_size:  # shared memory size
+  #         for rpp in self.cfg["REG_PREFETCH_P"]:
+  #           for rpo in self.cfg["REG_PREFETCH_O"]:
+  #             for unroll in self.cfg["UNROLL_NUM"]:
+  #               result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), ))  # 只能连续访存
+  #   # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
+  #   # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg, pf_o))
+  #   return result
+
+  def storeSizeAndOther_(self, old_cfgs):
+    result = []
+    for old_cfg in old_cfgs:
+      smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+      if smem_size <= self.max_sm_size:  # shared memory size
+        result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), ))  # 只能连续访存
+    # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o))
+    return result
+  
+  def cut(self, old_cfgs):
+    result = []
+    for old in old_cfgs:
+      # print(old)
+      sm_util = self.seq_len / old[1][0]
+      # sm占用率 / 离散化约束
+      # if (sm_util >= self.sm_num):
+      br_div_bk = old[1][0] / 32  #  br / bank num(32)
+      bc_div_bk = old[1][1] / 32  #  br / bank num(32)
+      hd_div_bk = old[1][2] / 32  #  hd / bank num(32)
+      brep_q = old[2][0] / old[4][4]
+      brep_k = old[2][1] / old[4][5]
+      brep_p = old[2][2] / old[5][4]
+      brep_v = old[2][3] / old[5][5]
+      if (brep_q == br_div_bk and brep_k == bc_div_bk and brep_p == br_div_bk and brep_v == hd_div_bk):
+        if old[4][4] == old[4][6] and old[4][5] == old[4][7] and old[5][4] == old[5][6] and old[5][5] == old[5][7]:
+          result.append(old)
+    return result
+
+    
+  def main(self):
+    result = self.threadTile()
+    result = self.blockTile(result)
+    result = self.layoutAndScatterP(result)
+    result = self.layoutAndScatterO(result)
+    # result = self.storeSizeAndOther(result)
+    result = self.storeSizeAndOther_(result)
+    result = self.cut(result)
+    if len(result):
+      return result[0], result[1:]
+    return None
+      
+  
 class CreateConfig:
   def __init__(self, json_path, shape):
     f = open(json_path, "r")
@@ -164,9 +313,10 @@ class CreateConfig:
 # spec.loader.exec_module(mod)
 # compile_kernel_FA = mod.compile_attn
 
-def get_cfgs(shape = [1, 32, 2048, 128]) -> List:
-  path = "/home/xushilong/DeepGen/_TempCodes/config.json"
-  cc = CreateConfig(path, shape)
+def get_cfgs(shape = [1, 32, 4096, 128]) -> List:
+  path = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
+  cfg_dict = readConfigJson(path)
+  cc = CreateAttnConfig(cfg_dict, shape)
   cfgs = cc.main()
   return cfgs
 
@@ -218,6 +368,13 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
     
     # compile_kernel_FA(shape,config)
 
-# if __name__ == '__main__' :
+if __name__ == '__main__' :
+  ...
 #   compile([1, 32, 2048, 128],[])
+  # thread_num, cfgs = get_cfgs()
+  # print(len(cfgs))
+  # for cfg in cfgs:
+  #   if cfg[0] == 256:
+  #     print(cfg)
+  
   
