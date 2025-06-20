@@ -101,6 +101,40 @@ class MatmulTuningArgs(TuningArgsInterface) :
         self.LOAD_CONTINUOUS : int = 0
         self.STORE_CONTINUOUS : int = 0
     
+    def getCompileNeededInfo(self) -> CompileNeededInfo :
+        kernelName = self.generateKernelName()
+        configDict = {
+            kernelName : self.jsonfy()
+        }
+        ret = CompileNeededInfo()
+        ret.kernelName = kernelName
+        ret.baseArgs = [self.batch, self.M, self.N, self.K, int(self.dtA)]
+        ret.tsArgs = [[self.batch, self.M, self.N, self.K] , configDict  ]
+        ret.torchDataType = ToTorchType(self.dtA)
+        gridDim = self.M / self.BLOCK_SIZE_M * self.N / self.BLOCK_SIZE_N
+        blockDim = (self.BLOCK_SIZE_M / self.THREAD_SIZE_M) * ( self.BLOCK_SIZE_N / self.THREAD_SIZE_N )
+        shmBytes = (self.BLOCK_SIZE_M + self.BLOCK_SIZE_N) * self.BLOCK_SIZE_K
+        if self.SHARED_PREFETCH > 0 :
+            shmBytes *= 2
+        if self.LOCAL_SPLIT_U > 1 :
+            blockDim *= self.LOCAL_SPLIT_U
+        shm_reduce = self.BLOCK_SIZE_M * self.BLOCK_SIZE_N * self.LOCAL_SPLIT_U
+        if shm_reduce > shmBytes :
+            shmBytes = shm_reduce
+        ret.blockDims = [int(blockDim),1,1]
+        ret.gridDims = [int(gridDim)]
+        if int(gridDim) >= 65535 :
+            return None
+        if int(blockDim) >= 65535 :
+            return None
+        if len(self.batch) > 0 :
+            ret.gridDims += self.batch  # 处理方式： 将batch维度加到griddim的y,z上. 即batch数组的维度不超过2
+        assert len(ret.gridDims) <= 3
+        while len(ret.gridDims) < 3:
+            ret.gridDims.append(1)   # 不够三维的部分用1 补全
+        ret.shmBytes = int(shmBytes * sizeof(self.dtA))
+        return ret
+    
     def assignWithList(self, *args):
         self.BLOCK_SIZE_M = args[0]
         self.BLOCK_SIZE_N = args[1]
@@ -294,7 +328,83 @@ class MatmulTuningArgs(TuningArgsInterface) :
         ret += f"LC{ self.LOAD_CONTINUOUS }" 
         ret += f"RC{ self.STORE_CONTINUOUS }" 
         return ret
-            
+    
+    def assignWithKernelName(self,name : str) -> bool :
+        st = 0
+        items = name.split('_')
+        cfgstr = items[-1]
+        basestr = items[-2]
+        batches = items[2:-2]
+        if len(batches) > 0 :
+            self.batch = []
+            for _b in batches :
+                if _b.startswith('b') :
+                    _b = _b[1:]
+                self.batch.append(int(_b))
+        else:
+            self.batch = []
+
+        i_m = basestr.find('M')
+        i_n = basestr.find('N')
+        i_k = basestr.find('K')
+        i_isAT = basestr.find('isAT')
+        i_w = basestr.find('W')
+        
+        self.M = int(basestr[i_m+1:i_n])
+        self.N = int(basestr[i_n+1:i_k])
+        self.K = int(basestr[i_k+1:i_isAT])
+        self.isATranspose = int(basestr[i_isAT+1:i_w]) > 0
+        self.WARP_SIZE = int(basestr[i_w+1:])
+        
+        i_BM = cfgstr.find('BM') 
+        i_BN = cfgstr.find('BN') 
+        i_BK = cfgstr.find('BK') 
+        i_TM = cfgstr.find('TM') 
+        i_TN = cfgstr.find('TN') 
+        i_BLY = cfgstr.find('BLY') 
+        i_BLX = cfgstr.find('BLX') 
+        i_WLY = cfgstr.find('WLY') 
+        i_WLX = cfgstr.find('WLX') 
+        i_GLWA = cfgstr.find('GLWA') 
+        i_GLWB = cfgstr.find('GLWB') 
+        i_BSWM = cfgstr.find('BSWM') 
+        i_BSWN = cfgstr.find('BSWN') 
+        i_WSWM = cfgstr.find('WSWM') 
+        i_WSWN = cfgstr.find('WSWN') 
+        i_LSU = cfgstr.find('LSU') 
+        i_Map = cfgstr.find('Map') 
+        i_GSW = cfgstr.find('GSW') 
+        i_UN = cfgstr.find('UN') 
+        i_RP = cfgstr.find('RP') 
+        i_SP = cfgstr.find('SP') 
+        i_LC = cfgstr.find('LC') 
+        i_RC = cfgstr.find('RC') 
+        
+        self.BLOCK_SIZE_M = int(cfgstr[i_BM + 1 : i_BN]) 
+        self.BLOCK_SIZE_N = int(cfgstr[i_BN + 1 : i_BK]) 
+        self.BLOCK_SIZE_K = int(cfgstr[i_BK + 1 : i_TM]) 
+        self.THREAD_SIZE_M = int(cfgstr[i_TM + 1 : i_TN]) 
+        self.THREAD_SIZE_N = int(cfgstr[i_TN + 1 : i_BLY]) 
+        self.BLOCK_LAYOUT_Y = int(cfgstr[i_BLY + 1 : i_BLX]) 
+        self.BLOCK_LAYOUT_X = int(cfgstr[i_BLX + 1 : i_WLY]) 
+        self.WARP_LAYOUT_Y = int(cfgstr[i_WLY + 1 : i_WLX]) 
+        self.WARP_LAYOUT_X = int(cfgstr[i_WLX + 1 : i_GLWA]) 
+        self.GLOB_LOAD_WIDTH_A = int(cfgstr[i_GLWA + 1 : i_GLWB]) 
+        self.GLOB_LOAD_WIDTH_B = int(cfgstr[i_GLWB + 1 : i_BSWM]) 
+        self.BLOCK_SCATTER_WIDTH_M = int(cfgstr[i_BSWM + 1 : i_BSWN]) 
+        self.BLOCK_SCATTER_WIDTH_N = int(cfgstr[i_BSWN + 1 : i_WSWM]) 
+        self.WARP_SCATTER_WIDTH_M = int(cfgstr[i_WSWM + 1 : i_WSWN]) 
+        self.WARP_SCATTER_WIDTH_N = int(cfgstr[i_WSWN + 1 : i_LSU]) 
+        self.LOCAL_SPLIT_U = int(cfgstr[i_LSU + 1 : i_Map]) 
+        self.BLOCK_MAPPING = int(cfgstr[i_Map + 1 : i_GSW]) 
+        self.GLOB_STORE_WIDTH = int(cfgstr[i_GSW + 1 : i_UN]) 
+        self.UNROLL_NUM = int(cfgstr[i_UN + 1 : i_RP]) 
+        self.REG_PREFETCH = int(cfgstr[i_RP + 1 : i_SP]) 
+        self.SHARED_PREFETCH = int(cfgstr[i_SP + 1 : i_LC]) 
+        self.LOAD_CONTINUOUS = int(cfgstr[i_LC + 1 : i_RC]) 
+        self.STORE_CONTINUOUS = int(cfgstr[i_RC + 1 : ]) 
+        return True
+        
     def __str__(self):
         return str(self.jsonfy())
 

@@ -360,7 +360,10 @@ class TuningArgsInterface(ABC) :
     def generateKernelName(self) -> str : ...
     @abstractmethod
     def __str__(self): ...
-
+    @abstractmethod
+    def getCompileNeededInfo(self) -> CompileNeededInfo : ...
+    
+    
 # 算子接口
 class OpInterface(ABC) :
     def __init__(self):

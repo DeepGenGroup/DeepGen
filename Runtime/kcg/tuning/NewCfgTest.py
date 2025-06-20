@@ -366,40 +366,9 @@ class CreateMatmulConfig:
       for e in ta.batch:
         if e == 1:
           ta.batch.remove(e)
-      kernelName = ta.generateKernelName()
-      configDict = {
-        kernelName : ta.jsonfy()
-      }
-      ret = CompileNeededInfo()
-      ret.kernelName = kernelName
-      ret.baseArgs = [ta.batch, ta.M, ta.N, ta.K, int(ta.dtA)]
-      ret.tsArgs = [[ta.batch, ta.M, ta.N, ta.K] , configDict  ]
-      ret.torchDataType = ToTorchType(ta.dtA)
-      gridDim = ta.M / ta.BLOCK_SIZE_M * ta.N / ta.BLOCK_SIZE_N
-      blockDim = (ta.BLOCK_SIZE_M / ta.THREAD_SIZE_M) * ( ta.BLOCK_SIZE_N / ta.THREAD_SIZE_N )
-      shmBytes = (ta.BLOCK_SIZE_M + ta.BLOCK_SIZE_N) * ta.BLOCK_SIZE_K
-      if ta.SHARED_PREFETCH > 0 :
-        shmBytes *= 2
-      if ta.LOCAL_SPLIT_U > 1 :
-        blockDim *= ta.LOCAL_SPLIT_U
-        shm_reduce = ta.BLOCK_SIZE_M * ta.BLOCK_SIZE_N * ta.LOCAL_SPLIT_U
-        if shm_reduce > shmBytes :
-          shmBytes = shm_reduce
-      ret.blockDims = [int(blockDim),1,1]
-      
-      ret.gridDims = [int(gridDim)]
-      if int(gridDim) >= 65535 :
-        continue
-      if int(blockDim) >= 65535 :
-        continue
-      if len(ta.batch) > 0 :
-        ret.gridDims += ta.batch  # 处理方式： 将batch维度加到griddim的y,z上. 即batch数组的维度不超过2
-      assert len(ret.gridDims) <= 3
-      while len(ret.gridDims) < 3:
-        ret.gridDims.append(1)   # 不够三维的部分用1 补全
-      ret.shmBytes = int(shmBytes * sizeof(ta.dtA))
-      
-      yield ret
+      ret = ta.getCompileNeededInfo()
+      if ret is not None:
+        yield ret
     
 
 def getTuneSpace(geemConfigPath : str) -> TsGeneratorType :

@@ -141,7 +141,9 @@ class AttentionTuningArgs(TuningArgsInterface) :
         # gridSize = [int(shape[2]/cfg[1]), shape[1], shape[0]]  # bx, by, bz
         # blockSize = [cfg[-1][0]]  # tx
         # sharedSize = cfg[-1][1]  # shared memroy size
-
+    def getCompileNeededInfo(self) -> CompileNeededInfo : 
+        ...
+    
     def jsonfy(self) : 
         
         obj = {
