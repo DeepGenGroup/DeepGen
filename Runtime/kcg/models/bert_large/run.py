@@ -48,10 +48,11 @@ def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
 if __name__ == "__main__":
     devid = 7
     PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
-    DeviceInfo.init_cuda(devid)
+    DeviceInfo.init_cuda([devid])
 
     args = ModelArgs()
-    model = BERT().to(devid)
+    model = BERT(True).to(devid)
+    model_bench = BERT(False).to(devid)
     # batchs = [1, 2, 4]
     # print("seq_len: {}".format(max_seq_len))
     # for batch in batchs:
@@ -61,7 +62,7 @@ if __name__ == "__main__":
     #     print("batch: {} time cost: {}".format(batch, cost))
     input_ids = torch.randint(1, args.vocab_size, size=(1, 1024)).to(devid)
     # optimizedModel = model
-    optimizedModel = get_op_optimized_model(model).to(devid)
+    # optimizedModel = get_op_optimized_model(model).to(devid)
     
     # 手动注册已经调好的kernl
     registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
@@ -69,8 +70,10 @@ if __name__ == "__main__":
     # compile_model(7, run_model(optimizedModel,args,input_ids))
 
     def f_benchmark():
-        return optimizedModel(input_ids)
+        print("========= eval bench time =======",flush=True)
+        return model_bench(input_ids)
     def f_base():
+        print("========= eval base time =======",flush=True)
         return model(input_ids)
     
     # 
@@ -78,7 +81,7 @@ if __name__ == "__main__":
     out0,t0 = evaluate_model_time(f_base)
     out1,t1 = evaluate_model_time(f_benchmark)
     
-    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t1/t0}")
+    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t0/t1}")
     opCallCounter = OpProxy.GetOpCallCounts()
     print("==== call ops :",opCallCounter)
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]

@@ -11,14 +11,13 @@ import numpy as np
 
 # ===================== 1. 自定义实现 =====================
 class CustomLinear(nn.Module):
-    def __init__(self, in_features, out_features, bias=True):
+    def __init__(self, in_features, out_features, bias=True, f_mm = torch.matmul):
         super().__init__()
         self.in_features = in_features
         self.out_features = out_features
-        self.f_mm = torch.matmul
+        self.f_mm = f_mm
         # 初始化权重参数 (shape: [out_features, in_features])
         self.weight = nn.Parameter(torch.empty(out_features, in_features))
-        
         # 初始化偏置参数 (shape: [out_features])
         if bias:
             self.bias = nn.Parameter(torch.empty(out_features))
@@ -26,16 +25,23 @@ class CustomLinear(nn.Module):
             self.register_parameter('bias', None)
         
         # 初始化参数
-        self.reset_parameters()
+        self.reset_parameters(isRandom=False)
     
-    def reset_parameters(self):
+    def reset_parameters(self, isRandom = True):
+        if isRandom :
         # 使用与 torch.nn.Linear 相同的初始化方法
-        nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
-        if self.bias is not None:
-            fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
-            bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
-            nn.init.uniform_(self.bias, -bound, bound)
-    
+            nn.init.kaiming_uniform_(self.weight, a=math.sqrt(5))
+            if self.bias is not None:
+                fan_in, _ = nn.init._calculate_fan_in_and_fan_out(self.weight)
+                bound = 1 / math.sqrt(fan_in) if fan_in > 0 else 0
+                nn.init.uniform_(self.bias, -bound, bound)
+        else:
+            # 固定权重值（例如全0）
+            nn.init.constant_(self.weight, 1.1)
+            # 固定偏置值（例如全1）
+            if self.bias is not None:
+                nn.init.constant_(self.bias, 1.0)
+        
     def forward(self, x):
         # 使用 torch.matmul 进行矩阵乘法
         wt = self.weight.t()
@@ -307,3 +313,34 @@ def registerPreCompiledKernel(opTy : Type[OpInterface] ,kernlName : str, speedup
     tr.bestConfigPkl = tr.saveToPkl()
     OpProxy.registKernel(tr)
     return tr.bestConfigPkl
+
+
+# 3. 释放模型内存的完整步骤
+def release_model(model):
+    """安全释放模型及其相关资源"""
+    # 3.1 删除模型引用
+    model.zero_grad()  # 清除梯度缓存
+    del model  # 删除模型引用
+    
+    # 3.2 强制垃圾回收
+    gc.collect()  # 回收Python对象
+    
+    # 3.3 清空CUDA缓存
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()  # 释放未使用的GPU显存
+    
+    # 3.4 验证内存释放
+    if torch.cuda.is_available():
+        print(f"释放后GPU内存: {torch.cuda.memory_allocated()/1e6:.2f} MB")
+
+
+
+
+def create_fixed_embedding(num_embeddings, embedding_dim):
+    emb = nn.Embedding(num_embeddings, embedding_dim)
+    # 初始化为固定值 (这里用全0，可修改为其他值)
+    nn.init.constant_(emb.weight, 1.5)
+    # 冻结参数 (可选)
+    emb.weight.requires_grad = False
+    return emb
+

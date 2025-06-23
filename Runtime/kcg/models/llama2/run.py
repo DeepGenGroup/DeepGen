@@ -59,48 +59,58 @@ def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
     return _f
     
 if __name__ == "__main__":
-    PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
-    # 测试Llama模型
+    isBase = sys.argv[1] == 'base'
     devid = 7
-    args = ModelArgs()
-    # build model
-    DeviceInfo.init_cuda(7)
-    model = LLAMA2()
-    # model = LlamaOld(args).to(args.device)
-    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
     
-    # optimizedModel = model
+    PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
+    DeviceInfo.init_cuda([devid])
 
-    # compile_model(7, run_model(optimizedModel,args,input_ids))
+    args = ModelArgs()
+    model = LLAMA2(isBase).to(device=devid)
+    # model_bench = LLAMA2(False).to(devid)
+    # 复制权重（关键步骤）
+    # model_bench.load_state_dict(model.state_dict())
+
+    # 验证权重是否相同
+    # for (name_a, param_a), (name_b, param_b) in zip(model.named_parameters(), model_bench.named_parameters()):
+    #     assert name_a == name_b, "参数名称不一致"
+    #     assert torch.equal(param_a, param_b), f"参数 {name_a} 不相同"
+  
+    input_ids = torch.randint(0, args.vocab_size, size=(1, args.max_seq_len)).to(devid)
+    # input_ids_0 = input_ids.to(6)
+    # optimizedModel = model_bench
+    # optimizedModel = get_op_optimized_model(model).to(devid)
     
-    optimizedModel = get_op_optimized_model(model).to(devid)
-    baselineModel = get_baseline_model(model).to(devid)
     # 手动注册已经调好的kernl
-    registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
+    registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
     # compile_model(7, run_model(optimizedModel,args,input_ids))
     
-    def f_benchmark():
-        global g_llama2_run_baseline
-        g_llama2_run_baseline = False 
-        return optimizedModel(input_ids)
+    # if isBase :
     def f_base():
-        global g_llama2_run_baseline
-        g_llama2_run_baseline = True 
-        return baselineModel(input_ids)
-    
+        if isBase:
+            print("========= eval base time =======",flush=True)
+        else :
+            print("========= eval bench time =======",flush=True)
+        return model(input_ids)
+    # else:
+        # def f_benchmark():
+        #     print("========= eval bench time =======",flush=True)
+        #     return optimizedModel(input_ids)
+    # 
+
     out0,t0 = evaluate_model_time(f_base)
-    out1,t1 = evaluate_model_time(f_benchmark)
+    # out1,t1 = evaluate_model_time(f_benchmark)
     
-    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t0/t1}")
+    print(f"=== model run time : {t0}, ")
     opCallCounter = OpProxy.GetOpCallCounts()
-    print("==== call ops :",opCallCounter)
+    # print("==== call ops :",opCallCounter)
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
     
-    if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
-        print("===== model test correct ")
-    else:
-        diff, maxerr = compare_with_error(out0,out1)
-        print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
-        print("baseline = ",out0)
-        print("user = ", out1)
+    # if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
+    #     print("===== model test correct ")
+    # else:
+    #     diff, maxerr = compare_with_error(out0,out1)
+    #     print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
+    #     print("baseline = ",out0)
+    #     print("user = ", out1)

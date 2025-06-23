@@ -32,9 +32,11 @@ class LayerNorm(nn.Module):
 class BertEmbedding(nn.Module):
     def __init__(self, vocab_size, embedding_dim, max_position_embeddings, type_vocab_size):
         super(BertEmbedding, self).__init__()
-        self.token_embedding = nn.Embedding(vocab_size, embedding_dim)  # 
-        self.position_embedding = nn.Embedding(max_position_embeddings, embedding_dim)
-        self.type_embedding = nn.Embedding(type_vocab_size, embedding_dim)
+        f_embedding = create_fixed_embedding # nn.Embedding
+        
+        self.token_embedding = f_embedding(vocab_size, embedding_dim)  # 
+        self.position_embedding = f_embedding(max_position_embeddings, embedding_dim)
+        self.type_embedding = f_embedding(type_vocab_size, embedding_dim)
         self.layer_norm = LayerNorm(embedding_dim)
 
     def forward(self, input_ids, token_type_ids=None):
@@ -54,11 +56,15 @@ class BertEmbedding(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, ffn_hidden_dim):
+    def __init__(self, dim, ffn_hidden_dim, isBaseline):
         super(FeedForward, self).__init__()
-        self.start_linear = nn.Linear(dim, ffn_hidden_dim, bias=False)
+        if isBaseline:
+            f_mm = triton_matmul.bmm
+        else:
+            f_mm = OpProxy.f_matmul
+        self.start_linear = CustomLinear(dim, ffn_hidden_dim, bias=False,f_mm=f_mm)
         self.gelu = nn.GELU()
-        self.end_linear = nn.Linear(ffn_hidden_dim, dim, bias=False)
+        self.end_linear = CustomLinear(ffn_hidden_dim, dim, bias=False,f_mm=f_mm)
     
     def forward(self, x):
         start = self.start_linear(x)
@@ -68,16 +74,22 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, head_num):
+    def __init__(self, dim, head_num, isBaseline):
         super(Attention, self).__init__()
         self.head_num = head_num
         self.head_dim = dim // head_num
-
-        self.wq = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wk = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wv = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wo = nn.Linear(head_num * self.head_dim, dim, bias=False)
-    
+        if isBaseline :
+            f_mm = triton_matmul.bmm
+        else:
+            f_mm = OpProxy.f_matmul
+        # f_lin = nn.Linear
+        f_lin = CustomLinear
+        self.wq = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wk = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wv = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wo = f_lin(head_num * self.head_dim, dim, bias=False, f_mm=f_mm)
+        self.f_matmul = f_mm
+        
     def forward(self, x, mask):
         batch_size, seq_len, _ = x.shape  # [batch_size, seq_len, hidden_dim]
         xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
@@ -90,23 +102,23 @@ class Attention(nn.Module):
         keys = xk.transpose(1, 2)
         values = xv.transpose(1, 2)
 
-        scores = torch.matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
+        scores = self.f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(query)
-        output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
 
-        # output = query
+        output = query
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 
 
 class EncodeBlock(nn.Module):
-    def __init__(self, dim, head_num, ffn_hidden_dim):
+    def __init__(self, dim, head_num, ffn_hidden_dim,isBaseline):
         super(EncodeBlock, self).__init__()
-        self.attn = Attention(dim, head_num)
+        self.attn = Attention(dim, head_num,isBaseline)
         self.attn_laylernorm = LayerNorm(dim)
-        self.ffn = FeedForward(dim, ffn_hidden_dim)
+        self.ffn = FeedForward(dim, ffn_hidden_dim,isBaseline)
         self.ffn_layernorm = LayerNorm(dim)
     
     def forward(self, x, mask):
@@ -116,13 +128,13 @@ class EncodeBlock(nn.Module):
 
 
 class BERT(nn.Module):
-    def __init__(self):
+    def __init__(self,isBaseline = True):
         super(BERT, self).__init__()
         args = ModelArgs()
         self.embeddings = BertEmbedding(args.vocab_size, args.embedding_dim, args.max_position_embeddings, args.type_vocab_size)
         self.encoders = nn.ModuleList()
         for i in range(args.n_layers):
-            self.encoders.append(EncodeBlock(args.hidden_dim, args.head_num, args.ffn_hidden_dim))
+            self.encoders.append(EncodeBlock(args.hidden_dim, args.head_num, args.ffn_hidden_dim,isBaseline))
     
     def forward(self, tokens):
         batch_size, seq_len = tokens.shape

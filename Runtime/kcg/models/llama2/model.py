@@ -62,16 +62,23 @@ def apply_rotary_emb(xq: torch.Tensor, xk: torch.Tensor, freqs_cis: torch.Tensor
 
 class Attention(nn.Module):
     """Multi-head attention module."""
-    def __init__(self, args: ModelArgs):
+    def __init__(self, args: ModelArgs, isBaseline):
         super().__init__()
         self.n_heads = args.n_heads
         self.head_dim = args.dim // args.n_heads
-
-        self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)  # 4096*4096
-        self.wk = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
-        self.wv = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
-        self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
-
+        if isBaseline :
+            f_mm = triton_matmul.bmm
+        else:
+            f_mm = OpProxy.f_matmul
+        self.wq = CustomLinear(args.dim, args.n_heads * self.head_dim, bias=False, f_mm=f_mm)  # 4096*4096
+        self.wk = CustomLinear(args.dim, args.n_heads * self.head_dim, bias=False, f_mm=f_mm)
+        self.wv = CustomLinear(args.dim, args.n_heads * self.head_dim, bias=False, f_mm=f_mm)
+        self.wo = CustomLinear(args.n_heads * self.head_dim, args.dim, bias=False, f_mm=f_mm)
+        # self.wq = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)  # 4096*4096
+        # self.wk = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        # self.wv = nn.Linear(args.dim, args.n_heads * self.head_dim, bias=False)
+        # self.wo = nn.Linear(args.n_heads * self.head_dim, args.dim, bias=False)
+        self.f_mm = f_mm
 
     def forward(self, x: torch.Tensor, freqs_cis: torch.Tensor, mask: Optional[torch.Tensor]):
         bsz, seqlen, _ = x.shape   # [batch_size, seq_len, hidden_dim] = [2, 2048, 4096]  first: 6; next: 1 (seq_len)
@@ -88,23 +95,15 @@ class Attention(nn.Module):
         keys = xk.transpose(1, 2) # (bs, n_local_heads, cache_len + seqlen, head_dim)
         values = xv.transpose(1, 2) # (bs, n_local_heads, cache_len + seqlen, head_dim)
         
-        if g_llama2_run_baseline :
-            xq.transpose(-1,-2).contiguous()
-            xq.transpose(-1,-2).contiguous()
-            scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
-        else:
-            scores = OpProxy.f_matmul(xq, keys.transpose(2, 3))/ math.sqrt(self.head_dim)
+
+        scores = self.f_mm(xq, keys.transpose(2, 3))/ math.sqrt(self.head_dim)
             # scores = torch.matmul(xq, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
             
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(xq)
-        if g_llama2_run_baseline :
-            scores.transpose(-1,-2).contiguous()
-            scores.transpose(-1,-2).contiguous()
-            output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-        else:
-            output = OpProxy.f_matmul(scores, values)
+
+        output = self.f_mm(scores, values)
             # output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
             
         # output = xq
@@ -113,7 +112,7 @@ class Attention(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim: int, hidden_dim: int, multiple_of: int, ffn_dim_multiplier: Optional[float]):
+    def __init__(self, dim: int, hidden_dim: int, multiple_of: int, ffn_dim_multiplier: Optional[float], isBaseline = False):
 
         super().__init__()
         hidden_dim = int(2 * hidden_dim / 3)
@@ -121,28 +120,34 @@ class FeedForward(nn.Module):
         if ffn_dim_multiplier is not None:
             hidden_dim = int(ffn_dim_multiplier * hidden_dim)
         hidden_dim = multiple_of * ((hidden_dim + multiple_of - 1) // multiple_of)
-
-        self.w1 = nn.Linear(dim, hidden_dim, bias=False)  # 4096*11008
-        self.w2 = nn.Linear(hidden_dim, dim, bias=False)
-        self.w3 = nn.Linear(dim, hidden_dim, bias=False)
-
+        if isBaseline :
+            f_mm = triton_matmul.bmm
+        else:
+            f_mm = OpProxy.f_matmul
+        f_lin = CustomLinear
+        self.w1 = f_lin(dim, hidden_dim, bias=False,f_mm=f_mm)  # 4096*11008
+        self.w2 = f_lin(hidden_dim, dim, bias=False,f_mm=f_mm)
+        self.w3 = f_lin(dim, hidden_dim, bias=False,f_mm=f_mm)
+        self.f_matmul = f_mm
+        
     def forward(self, x):
         return self.w2(F.silu(self.w1(x)) * self.w3(x))  # batch*2048*4096 <dot> batch*4096*11008 -> x2  / batch*2048*11008 <dot> batch*11008*4096
         # return F.silu(x) * x
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, layer_id: int, args: ModelArgs):
+    def __init__(self, layer_id: int, args: ModelArgs, isBaseline):
         super().__init__()
         self.n_heads = args.n_heads
         self.dim = args.dim
         self.head_dim = args.dim // args.n_heads
-        self.attention = Attention(args)
+        self.attention = Attention(args,isBaseline)
         self.feed_forward = FeedForward(
             dim=args.dim,
             hidden_dim=4 * args.dim,
             multiple_of=args.multiple_of,
             ffn_dim_multiplier=args.ffn_dim_multiplier,
+            isBaseline=isBaseline
         )
         self.layer_id = layer_id
         self.attention_norm = RMSNorm(args.dim, eps=args.norm_eps)
@@ -155,18 +160,24 @@ class TransformerBlock(nn.Module):
 
 
 class LLAMA2(nn.Module):
-    def __init__(self):
+    def __init__(self,isBaseline):
         super().__init__()
         args = ModelArgs()
         self.vocab_size = args.vocab_size
         self.n_layers = args.n_layers
-
-        self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
+    
+        # self.tok_embeddings = nn.Embedding(args.vocab_size, args.dim)
+        self.tok_embeddings = create_fixed_embedding(args.vocab_size, args.dim)
         self.layers = torch.nn.ModuleList()
         for layer_id in range(args.n_layers):
-            self.layers.append(TransformerBlock(layer_id, args))
+            self.layers.append(TransformerBlock(layer_id, args,isBaseline))
         self.norm = RMSNorm(args.dim, eps=args.norm_eps)
-        self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
+        if isBaseline :
+            f_mm = triton_matmul.bmm
+        else:
+            f_mm = OpProxy.f_matmul 
+        self.output = CustomLinear(args.dim, args.vocab_size, bias=False, f_mm=f_mm)
+        # self.output = nn.Linear(args.dim, args.vocab_size, bias=False)
 
         self.freqs_cis = precompute_freqs_cis(args.dim // args.n_heads, args.max_seq_len * 2)
 

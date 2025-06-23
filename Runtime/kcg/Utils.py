@@ -458,11 +458,11 @@ class DeviceInfo :
             return 32
     
     @staticmethod
-    def init_cuda(_devId) :
+    def init_cuda(_devId : List) :
         DeviceInfo.get_current_device()  # DO NOT REMOVE! Otherwise cuda will report Invalid device id error
         print("init_cuda devid=",_devId)
-        DeviceInfo.set_visible_devices([_devId])
-        DeviceInfo.set_current_device(_devId)  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
+        DeviceInfo.set_visible_devices(_devId)
+        DeviceInfo.set_current_device(_devId[0])  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
         if not torch.cuda.is_available() :
             torch.cuda.init()
             torch.cuda.empty_cache()

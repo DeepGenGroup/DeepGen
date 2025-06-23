@@ -6,7 +6,8 @@ from dataclasses import dataclass
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
-g_testBaseline = True
+# F_baseline_mm = triton_matmul.bmm
+F_baseline_mm = torch.matmul
 
 @dataclass
 class ModelArgs:
@@ -23,9 +24,14 @@ class ModelArgs:
 class Embedding(nn.Module):
     def __init__(self, vocab_size, embedding_dim, max_position_embeddings, type_vocab_size):
         super(Embedding, self).__init__()
-        self.token_embedding = nn.Embedding(vocab_size, embedding_dim)
-        self.position_embedding = nn.Embedding(max_position_embeddings, embedding_dim)
-        self.type_embedding = nn.Embedding(type_vocab_size, embedding_dim)
+        # self.token_embedding = nn.Embedding(vocab_size, embedding_dim)
+        # self.position_embedding = nn.Embedding(max_position_embeddings, embedding_dim)
+        # self.type_embedding = nn.Embedding(type_vocab_size, embedding_dim)
+        
+        # 初始化所有嵌入层为常数
+        self.token_embedding = self._create_fixed_embedding(vocab_size, embedding_dim)
+        self.position_embedding = self._create_fixed_embedding(max_position_embeddings, embedding_dim)
+        self.type_embedding = self._create_fixed_embedding(type_vocab_size, embedding_dim)
         self.layer_norm = LayerNorm(embedding_dim)
     
     def forward(self, input_ids, token_type_ids=None):
@@ -42,7 +48,14 @@ class Embedding(nn.Module):
         embeddings = token_embeddings + position_embeddings + type_embeddings
         embeddings = self.layer_norm(embeddings)
         return embeddings
-
+    
+    def _create_fixed_embedding(self, num_embeddings, embedding_dim):
+        emb = nn.Embedding(num_embeddings, embedding_dim)
+        # 初始化为固定值 (这里用全0，可修改为其他值)
+        nn.init.constant_(emb.weight, 1.5)
+        # 冻结参数 (可选)
+        emb.weight.requires_grad = False
+        return emb
 
 class LayerNorm(nn.Module):
     def __init__(self, hidden_size, eps=1e-12):
@@ -59,11 +72,17 @@ class LayerNorm(nn.Module):
 
 
 class FeedForward(nn.Module):
-    def __init__(self, dim, ffn_hidden_dim):
+    def __init__(self, dim, ffn_hidden_dim, isBaseline):
         super(FeedForward, self).__init__()
-        self.start_linear = nn.Linear(dim, ffn_hidden_dim, bias=False)
+        # self.start_linear = nn.Linear(dim, ffn_hidden_dim, bias=False)
+        if isBaseline :
+            # f_mm = triton_matmul.bmm
+            f_mm = F_baseline_mm
+        else:
+            f_mm = OpProxy.f_matmul
+        self.start_linear = CustomLinear(dim, ffn_hidden_dim, bias=False, f_mm=f_mm)
         self.gelu = nn.GELU()
-        self.end_linear = nn.Linear(ffn_hidden_dim, dim, bias=False)
+        self.end_linear = CustomLinear(ffn_hidden_dim, dim, bias=False, f_mm=f_mm)
     
     def forward(self, x):
         start = self.start_linear(x)
@@ -74,16 +93,23 @@ class FeedForward(nn.Module):
 
 
 class Attention(nn.Module):
-    def __init__(self, dim, head_num):
+    def __init__(self, dim, head_num, isBaseline = True):
         super(Attention, self).__init__()
         self.head_num = head_num
         self.head_dim = dim // head_num
-
-        self.wq = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wk = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wv = nn.Linear(dim, head_num * self.head_dim, bias=False)
-        self.wo = nn.Linear(head_num * self.head_dim, dim, bias=False)
-        # self.f_matmul = f_matmul
+        if isBaseline :
+            f_mm = F_baseline_mm
+        else:
+            f_mm = OpProxy.f_matmul
+        self.wq = CustomLinear(dim, head_num * self.head_dim, bias=False, f_mm = f_mm)
+        self.wk = CustomLinear(dim, head_num * self.head_dim, bias=False, f_mm = f_mm)
+        self.wv = CustomLinear(dim, head_num * self.head_dim, bias=False, f_mm = f_mm)
+        self.wo = CustomLinear(head_num * self.head_dim, dim, bias=False, f_mm = f_mm)
+        # self.wq = nn.Linear(dim, head_num * self.head_dim, bias=False)
+        # self.wk = nn.Linear(dim, head_num * self.head_dim, bias=False)
+        # self.wv = nn.Linear(dim, head_num * self.head_dim, bias=False)
+        # self.wo = nn.Linear(head_num * self.head_dim, dim, bias=False)
+        self.f_matmul = f_mm
     
     def forward(self, x, mask):
         batch_size, seq_len, _ = x.shape  # [batch_size, seq_len, hidden_dim]
@@ -96,27 +122,23 @@ class Attention(nn.Module):
         query = xq.transpose(1, 2)  # [batch_size, seq_len, head_dim, head_num]
         keys = xk.transpose(1, 2)
         values = xv.transpose(1, 2)
-        global g_testBaseline
-        if g_testBaseline :
-            f_matmul = triton_matmul.bmm
-        else:
-            f_matmul = OpProxy.f_matmul
-        scores = f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+
+        scores = self.f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(query)
-        output = f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 
 
 class TransformerBlock(nn.Module):
-    def __init__(self, dim, head_num, ffn_hidden_dim):
+    def __init__(self, dim, head_num, ffn_hidden_dim, isBaseline = True):
         super(TransformerBlock, self).__init__()
         self.attn_layernorm = LayerNorm(dim)
-        self.attn = Attention(dim, head_num)
+        self.attn = Attention(dim, head_num, isBaseline)
         self.ffn_layernorm = LayerNorm(dim)
-        self.ffn = FeedForward(dim, ffn_hidden_dim)
+        self.ffn = FeedForward(dim, ffn_hidden_dim, isBaseline)
     
     def forward(self, x, mask):
          a = self.attn(self.attn_layernorm(x), mask)
@@ -128,15 +150,18 @@ class TransformerBlock(nn.Module):
 
 
 class GPT2(nn.Module):
-    def __init__(self):
-        global g_testBaseline
+    def __init__(self,isBaseline = True):
         super(GPT2, self).__init__()
         args = ModelArgs()
         self.embeddings = Embedding(args.vocab_size, args.embedding_dim, args.max_position_embeddings, args.type_vocab_size)
         self.encoders = nn.ModuleList()
         for _ in range(args.n_layers):
-            self.encoders.append(TransformerBlock(args.hidden_dim, args.head_num, args.ffn_hidden_dim))
-        self.last_linear = nn.Linear(args.hidden_dim, args.vocab_size)
+            self.encoders.append(TransformerBlock(args.hidden_dim, args.head_num, args.ffn_hidden_dim, isBaseline))
+        if isBaseline :
+            self.last_linear = CustomLinear(args.hidden_dim, args.vocab_size,bias=True,f_mm= F_baseline_mm)
+        else:
+            self.last_linear = CustomLinear(args.hidden_dim, args.vocab_size,bias=True,f_mm= OpProxy.f_matmul)
+            # self.last_linear = nn.Linear(args.hidden_dim, args.vocab_size)
     
     def forward(self, tokens):
         batch_size, seq_len = tokens.shape
