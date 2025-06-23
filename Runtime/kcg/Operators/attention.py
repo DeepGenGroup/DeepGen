@@ -2,6 +2,7 @@ import importlib
 import torch
 import torch.nn.functional as F
 from kcg.Kernel import *
+from kcg.HIPCompiler import *
 
 
 @kcg_kernel
@@ -367,7 +368,7 @@ class AttentionOp(OpInterface) :
             assert len(shapeList)==4
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            qq = q.transpose(2,3).contiguous()
+            qq = q.transpose(-1,-2).contiguous() 
             d = torch.empty((b0, b1,m,n), dtype=ety, device=f"cuda:{devId}")
             self.InputTensors_Benchmark = [qq,k,v,d]
         return self.InputTensors_Benchmark
@@ -396,7 +397,7 @@ class AttentionOp(OpInterface) :
             _backend = 2
         else:
             assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
-        
+
         self.InitLibInterface()
         self.SetPlatform(_backend,arch)
         print(f"set arch : {arch}")
@@ -408,11 +409,12 @@ class AttentionOp(OpInterface) :
         assert info.kernelName is not None
         kernelName = info.kernelName
         self.SetKernelName( kernelName )
-        res = self.CompileKernel(shape , config)
-        # blockSize = [cfg[-1][0]]  # tx
-        # sharedSize = cfg[-1][1]  # shared memroy size
-
-        # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
+######## llvm compile       
+        # res = self.CompileKernel(shape , config)
+######### hip compile
+        hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
+        res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
+##########        
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims
         gridDimX, gridDimY, gridDimZ = info.gridDims
@@ -421,11 +423,11 @@ class AttentionOp(OpInterface) :
         # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
         # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
         Print("========= hsacoPath = ",hsacoPath)
-        Print("========= kernelName = ",kernelName)
+        Print("========= kernelName = ",info.kernelName)
         # print(f"==== backend is {backendtype}")
         # print(f"==== shmBytes is {shmBytes}")
         dt = self.BaseArgs.getTorchDType()
-        inConfig = KernelConfigs(hsacoPath,kernelName, [dt,dt,dt,dt], backendtype)
+        inConfig = KernelConfigs(hsacoPath,info.kernelName, [dt,dt,dt,dt], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]
         inConfig.m_blockDims = [blockDimX,blockDimY,blockDimZ]
         inConfig.operatorKind = EnumOperator.Attention

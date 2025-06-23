@@ -14,7 +14,7 @@ def readConfigJson(path):
 class CreateAttnConfig:
   def __init__(self, cfg_dict ,shape, max_thread=256, type_width=4, smem_size=65536, sm_num=60):
     self.cfg = cfg_dict
-    _, self.head_num, self.seq_len, self.head_dim = shape
+    self.batch, self.head_num, self.seq_len, self.head_dim = shape
     # print(self.seq_len, shape)
     self.max_thread = max_thread
     self.type_width = type_width  # 一个字 4 byte
@@ -81,7 +81,7 @@ class CreateAttnConfig:
             for wlx in self.cfg["WARP_LAYOUT_O_X"]:
               by = old_cfg[1][0] / old_cfg[2][2]  # by = br / otr
               bx = old_cfg[1][2] / old_cfg[2][3]  # bx = hd / otc
-              if wly * wlx == self.cfg["WARP_SIZE"][0] and bly * wly == by and wlx == bx:
+              if wly * wlx == self.cfg["WARP_SIZE"][0] and bly * wly == by and blx * wlx == bx:
                 for bswp in self.cfg["BLOCK_SCATTER_WIDTH_P"]:
                   for bswv in self.cfg["BLOCK_SCATTER_WIDTH_V"]:
                     for wswp in self.cfg["WARP_SCATTER_WIDTH_P"]:
@@ -112,30 +112,30 @@ class CreateAttnConfig:
   def storeSizeAndOther_(self, old_cfgs):
     result = []
     for old_cfg in old_cfgs:
-      smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
-                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+      smem_size = (old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]) * self.type_width
       if smem_size <= self.max_sm_size:  # shared memory size
-        result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), ))  # 只能连续访存
+        result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), smem_size))  # 只能连续访存
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
-    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o))
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o), seme_size)
     return result
   
   def cut(self, old_cfgs):
     result = []
     for old in old_cfgs:
       # print(old)
-      sm_util = self.seq_len / old[1][0]
+      sm_util = (self.seq_len / old[1][0])
       # sm占用率 / 离散化约束
-      # if (sm_util >= self.sm_num):
-      br_div_bk = old[1][0] / 32  #  br / bank num(32)
-      bc_div_bk = old[1][1] / 32  #  br / bank num(32)
-      hd_div_bk = old[1][2] / 32  #  hd / bank num(32)
-      brep_q = old[2][0] / old[4][4]
-      brep_k = old[2][1] / old[4][5]
-      brep_p = old[2][2] / old[5][4]
-      brep_v = old[2][3] / old[5][5]
-      if (brep_q == br_div_bk and brep_k == bc_div_bk and brep_p == br_div_bk and brep_v == hd_div_bk):
-        if old[4][4] == old[4][6] and old[4][5] == old[4][7] and old[5][4] == old[5][6] and old[5][5] == old[5][7]:
+      if (sm_util >= self.sm_num):
+        br_div_bk = old[1][0] / 32  #  br / bank num(32)
+        bc_div_bk = old[1][1] / 32  #  br / bank num(32)
+        hd_div_bk = old[1][2] / 32  #  hd / bank num(32)
+        brep_q = old[2][0] / old[4][4]
+        brep_k = old[2][1] / old[4][5]
+        brep_p = old[2][2] / old[5][4]
+        brep_v = old[2][3] / old[5][5]
+        if (brep_q == br_div_bk and brep_k == bc_div_bk and brep_p == br_div_bk and brep_v == hd_div_bk):
+          # if old[4][4] == old[4][6] and old[4][5] == old[4][7] and old[5][4] == old[5][6] and old[5][5] == old[5][7]:
           result.append(old)
     return result
 
@@ -149,9 +149,8 @@ class CreateAttnConfig:
     result = self.storeSizeAndOther_(result)
     result = self.cut(result)
     if len(result):
-      return result[0], result[1:]
+      return result
     return None
-      
   
 class CreateConfig:
   def __init__(self, json_path, shape):
@@ -313,40 +312,42 @@ class CreateConfig:
 # spec.loader.exec_module(mod)
 # compile_kernel_FA = mod.compile_attn
 
-def get_cfgs(shape = [1, 32, 4096, 128]) -> List:
-  path = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
-  cfg_dict = readConfigJson(path)
+def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128]) -> List:
+  # cfgfilepath = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
+  cfg_dict = readConfigJson(cfgfilepath)
   cc = CreateAttnConfig(cfg_dict, shape)
   cfgs = cc.main()
   return cfgs
 
-def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType : 
+def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorType : 
   # shape = [1, 32, 2048, 128]
   # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
   kw = ConfigKeywords
   if len(cfgs) <= 0:
-    cfgs = get_cfgs(shape)
+    cfgs = get_cfgs(cfgfile,shape)
   for cfg in cfgs:
+    (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly_p, blx_p, wly_p, wlx_p, bswq_p, bswk_p, wswq_p, wswk_p), 
+    (bly_o, blx_o, wly_o, wlx_o, bswp_o, bswv_o, wswp_o, wswv_o), (unroll ,warp_size, load_continuous_p, load_continuous_o, sm_prefetch_p, reg_prefetch_p, reg_prefetch_o), smem_size) = cfg
     valDict = {
-        "Br": cfg[0], "Bc": cfg[1], "Hd": cfg[2], "Slice1": cfg[3], "Slice2": cfg[4], 
-        "PTr": cfg[5], "PTc": cfg[6], "OTr": cfg[7], "OTc": cfg[8],
+        "Br": br, "Bc": bc, "Hd": hd, "Slice1": s1, "Slice2": s2, 
+        "PTr": ptr, "PTc": ptc, "OTr": otr, "OTc": otc,
         # global to shared
-        "GLOB_LOAD_WIDTH_Q": cfg[9], "GLOB_LOAD_WIDTH_K": cfg[10], "GLOB_LOAD_WIDTH_V": cfg[11],
+        "GLOB_LOAD_WIDTH_Q": glwq, "GLOB_LOAD_WIDTH_K": glwk, "GLOB_LOAD_WIDTH_V": glwv,
         # P = Q * K
-        "BLOCK_LAYOUT_P_Y": cfg[12], "BLOCK_LAYOUT_P_X": cfg[13], "WARP_LAYOUT_P_Y": cfg[14], "WARP_LAYOUT_P_X": cfg[15],
-        "BLOCK_SCATTER_WIDTH_Q": cfg[16], "BLOCK_SCATTER_WIDTH_K": cfg[17], "WARP_SCATTER_WIDTH_Q": cfg[18], "WARP_SCATTER_WIDTH_K": cfg[19],
+        "BLOCK_LAYOUT_P_Y": bly_p, "BLOCK_LAYOUT_P_X": blx_p, "WARP_LAYOUT_P_Y": wly_p, "WARP_LAYOUT_P_X": wlx_p,
+        "BLOCK_SCATTER_WIDTH_Q": bswq_p, "BLOCK_SCATTER_WIDTH_K": bswk_p, "WARP_SCATTER_WIDTH_Q": wswq_p, "WARP_SCATTER_WIDTH_K": wswk_p,
         # O = P * V
-        "BLOCK_LAYOUT_O_Y": cfg[20], "BLOCK_LAYOUT_O_X": cfg[21], "WARP_LAYOUT_O_Y": cfg[22], "WARP_LAYOUT_O_X": cfg[23], 
-        "BLOCK_SCATTER_WIDTH_P": cfg[24], "BLOCK_SCATTER_WIDTH_V": cfg[25], "WARP_SCATTER_WIDTH_P": cfg[26], "WARP_SCATTER_WIDTH_V": cfg[27],
+        "BLOCK_LAYOUT_O_Y": bly_o, "BLOCK_LAYOUT_O_X": blx_o, "WARP_LAYOUT_O_Y": wly_o, "WARP_LAYOUT_O_X": wlx_o, 
+        "BLOCK_SCATTER_WIDTH_P": bswp_o, "BLOCK_SCATTER_WIDTH_V": bswv_o, "WARP_SCATTER_WIDTH_P": wswp_o, "WARP_SCATTER_WIDTH_V": wswv_o,
 
-        "UNROLL_NUM": cfg[28], "WARP_SIZE": cfg[29], 
-        "LOAD_CONTINUOUS_P": cfg[30], "LOAD_CONTINUOUS_O": cfg[31], 
+        "UNROLL_NUM": unroll, "WARP_SIZE": warp_size, 
+        "LOAD_CONTINUOUS_P": load_continuous_p, "LOAD_CONTINUOUS_O": load_continuous_o, 
         # prefecth
-        "SHARED_PREFETCH_P": cfg[32], "REG_PREFETCH_P": cfg[33], "REG_PREFETCH_O": cfg[34],
+        "SHARED_PREFETCH_P": sm_prefetch_p, "REG_PREFETCH_P": reg_prefetch_p, "REG_PREFETCH_O": reg_prefetch_o,
         # baseArgs
-        kw.KEY_BLOCK_DIM_X : cfg[-1][0], kw.KEY_BLOCK_DIM_Y : 1, kw.KEY_BLOCK_DIM_Z : 1,
-        kw.KEY_SHM_BYTES :  cfg[-1][1] ,
-        kw.KEY_GRID_DIM_X : int(shape[2]/cfg[1]),
+        kw.KEY_BLOCK_DIM_X : th_num, kw.KEY_BLOCK_DIM_Y : 1, kw.KEY_BLOCK_DIM_Z : 1,
+        kw.KEY_SHM_BYTES :  smem_size ,
+        kw.KEY_GRID_DIM_X : int(shape[2]/br),
         kw.KEY_GRID_DIM_Y : shape[1],
         kw.KEY_GRID_DIM_Z : shape[0]
       }
@@ -360,10 +361,10 @@ def getTuneSpace(shape : List[int] , cfgs : List) -> TsGeneratorType :
     ret.baseArgs = shape
     ret.torchDataType = torch.float32
     ret.tsArgs = [shape,config]
-    ret.blockDims = [cfg[-1][0], 1, 1]  # tx
-    ret.gridDims = [int(shape[2]/cfg[1]), shape[1], shape[0]]
+    ret.blockDims = [th_num, 1, 1]  # tx
+    ret.gridDims = [int(shape[2]/br), shape[1], shape[0]]
     # ret.shmBytes = 32768 
-    ret.shmBytes = cfg[-1][1] 
+    ret.shmBytes = smem_size
     yield ret
     
     # compile_kernel_FA(shape,config)

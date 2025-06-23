@@ -207,6 +207,27 @@ def get_op_optimized_model(original_model : nn.Module) -> nn.Module :
     wrapped_model = WrappedModel(original_model)
     return wrapped_model
 
+def get_baseline_model(original_model : nn.Module) -> nn.Module :
+    # 创建模型实例
+    # input_data = torch.randn(3, 10)
+    
+    # 1. 替换所有 nn.Linear 模块
+    replace_LinearToCustomLlinear(original_model, nn.Linear, CustomLinear)
+    
+    # 2. 创建包装器模型，在 forward 中应用 matmul 替换
+    class WrappedModel(nn.Module):
+        def __init__(self, model):
+            super().__init__()
+            self.model = model
+            
+        def forward(self, *args, **kwargs):
+            import kcg.Operators.triton_matmul as trtion_mm
+            with MatmulReplacer(trtion_mm.bmm):
+                return self.model(*args, **kwargs)
+    
+    wrapped_model = WrappedModel(original_model)
+    return wrapped_model
+
 
 def compile_model(devId : int, f_run_model : Callable) :
     output = f_run_model()

@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
+g_testBaseline = True
 
 @dataclass
 class ModelArgs:
@@ -71,6 +72,7 @@ class FeedForward(nn.Module):
         return end
 
 
+
 class Attention(nn.Module):
     def __init__(self, dim, head_num):
         super(Attention, self).__init__()
@@ -81,6 +83,7 @@ class Attention(nn.Module):
         self.wk = nn.Linear(dim, head_num * self.head_dim, bias=False)
         self.wv = nn.Linear(dim, head_num * self.head_dim, bias=False)
         self.wo = nn.Linear(head_num * self.head_dim, dim, bias=False)
+        # self.f_matmul = f_matmul
     
     def forward(self, x, mask):
         batch_size, seq_len, _ = x.shape  # [batch_size, seq_len, hidden_dim]
@@ -93,12 +96,16 @@ class Attention(nn.Module):
         query = xq.transpose(1, 2)  # [batch_size, seq_len, head_dim, head_num]
         keys = xk.transpose(1, 2)
         values = xv.transpose(1, 2)
-
-        scores = torch.matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
+        global g_testBaseline
+        if g_testBaseline :
+            f_matmul = triton_matmul.bmm
+        else:
+            f_matmul = OpProxy.f_matmul
+        scores = f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim)
         if mask is not None:
             scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
         scores = F.softmax(scores.float(), dim=-1).type_as(query)
-        output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+        output = f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 
@@ -119,8 +126,10 @@ class TransformerBlock(nn.Module):
          return x
 
 
+
 class GPT2(nn.Module):
     def __init__(self):
+        global g_testBaseline
         super(GPT2, self).__init__()
         args = ModelArgs()
         self.embeddings = Embedding(args.vocab_size, args.embedding_dim, args.max_position_embeddings, args.type_vocab_size)

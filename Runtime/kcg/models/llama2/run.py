@@ -74,7 +74,7 @@ if __name__ == "__main__":
     # compile_model(7, run_model(optimizedModel,args,input_ids))
     
     optimizedModel = get_op_optimized_model(model).to(devid)
-    
+    baselineModel = get_baseline_model(model).to(devid)
     # 手动注册已经调好的kernl
     registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
     # 没有调好的kernel，首次执行：
@@ -87,12 +87,12 @@ if __name__ == "__main__":
     def f_base():
         global g_llama2_run_baseline
         g_llama2_run_baseline = True 
-        return model(input_ids)
+        return baselineModel(input_ids)
     
     out0,t0 = evaluate_model_time(f_base)
     out1,t1 = evaluate_model_time(f_benchmark)
     
-    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {(t0-t1)/t0}")
+    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t0/t1}")
     opCallCounter = OpProxy.GetOpCallCounts()
     print("==== call ops :",opCallCounter)
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]

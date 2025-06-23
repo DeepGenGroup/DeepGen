@@ -1,6 +1,7 @@
 from kcg.Operators import matmul, attention
 from kcg.Kernel import *
 from kcg.KernelTuneUtils import TuneResult
+from kcg.Operators import triton_matmul
 # 注入器。通过反序列化 compile过程得到的最佳 kernelConfig，构造该kernel的调用器
 class OpInjector :
     def __init__(self, devId : int = 0):
@@ -89,7 +90,7 @@ class OpProxy :
         for tr in OpProxy.__registedKernels_mm :
             bb,mm,nn,kk = tr.bestKernelBaseArg[0:-1]
             dt = tr.bestKernelBaseArg[-1]
-            print(f'__select_matmul : [bbmmnnkk]={bb,mm,nn,kk}, [bmnk]={batch,m,n,k}')
+            print(f'__select_matmul : tr [bbmmnnkk]={bb,mm,nn,kk}, required [bmnk]={batch,m,n,k}')
             isBatchEqual = True
             if len(batch) == 1:
                 if batch[0] == 1 and len(bb) == 0:

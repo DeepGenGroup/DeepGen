@@ -3,7 +3,8 @@ import glob
 from typing import Generator
 import multiprocessing
 from kcg.Kernel import *
-from kcg.Operators import matmul, attention
+import kcg.Operators.matmul as kcg_mm
+import kcg.Operators.attention as kcg_att
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process
@@ -119,15 +120,21 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             assert isinstance(ba, List)
             assert isinstance(config, KernelConfigs)
             print(f'[D] after desrialize : {ba}')
-            m,n,k = ba[1:4]
-            b = 1
-            if len(ba[0]) > 0:
-                b =  ba[0][0]
+            if config.operatorKind is kcg_mm.MatmulOp :
+                m,n,k = ba[1:4]
+                b = 1
+                if len(ba[0]) > 0:
+                    b =  ba[0][0]
+            elif config.operatorKind is kcg_att.AttentionOp :
+                ...
             # init tensors
             op = OpTy()
             op.InitBaseArgs(ba)
-            op.GetBaselineInputTensor(devId)
-            op.GetBenchmarkInputTensor(devId)
+            tQ,tK,tV = op.GetBaselineInputTensor(devId)
+            tQQ,tKK,tVV,tO = op.GetBenchmarkInputTensor(devId)
+            print("[D] tensor shape verify ======",flush=True)
+            print(tQ.shape, tK.shape, tV.shape, flush=True)
+            print(tQQ.shape, tKK.shape, tVV.shape, flush=True)
             
             kernel = op.GetCompiledKernel(config,devId)
             # warmup
@@ -156,7 +163,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 maxSppedups.sort(key= lambda x: x["speedup"],reverse=True)
                 if len(maxSppedups) > benchConfig.keepTopNum :
                     maxSppedups = maxSppedups[0:benchConfig.keepTopNum]
-                if checkTFLOPS and is_tflops_ok(b,m,n,k,t) :
+                if checkTFLOPS and config.operatorKind is kcg_mm.MatmulOp and is_tflops_ok(b,m,n,k,t) :
                     findGoodCase.value = 1
                 if checkACC > 0 and acc >= checkACC :
                     findGoodCase.value = 1 
@@ -198,12 +205,12 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     
     
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType :
-    if OpTy is matmul.MatmulOp :
+    if OpTy is kcg_mm.MatmulOp :
         import kcg.tuning.NewCfgTest as ns_mm
         return ns_mm.getTuneSpace(cfgPath)
-    if OpTy is attention.AttentionOp :
+    if OpTy is kcg_att.AttentionOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace([1, 32, 2048, 128],[])
+        return ns_attentiopn.getTuneSpace([1, 32, 2048, 128],cfgPath,[])
         # return ns_attentiopn.getTuneSpace([1, 32, 128, 128],[])
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'
     
@@ -252,6 +259,7 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
 
 
 def getInputs() :
+    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float)" 
     cfgFile = sys.argv[1]
     result_json_path = sys.argv[2]
     start = int(sys.argv[3])
@@ -265,7 +273,8 @@ def getInputs() :
 if __name__ == '__main__' :
     cfgFile,result_json_path,start,maxCount,checktflops, checkAcc = getInputs()
     # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
-    opty = matmul.MatmulOp
+    # opty = matmul.MatmulOp
+    opty = kcg_att.AttentionOp
     devId = 7
 
     if is_hip():
