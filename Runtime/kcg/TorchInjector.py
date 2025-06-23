@@ -21,7 +21,8 @@ class OpBaseArgsCollector :
     def __init__(self):
         self.infoList = []
         self.__hashTable = []
-        self.opCounter = dict()
+        self.opCounter = dict()  # 统计 matmul,attention 等大类别的call次数
+        self.detailedCounter = dict() # 统计细类别各个算子的调用次数
     
     def addInfo(self, OpTy : Type[OpInterface], baseArgs : List, dtype : torch.dtype) :
         obj = {
@@ -35,7 +36,10 @@ class OpBaseArgsCollector :
             self.infoList.append(obj)
             if OpTy.__name__ not in self.opCounter.keys() :
                 self.opCounter[OpTy.__name__] = 0
+            if hashkey not in self.detailedCounter.keys() :
+                self.detailedCounter[hashkey] = 0
         self.opCounter[OpTy.__name__] += 1
+        self.detailedCounter[hashkey] += 1
         
     def getInfo(self) :
         for obj in self.infoList :
@@ -50,6 +54,8 @@ class OpBaseArgsCollector :
             
     def getOpCallCount(self) -> Dict :
         return self.opCounter
+    def getOpCallCountInDetail(self) -> Dict :
+        return self.detailedCounter
 # operator 代理人。f_matmul f_attention 用于代替 model中的对应算子。 collector用于在首次执行model时，收集需要编译的kernel信息（基础形状、dtype、op类型等）。
 # collector收集的信息可用于后续的 tuning空间生产、编译
 # f_ 开头的静态方法，参数列表和torch的保持相同，便于model直接替换对应算子。内部的 _f()通过调整参数，和 packedKernel的调用形式适配（如定义c）
@@ -65,6 +71,10 @@ class OpProxy :
     @staticmethod
     def GetOpCallCounts() -> Dict :
         return OpProxy.collector.getOpCallCount()
+     
+    @staticmethod
+    def GetOpCallCountsDetailed() -> Dict :
+        return OpProxy.collector.getOpCallCountInDetail()
     
     @staticmethod
     def registKernel(tr : TuneResult) :
@@ -74,7 +84,7 @@ class OpProxy :
         if tr.bestSpeedup > 1 :
             if tr.OpTy is matmul.MatmulOp :
                 OpProxy.__registedKernels_mm.append(tr)
-                print(f"regist OK : {tr.OpTy.__name__} ,acc={tr.bestSpeedup}")
+                print(f"regist OK : {tr.OpTy.__name__} , basearg={tr.bestKernelBaseArg}")
             elif tr.OpTy is attention.AttentionOp :
                 OpProxy.__registedKernels_att.append(tr)
             else :
@@ -121,7 +131,7 @@ class OpProxy :
         n = int(b.shape[-1])
         batch = [ int(x)  for x in a.shape[0:-2] ]
         # print(f"b,m,n,k = {batch,m,n,k}")
-        ret = torch._C._VariableFunctions.matmul(a, b)
+        # ret = torch._C._VariableFunctions.matmul(a, b)
         return OpProxy.__select_matmul(a,b,batch,m,n,k)
 # /home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl
 # /home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:512:256:4:.pkl

@@ -96,7 +96,7 @@ class Attention(nn.Module):
         scores = F.softmax(scores.float(), dim=-1).type_as(query)
         output = torch.matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
 
-        output = query
+        # output = query
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 

@@ -201,11 +201,11 @@ def bmm_kernel(
 
 def bmm(a: torch.Tensor, b: torch.Tensor):
     print('[bmm]', a.shape, b.shape, flush=True)
-    
     # 验证输入维度
     assert a.dim() >= 2 and b.dim() >= 2, "Inputs must be at least 2D"
     assert a.shape[-1] == b.shape[-2], "Incompatible dimensions for matrix multiplication"
-    
+    aa = a
+    bb = b
     # 保存原始形状
     orig_shape_a = a.shape
     orig_shape_b = b.shape
@@ -256,16 +256,17 @@ def bmm(a: torch.Tensor, b: torch.Tensor):
     return c.view(final_shape)
   
 if __name__ == "__main__":
-  ...
-  # a = torch.randn((1, 12, 1024, 64), device='cuda', dtype=torch.float32)
-  # b = torch.randn((1, 12, 64, 1024), device='cuda', dtype=torch.float32)
-  # # c = matmul(a, b)
-  # c = bmm(a, b)
-  # d = torch.matmul(a,b)
-  # print(c.shape, d.shape)
-  # if torch.allclose(c,d, atol=1e-5,rtol=1e-5):
-  #   print("test OK!")
-  # else:
-  #   print("test error!")
+  # ...
+  a = torch.randn((1, 12, 1024, 64), device='cuda', dtype=torch.float32)
+  b = torch.randn((1, 12, 64, 1024), device='cuda', dtype=torch.float32)
+  # c = matmul(a, b)
+  
+  c = bmm(a, b)
+  d = torch.matmul(a,b)
+  print(c.shape, d.shape)
+  if torch.allclose(c,d, atol=1e-5,rtol=1e-5):
+    print("test OK!")
+  else:
+    print("test error!")
     
-  # print(c)
+  print(c)
