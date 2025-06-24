@@ -5,6 +5,8 @@ from dataclasses import dataclass
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
+g_FmmBaseline=triton_matmul.bmm
+
 @dataclass
 class ModelArgs:
     n_layers = 16
@@ -59,7 +61,7 @@ class FeedForward(nn.Module):
     def __init__(self, dim, ffn_hidden_dim, isBaseline):
         super(FeedForward, self).__init__()
         if isBaseline:
-            f_mm = triton_matmul.bmm
+            f_mm = g_FmmBaseline
         else:
             f_mm = OpProxy.f_matmul
         self.start_linear = CustomLinear(dim, ffn_hidden_dim, bias=False,f_mm=f_mm)
@@ -79,7 +81,7 @@ class Attention(nn.Module):
         self.head_num = head_num
         self.head_dim = dim // head_num
         if isBaseline :
-            f_mm = triton_matmul.bmm
+            f_mm = g_FmmBaseline
         else:
             f_mm = OpProxy.f_matmul
         # f_lin = nn.Linear

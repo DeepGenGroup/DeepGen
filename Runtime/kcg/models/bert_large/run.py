@@ -86,7 +86,7 @@ if __name__ == "__main__":
     print("==== call ops :",opCallCounter)
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
     
-    if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
+    if torch.allclose(out0,out1,atol=1e-3,rtol=1e-3):
         print("===== model test correct ")
     else:
         diff, maxerr = compare_with_error(out0,out1)

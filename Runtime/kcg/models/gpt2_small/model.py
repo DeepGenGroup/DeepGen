@@ -6,8 +6,8 @@ from dataclasses import dataclass
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
-# F_baseline_mm = triton_matmul.bmm
-F_baseline_mm = torch.matmul
+F_baseline_mm = triton_matmul.bmm
+# F_baseline_mm = torch.matmul
 
 @dataclass
 class ModelArgs:
