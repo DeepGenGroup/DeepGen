@@ -409,11 +409,14 @@ class AttentionOp(OpInterface) :
         assert info.kernelName is not None
         kernelName = info.kernelName
         self.SetKernelName( kernelName )
-######## llvm compile       
-        # res = self.CompileKernel(shape , config)
-######### hip compile
-        hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
-        res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
+
+        if is_hip():
+            # hip compile
+            hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
+            res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
+        else:
+            # compile using llvm
+            res = self.CompileKernel(shape , config)
 ##########        
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims
