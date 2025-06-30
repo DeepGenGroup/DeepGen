@@ -204,29 +204,35 @@ def bmm(a: torch.Tensor, b: torch.Tensor):
     # 验证输入维度
     assert a.dim() >= 2 and b.dim() >= 2, "Inputs must be at least 2D"
     assert a.shape[-1] == b.shape[-2], "Incompatible dimensions for matrix multiplication"
-    aa = a
-    bb = b
     # 保存原始形状
     orig_shape_a = a.shape
     orig_shape_b = b.shape
+    outshape = a.shape
     
     # 展平批次维度
-    a = a.view(-1, a.shape[-2], a.shape[-1])
-    b = b.view(-1, b.shape[-2], b.shape[-1])
+    a = a.reshape(-1, a.shape[-2], a.shape[-1])
+    b = b.reshape(-1, b.shape[-2], b.shape[-1])
     
     B, M, K = a.shape
     B2, K2, N = b.shape
     assert K == K2, f"Incompatible dimensions: a K={K}, b K={K2}"
-    assert B == B2, f"Batch size mismatch: a {B} vs b {B2}"
+    batch = max(B,B2)
+    if B < batch :
+      a = a.expand(batch,-1,-1)
+      outshape = b.shape
+    if B2 < batch :
+      b = b.expand(batch,-1,-1)
+      outshape = a.shape
+    # assert B == B2, f"Batch size mismatch: a {B} vs b {B2}"
     
     # 创建输出张量（保持输入数据类型）
-    c = torch.empty((B, M, N), device=a.device, dtype=a.dtype)
+    c = torch.empty((batch, M, N), device=a.device, dtype=a.dtype)
     
     # 计算网格大小
     def grid(META):
         return (
             triton.cdiv(M, META['BLOCK_SIZE_M']) * triton.cdiv(N, META['BLOCK_SIZE_N']),
-            B  # 批次维度
+            batch  # 批次维度
         )
     
     # 根据问题规模调整块大小
@@ -252,13 +258,13 @@ def bmm(a: torch.Tensor, b: torch.Tensor):
     )
     
     # 恢复原始形状
-    final_shape = orig_shape_a[:-2] + (M, N)
+    final_shape = outshape[:-2] + (M, N)
     return c.view(final_shape)
   
 if __name__ == "__main__":
   # ...
-  a = torch.randn((1, 12, 1024, 64), device='cuda', dtype=torch.float32)
-  b = torch.randn((1, 12, 64, 1024), device='cuda', dtype=torch.float32)
+  a = torch.randn((1,12 , 1024, 64), device='cuda', dtype=torch.float32)
+  b = torch.randn((1,12 , 64, 1024), device='cuda', dtype=torch.float32)
   # c = matmul(a, b)
   
   c = bmm(a, b)
@@ -269,4 +275,4 @@ if __name__ == "__main__":
   else:
     print("test error!")
     
-  print(c)
+  # print(c)
