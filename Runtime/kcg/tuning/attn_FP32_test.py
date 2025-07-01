@@ -100,7 +100,7 @@ class CreateAttnConfig:
   #                   old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
   #       if spp == 1:
   #         smem_size += old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3]
-  #       if smem_size <= self.max_sm_size:  # shared memory size
+  #       if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
   #         for rpp in self.cfg["REG_PREFETCH_P"]:
   #           for rpo in self.cfg["REG_PREFETCH_O"]:
   #             for unroll in self.cfg["UNROLL_NUM"]:
@@ -112,12 +112,12 @@ class CreateAttnConfig:
   def storeSizeAndOther_(self, old_cfgs):
     result = []
     for old_cfg in old_cfgs:
-      smem_size = (old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
-                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]) * self.type_width
-      if smem_size <= self.max_sm_size:  # shared memory size
+      smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+      if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
         result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), smem_size))  # 只能连续访存
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
-    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o), seme_size)
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o))
     return result
   
   def cut(self, old_cfgs):

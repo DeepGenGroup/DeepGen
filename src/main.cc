@@ -14,6 +14,8 @@ using TileConfig = std::map<std::string, std::map<std::string, int64_t>>;
 
 KernelCodeGen::KernelCodeGenerator generator;
 
+std::string __GlobalKernelName = "attention1";
+
 std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<KernelData> kds, std::vector<FuseKernelData> fkds={}) {
   // compile func
   mlir::ModuleOp module = generator.createModule();
@@ -31,9 +33,10 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
 
 std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
   // matmul compile func
-  auto mm = config.at("matmul");
+  auto mm = config.at(__GlobalKernelName);
+  // auto mm = config.at("matmul");
   TileConfig tileConfig  = {
-    {"matmul", {{"BLOCK_SIZE_Y", mm.at(KEY_BLOCK_SIZE_M)}, {"THREAD_SIZE_Y", mm.at(KEY_THREAD_SIZE_M)}, 
+    {__GlobalKernelName, {{"BLOCK_SIZE_Y", mm.at(KEY_BLOCK_SIZE_M)}, {"THREAD_SIZE_Y", mm.at(KEY_THREAD_SIZE_M)}, 
                 {"BLOCK_SIZE_X", mm.at(KEY_BLOCK_SIZE_N)}, {"THREAD_SIZE_X", mm.at(KEY_THREAD_SIZE_N)}}}
   };
   // create new shapes
@@ -46,7 +49,7 @@ std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
   }
   // create kernel info
   KernelData kd = {
-    "matmul", "Matmul", {sha, shb, shc}, {"float32", "float32", "float32"}, {true, false}, 1
+    __GlobalKernelName, "Matmul", {sha, shb, shc}, {"float32", "float32", "float32"}, {true, false}, 1
   };
   std::vector<KernelData> kds{kd};
   // compile kernel
@@ -56,7 +59,8 @@ std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
 std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
   // attn compile func
   // shape: {batch, head_num, seq_len, head_dim}
-  auto attn = config.at("attention");
+  auto attn = config.at(__GlobalKernelName);
+  // auto attn = config.at("attention");
   TileConfig tileConfig = {
     {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")}, 
                 {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}}, 
@@ -89,7 +93,7 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
   };
   // kernel fusing
   FuseKernelData fkd = {
-    "attention", "FlashAttn", {"matmul1", "softmax1", "matmul2"},
+    __GlobalKernelName, "FlashAttn", {"matmul1", "softmax1", "matmul2"},
     {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]}, {kd1.shapes[2]},
     {"float32", "float32", "float32", "float32"}, {"float32"},
     {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {{"matmul2", {2}}}},
@@ -200,25 +204,44 @@ static PyObject* py_compile_mm(PyObject* self, PyObject* args) {
 }
 
 static PyObject* set_platform(PyObject* self, PyObject* args) {
-  char* target = NULL;
+  int target = 0;
   char* platInfo = NULL;
-  if(PyArg_ParseTuple(args, "ss", &target, &platInfo)){
-    if(std::string(target) == "cuda"){
-      generator.setPaltform(Target::CUDA, std::string(platInfo));
-    }else if (std::string(target) == "rocm") {
-      generator.setPaltform(Target::ROCm, std::string(platInfo));
-    } else{
+  KernelCodeGen::Target enumTarget;
+  if(PyArg_ParseTuple(args, "is", &target, &platInfo)){
+    if(target == 2){
+      enumTarget = KernelCodeGen::Target::ROCm;
+    }
+    else if(target == 1){
+      enumTarget = KernelCodeGen::Target::CUDA;
+    }
+    else{
       std::cout << "DeepGen Error : Invalid Platform id " << target << std::endl;
       std::abort();
     }
+    generator.setPaltform(enumTarget, std::string(platInfo));
   }
   return Py_None;
 }
 
+static PyObject* set_kernel_name(PyObject* self, PyObject* args) {
+  char* kernelName = NULL;
+  if(PyArg_ParseTuple(args, "s", &kernelName)){
+    __GlobalKernelName = std::string(kernelName);
+    if(__GlobalKernelName.size() <= 0){
+      std::cout << "DeepGen Error : Invalid KernelName " << __GlobalKernelName << std::endl;
+      std::abort();
+    }
+    else{
+      std::cout << "[lib] setKernelNAme : "<< __GlobalKernelName << std::endl;
+    }
+  }
+  return Py_None;
+}
 static PyMethodDef DeepgenMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
     {"compile_mm", py_compile_mm, METH_VARARGS, "Compile matmul with given shape and config"},
     {"set_platform", set_platform, METH_VARARGS, "Compile attention with given shape and config"},
+    {"set_kernel_name", set_kernel_name, METH_VARARGS, "Compile attention with given shape and config"},
     {NULL, NULL, 0, NULL}
 };
 
