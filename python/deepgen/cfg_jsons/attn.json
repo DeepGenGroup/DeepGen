@@ -1,0 +1,42 @@
+{
+  "Br": [32, 64, 128], 
+  "Bc": [32, 64, 128], 
+  "Hd": [128], 
+  "Slice1": [8, 16, 32], 
+  "Slice2": [8, 16, 32], 
+
+  "PTr": [4, 8], 
+  "PTc": [4, 8], 
+  "OTr": [4, 8], 
+  "OTc": [4, 8],
+
+  "GLOB_LOAD_WIDTH_Q": [4], 
+  "GLOB_LOAD_WIDTH_K": [4], 
+  "GLOB_LOAD_WIDTH_V": [4],
+
+  "BLOCK_LAYOUT_P_Y": [1, 2, 4], 
+  "BLOCK_LAYOUT_P_X": [1, 2, 4], 
+  "WARP_LAYOUT_P_Y": [2, 4, 8, 16, 32], 
+  "WARP_LAYOUT_P_X": [2, 4, 8, 16, 32],
+  "BLOCK_SCATTER_WIDTH_Q": [2, 4, 8], 
+  "BLOCK_SCATTER_WIDTH_K": [2, 4, 8], 
+  "WARP_SCATTER_WIDTH_Q": [1, 2, 4], 
+  "WARP_SCATTER_WIDTH_K": [1, 2, 4],
+
+  "BLOCK_LAYOUT_O_Y": [1, 2, 4], 
+  "BLOCK_LAYOUT_O_X": [1, 2, 4], 
+  "WARP_LAYOUT_O_Y": [2, 4, 8, 16, 32], 
+  "WARP_LAYOUT_O_X": [2, 4, 8, 16, 32], 
+  "BLOCK_SCATTER_WIDTH_P": [2, 4, 8], 
+  "BLOCK_SCATTER_WIDTH_V": [2, 4, 8], 
+  "WARP_SCATTER_WIDTH_P": [1, 2, 4], 
+  "WARP_SCATTER_WIDTH_V": [1, 2, 4],
+
+  "UNROLL_NUM": [8, 16], 
+  "WARP_SIZE": [64], 
+  "LOAD_CONTINUOUS_P": [1], 
+  "LOAD_CONTINUOUS_O": [1], 
+  "SHARED_PREFETCH_P": [0, 1], 
+  "REG_PREFETCH_P": [0, 1], 
+  "REG_PREFETCH_O": [0, 1]
+}

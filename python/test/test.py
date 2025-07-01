@@ -1,109 +1,61 @@
+import torch
+import torch.nn.functional as F
+import math
+import statistics
+from deepgen.autotune import buildSapce
+from deepgen.runtime import Runtime
+from deepgen.utils import getGPUInfo, perf
+from tqdm import tqdm
 
+def autoTuneAttn(inputs):
+  print("Input Shapes:", [inp.shape for inp in inputs])
+  # get gpu info
+  _, gpu_info = getGPUInfo(target="rocm")  # smem, cu/sm, reg and others
+  # return kernel add into torch model
+  cfgs = buildSapce("attention", inputs, gpu_info)
+  # auto tuning...
+  rt = Runtime(target="rocm", arch=gpu_info.arch)
+  best_cfg, best_t = {}, 9999
+  inputs_ = [inp.data_ptr() for inp in inputs]
+  # for cfg in tqdm(cfgs, desc=f" Start Auto Tuning "):
+  for i in tqdm(range(0, len(cfgs)), desc=f" Start Auto Tuning "):
+    func = rt.compile("attention", cfgs[i])
+    t = perf(kernelFunc=func, inputs=inputs_)
+    if t < 10:
+      print(f"runtime launch failed cfg: {cfgs[i]}")
+    elif t < best_t:
+      best_t = t
+      best_cfg = cfgs[i]
+    if i % 100 == 0:
+      print(f"iter: {i+1}  best time cost: {best_t} ms")
+  return best_cfg, best_t
 
-ptr_type = "CUdeviceptr" if target == "cuda" else "hipDeviceptr_t"
-src = f"""
-{"#define __HIP_PLATFORM_AMD__" if target == "rocm" else ""}
-{"#include <cuda.h>" if target == "cuda" else ""}
-#include <{"cuda" if target == "cuda" else "hip/hip"}_runtime.h>
-#include <Python.h>
-#include <dlfcn.h>
-#include <stdbool.h>
-#include <dlfcn.h>
+def testTorch(inputs):
+  def attnFunc(Q, K, V, O):
+    d = Q.shape[1] * Q.shape[3]
+    P = torch.matmul(Q, K.transpose(2, 3)) / math.sqrt(d)
+    S = F.softmax(P, dim=-1)
+    O = torch.matmul(S, V)
+    return O
+  t = perf(attnFunc, inputs)
+  return t
+  
 
-void _launch({", ".join(f"{ptr_type} arg{i}" for i in range(arg_num))}) {{
-  void* args[] = {{ {", ".join(f"&arg{i}" for i in range(arg_num))} }};
-  {"CUmodule" if target == "cuda" else "hipModule_t"} module;
-  {"CUfunction" if target == "cuda" else "hipFunction_t"} kernel_fn;
-  {"cu" if target == "cuda" else "hip"}ModuleLoad(&module, "{arc_path}");
-  {"cu" if target == "cuda" else "hip"}ModuleGetFunction(&kernel_fn, module, "{kernel_name}");
-  {"cu" if target == "cuda" else "hipModule"}LaunchKernel(
-    kernel_fn,
-    {grid[0]}, {grid[1]}, {grid[2]},
-    {block[0]}, {block[1]}, {block[2]},
-    {smem}, nullptr, args, nullptr
-  );
-}}
+if __name__ == "__main__":
+  bs = 1
+  hn = 32
+  sl = 2048
+  hd = 128
+  Q = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
+  K = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
+  V = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
+  O = torch.empty((bs, hn, sl, hd), dtype=torch.float32, device='cuda')
 
-typedef struct _DevicePtrInfo {{
-    {ptr_type} dev_ptr;
-    bool valid;
-}} DevicePtrInfo;
+  inputs = [Q.transpose(2, 3).contiguous(), K.transpose(2, 3).contiguous(), V, O]
+  inputs_ = [Q, K, V, O]
+  t = testTorch(inputs=inputs_)
+  print(f"torch time cost: {t} ms")
 
-static inline DevicePtrInfo getPointer(PyObject *obj, int idx) {{
-  DevicePtrInfo ptr_info;
-  ptr_info.dev_ptr = 0;
-  ptr_info.valid = true;
-  if (PyLong_Check(obj)) {{
-    ptr_info.dev_ptr = ({ptr_type})PyLong_AsUnsignedLongLong(obj);
-    return ptr_info;
-  }}
-  if (obj == Py_None) {{
-    // valid nullptr
-    return ptr_info;
-  }}
-  PyObject *ptr = PyObject_GetAttrString(obj, "data_ptr");
-  if(ptr){{
-    PyObject *empty_tuple = PyTuple_New(0);
-    PyObject *ret = PyObject_Call(ptr, empty_tuple, NULL);
-    Py_DECREF(empty_tuple);
-    Py_DECREF(ptr);
-    if (!PyLong_Check(ret)) {{
-      PyErr_SetString(PyExc_TypeError, "data_ptr method of Pointer object must return 64-bit int");
-      ptr_info.valid = false;
-      return ptr_info;
-    }}
-    ptr_info.dev_ptr = ({ptr_type})PyLong_AsUnsignedLongLong(ret);
-    if(!ptr_info.dev_ptr) {{
-      Py_DECREF(ret);
-      return ptr_info;
-    }}
-
-    {"CUpointer_attribute attributes[] = {{CU_POINTER_ATTRIBUTE_DEVICE_POINTER}}; CUresult status; void* data;" if target == "cuda" else "hipError_t status; uint64_t dev_ptr;"}
-    status = {"hip" if target == "rocm" else "cu"}PointerGetAttribute(&{"dev_ptr, HIP" if target == "rocm" else "data, CU"}_POINTER_ATTRIBUTE_DEVICE_POINTER, ptr_info.dev_ptr);
-    if (status == {"hipErrorInvalidValue" if target == "rocm" else "CUDA_SUCCESS"}) {{
-        PyErr_Format(PyExc_ValueError, "Pointer argument (at %d) cannot be accessed from Deepgen (cpu tensor?)", idx);
-        ptr_info.valid = false;
-    }}
-    {"ptr_info.dev_ptr = (hipDeviceptr_t)dev_ptr;" if target == "rocm" else ""}
-    Py_DECREF(ret);
-    return ptr_info;
-  }}
-  PyErr_SetString(PyExc_TypeError, "Pointer argument must be either uint64 or have data_ptr method");
-  {"ptr_info.valid = false;" if target == "cuda" else ""}
-  return ptr_info;
-}}
-
-static PyObject* launch(PyObject* self, PyObject* args) {{
-  PyObject* inputs;
-  if (!PyArg_ParseTuple(args, "O", &inputs_list)) {{
-      return NULL;
-  }}
-  DevicePtrInfo ptr_info0 = getPointer(inputs, 0); 
-  if (!ptr_info0.valid) 
-    return NULL;
-  _launch(ptr_info0.dev_ptr);
-  return Py_None;
-}}
-
-static PyMethodDef launchMethods[] = {{
-    {{"launch", launch, METH_VARARGS, "Launch kernel"}}, 
-    {{NULL, NULL, 0, NULL}}
-}};
-
-static struct PyModuleDef deepgenmodule = {{
-  PyModuleDef_HEAD_INIT,
-  "launch",
-  NULL,
-  -1,
-  launchMethods
-}};
-
-PyMODINIT_FUNC PyInit_launch(void) {{
-  PyObject *m = PyModule_Create(&deepgenmodule);
-  if(m == NULL) {{
-    return NULL;
-  }}
-  PyModule_AddFunctions(m, launchMethods);
-  return m;
-}}
-"""
+  cfg, t = autoTuneAttn(inputs=inputs)
+  print(f"best config: {cfg}")
+  print(f"best time cost: {t} ms")

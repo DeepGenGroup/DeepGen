@@ -4,12 +4,12 @@ import io
 import sysconfig
 import os
 import shutil
-import subprocess
 import setuptools
 import subprocess
 import tempfile
 from pathlib import Path
-from torch.utils import cpp_extension
+import torch
+import statistics
 
 dirname = os.path.dirname(os.path.realpath(__file__))
 # torch_include_dir = cpp_extension.include_paths()
@@ -54,7 +54,7 @@ def _build(name, src, srcdir, library_dirs, include_dirs, libraries):
   py_include_dir = sysconfig.get_paths(scheme=scheme)["include"]
   include_dirs = include_dirs + [srcdir, py_include_dir]
   # for -Wno-psabi, see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=111047
-  cc_cmd = [cc, src, "-O3", "-shared", "-fPIC", "-Wno-psabi", "-o", so]
+  cc_cmd = [cc, src, "-O3", "-shared", "-fPIC", "-Wno-psabi", "-Wno-unused-result", "-o", so]
   cc_cmd += [f'-l{lib}' for lib in libraries]
   cc_cmd += [f"-L{dir}" for dir in library_dirs]
   cc_cmd += [f"-I{dir}" for dir in include_dirs if dir is not None]
@@ -134,6 +134,23 @@ def getGPUInfo(target="rocm"):
   src_dir = os.path.join(utilPath, f"{target}.cc")
   mod = compileModuleFromFile("gpu_info", src_dir, lib_dir, target)
   return mod.get_device_count(), mod.get_gpu_info()
+
+
+def perf(kernelFunc, inputs, warmup=1, iter=3):
+  for _ in range(warmup):
+    kernelFunc(*inputs)
+  times = []
+  for _ in range(iter):
+    start = torch.cuda.Event(enable_timing=True)
+    end = torch.cuda.Event(enable_timing=True)
+    start.record()
+    kernelFunc(*inputs)
+    end.record()
+    torch.cuda.synchronize()
+    elapsed_time_ms = start.elapsed_time(end)
+    times.append(elapsed_time_ms)
+  median = statistics.median(times)
+  return median
 
 # if __name__ == "__main__":
 #   dev_count, info = getGPUInfo(target="cuda")

@@ -111,7 +111,8 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
 
 int main(int argc, char* argv[]) {
   generator.setPaltform(Target::ROCm, "906");
-  generator.readMLIRAndLowering(argv[1]);
+  auto path = generator.readMLIRAndLowering(argv[1]);
+  llvm::outs() << "path: " << path << "\n";
   return 0;
 }
 

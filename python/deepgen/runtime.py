@@ -2,7 +2,8 @@ import os
 import re
 import sysconfig
 import torch
-from utils import loadLibModule, compileModuleFromSrc
+from deepgen.utils import loadLibModule, compileModuleFromSrc
+from deepgen.HIPCompiler import Kernel, HIPCompiler
 
 dirname = os.path.dirname(os.path.realpath(__file__))
 # export LD_LIBRARY_PATH=$CONDA_PREFIX/lib:$LD_LIBRARY_PATH
@@ -113,6 +114,7 @@ PyMODINIT_FUNC PyInit_launch(void) {{
   return m;
 }}
 """
+  # print(src)
   return src
 
 class Runtime:
@@ -129,8 +131,12 @@ class Runtime:
   def compile(self, kernel: str, cfg: dict):
     if kernel == "matmul":  # compile_mm 应该接受 cfg["type"]
       kernel_dir = self.compile_mm(cfg["shape"], cfg["config"])
-    elif (kernel == "attention"):
-      kernel_dir = self.compile_attn(cfg["shape"], cfg["config"])
+    elif kernel == "attention":
+      if self.target == "rocm":
+        hipcc = HIPCompiler()
+        kernel_dir = hipcc.build(Kernel.Attention, cfg["shape"], cfg["config"]["attention"])
+      else:
+        kernel_dir = self.compile_attn(cfg["shape"], cfg["config"])
     host_src = makeHostSrc(kernel, len(cfg["type"]), cfg["grid"], cfg["block"], cfg["smem"], kernel_dir, self.target)
     # print(host_src)
     mod = compileModuleFromSrc("launch", host_src, self.target)
