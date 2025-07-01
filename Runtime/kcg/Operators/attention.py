@@ -410,13 +410,13 @@ class AttentionOp(OpInterface) :
         kernelName = info.kernelName
         self.SetKernelName( kernelName )
 
-        if is_hip():
-            # hip compile
-            hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
-            res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
-        else:
+        # if is_hip():
+        #     # hip compile
+        #     hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
+        #     res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
+        # else:
             # compile using llvm
-            res = self.CompileKernel(shape , config)
+        res = self.CompileKernel(shape , config)
 ##########        
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims

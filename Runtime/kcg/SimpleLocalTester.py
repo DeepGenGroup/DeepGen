@@ -260,6 +260,10 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
 
 def getInputs() :
     helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float)" 
+    if len(sys.argv) < 4 :
+        print(helpmsg)
+        assert False, f"invalid input args. {helpmsg}"
+        
     cfgFile = sys.argv[1]
     result_json_path = sys.argv[2]
     start = int(sys.argv[3])

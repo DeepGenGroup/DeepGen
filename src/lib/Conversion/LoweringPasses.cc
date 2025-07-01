@@ -208,52 +208,167 @@ public:
   }
 };
 
+Value getLaneId(ConversionPatternRewriter &rewriter, Location loc,
+                const unsigned indexBitwidth) {
+  auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+  Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
+  Value minus1 = rewriter.create<arith::ConstantIntOp>(loc, -1, 32);
+  Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type,
+                                                    ValueRange{minus1, zero});
+  Value laneId = rewriter.create<ROCDL::MbcntHiOp>(loc, int32Type,
+                                                  ValueRange{minus1, mbcntLo});
+  return laneId;
+}
+
+static unsigned getBitWidth(Type type) {
+  if (type.isIntOrFloat())
+    return type.getIntOrFloatBitWidth();
+
+  auto vec = cast<VectorType>(type);
+  assert(!vec.isScalable() && "scalable vectors are not supported");
+  return vec.getNumElements() * getBitWidth(vec.getElementType());
+}
+
+static Value createI32Constant(OpBuilder &builder, Location loc,
+                               int32_t value) {
+  Type i32 = builder.getI32Type();
+  return builder.create<LLVM::ConstantOp>(loc, i32, value);
+}
+
+SmallVector<Value> decomposeValue(OpBuilder &builder, Location loc,
+                                              Value src, Type dstType) {
+  Type srcType = src.getType();
+  if (srcType == dstType)
+    return {src};
+
+  unsigned srcBitWidth = getBitWidth(srcType);
+  unsigned dstBitWidth = getBitWidth(dstType);
+  if (srcBitWidth == dstBitWidth) {
+    Value cast = builder.create<LLVM::BitcastOp>(loc, dstType, src);
+    return {cast};
+  }
+
+  if (dstBitWidth > srcBitWidth) {
+    auto smallerInt = builder.getIntegerType(srcBitWidth);
+    if (srcType != smallerInt)
+      src = builder.create<LLVM::BitcastOp>(loc, smallerInt, src);
+
+    auto largerInt = builder.getIntegerType(dstBitWidth);
+    Value res = builder.create<LLVM::ZExtOp>(loc, largerInt, src);
+    return {res};
+  }
+  assert(srcBitWidth % dstBitWidth == 0 &&
+         "src bit width must be a multiple of dst bit width");
+  int64_t numElements = srcBitWidth / dstBitWidth;
+  auto vecType = VectorType::get(numElements, dstType);
+
+  src = builder.create<LLVM::BitcastOp>(loc, vecType, src);
+
+  SmallVector<Value> res;
+  for (auto i : llvm::seq(numElements)) {
+    Value idx = createI32Constant(builder, loc, i);
+    Value elem = builder.create<LLVM::ExtractElementOp>(loc, src, idx);
+    res.emplace_back(elem);
+  }
+
+  return res;
+}
+
+
+Value composeValue(OpBuilder &builder, Location loc, ValueRange src,
+                               Type dstType) {
+  assert(!src.empty() && "src range must not be empty");
+  if (src.size() == 1) {
+    Value res = src.front();
+    if (res.getType() == dstType)
+      return res;
+
+    unsigned srcBitWidth = getBitWidth(res.getType());
+    unsigned dstBitWidth = getBitWidth(dstType);
+    if (dstBitWidth < srcBitWidth) {
+      auto largerInt = builder.getIntegerType(srcBitWidth);
+      if (res.getType() != largerInt)
+        res = builder.create<LLVM::BitcastOp>(loc, largerInt, res);
+
+      auto smallerInt = builder.getIntegerType(dstBitWidth);
+      res = builder.create<LLVM::TruncOp>(loc, smallerInt, res);
+    }
+
+    if (res.getType() != dstType)
+      res = builder.create<LLVM::BitcastOp>(loc, dstType, res);
+
+    return res;
+  }
+
+  int64_t numElements = src.size();
+  auto srcType = VectorType::get(numElements, src.front().getType());
+  Value res = builder.create<LLVM::PoisonOp>(loc, srcType);
+  for (auto &&[i, elem] : llvm::enumerate(src)) {
+    Value idx = createI32Constant(builder, loc, i);
+    res = builder.create<LLVM::InsertElementOp>(loc, srcType, res, elem, idx);
+  }
+
+  if (res.getType() != dstType)
+    res = builder.create<LLVM::BitcastOp>(loc, dstType, res);
+
+  return res;
+}
+
 struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
   using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
 
-  LogicalResult
-  matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override {
+  LogicalResult matchAndRewrite(gpu::ShuffleOp op, OpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override 
+  {
     Location loc = op->getLoc();
-    // TODO: Add support for non 32-bit shuffle values.
-    if (adaptor.getValue().getType().getIntOrFloatBitWidth() != 32)
-      return failure();
-    const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
-    auto int32Type = IntegerType::get(rewriter.getContext(), 32);
-    Value zero = rewriter.create<arith::ConstantIntOp>(loc, 0, 32);
-    Value minus1 = rewriter.create<arith::ConstantIntOp>(loc, -1, 32);
-    Value mbcntLo = rewriter.create<ROCDL::MbcntLoOp>(loc, int32Type, ValueRange{minus1, zero});
-    Value srcLaneId = rewriter.create<ROCDL::MbcntHiOp>(loc, int32Type, ValueRange{minus1, mbcntLo});
+    Value initShflValue = adaptor.getValue();
 
+    const unsigned indexBitwidth = getTypeConverter()->getIndexTypeBitwidth();
+    Value srcLaneId = getLaneId(rewriter, loc, indexBitwidth);
+
+    auto int32Type = IntegerType::get(rewriter.getContext(), 32);
     Value width = adaptor.getWidth();
+    Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
     Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
     Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
-    Value widthOrZeroIfOutside = rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);
+    Value widthOrZeroIfOutside =
+        rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);
     Value dstLane;
-    // TODO: Add support for gpu::ShuffleMode::UP and gpu::ShuffleMode::DOWN.
-    // TODO: Use ds_swizzle for XOR when step/offsets are constants for better
-    // perf.
+
     switch (op.getMode()) {
+    case gpu::ShuffleMode::UP:
+      dstLane = rewriter.create<LLVM::SubOp>(loc, int32Type, srcLaneId,
+                                             adaptor.getOffset());
+      break;
+    case gpu::ShuffleMode::DOWN:
+      dstLane = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId,
+                                             adaptor.getOffset());
+      break;
     case gpu::ShuffleMode::XOR:
-      dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId, adaptor.getOffset());
+      dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId,
+                                             adaptor.getOffset());
       break;
     case gpu::ShuffleMode::IDX:
       dstLane = adaptor.getOffset();
       break;
-    default:
-      return failure();
     }
-    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
-    Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane, dstLane, srcLaneId);
+    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
+        loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
+    Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane,
+                                                          dstLane, srcLaneId);
     Value two = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 2);
-    Value dwordAlignedDstLane = rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);
-    Value initShflValue = adaptor.getValue();
-    if (adaptor.getValue().getType().isF32()) {
-      initShflValue = rewriter.create<LLVM::BitcastOp>(loc, int32Type, initShflValue);
+    Value dwordAlignedDstLane =
+        rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);
+
+    SmallVector<Value> decomposed =
+        decomposeValue(rewriter, loc, initShflValue, int32Type);
+    SmallVector<Value> swizzled;
+    for (Value v : decomposed) {
+      Value res = rewriter.create<ROCDL::DsBpermuteOp>(loc, int32Type,
+                                                       dwordAlignedDstLane, v);
+      swizzled.emplace_back(res);
     }
-    Value shflValue = rewriter.create<ROCDL::DsBpermuteOp>(loc, int32Type, dwordAlignedDstLane, initShflValue);
-    if (adaptor.getValue().getType().isF32()) {
-      shflValue = rewriter.create<LLVM::BitcastOp>(loc, adaptor.getValue().getType(), shflValue);
-    }
+    Value shflValue =
+        composeValue(rewriter, loc, swizzled, initShflValue.getType());
     rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
     return success();
   }
