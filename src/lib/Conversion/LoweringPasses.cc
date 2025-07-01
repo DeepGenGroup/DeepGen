@@ -10,42 +10,42 @@ namespace KernelCodeGen {
 // ===================================================================
 // 将memref.alloca的地址空间进行修改，local=0为cuda/loacl=5为rocm
 struct AmendAllocaOpAddrSpace : public OpRewritePattern<memref::AllocaOp> {
-  using OpRewritePattern<memref::AllocaOp>::OpRewritePattern;
-private:
-  Target target;
-public:
-  AmendAllocaOpAddrSpace(MLIRContext *context, Target target) 
-  : OpRewritePattern<memref::AllocaOp>(context),  target(target) {}
+  AmendAllocaOpAddrSpace(MLIRContext *context, Target target)
+    : OpRewritePattern(context), target(target) {}
 
-  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp, PatternRewriter &rewriter) const final {
+  LogicalResult matchAndRewrite(memref::AllocaOp allocaOp, PatternRewriter &rewriter) const override {
     MemRefType originalType = allocaOp.getType();
-    int newAddressSpace = 0;
-    if (target == Target::ROCm) {
-      newAddressSpace = 5;
+    int requiredSpace = (target == Target::ROCm) ? 5 : 0;
+    if (static_cast<int>(originalType.getMemorySpaceAsInt()) == requiredSpace) {
+      return failure();
     }
-    MemRefType newType = MemRefType::get(originalType.getShape(), 
-                                         originalType.getElementType(),{}, newAddressSpace);
-    allocaOp.getResult().setType(newType);
+    MLIRContext *ctx = allocaOp.getContext();
+    Attribute memorySpaceAttr = IntegerAttr::get(IntegerType::get(ctx, 64), requiredSpace);
+    MemRefType newType = MemRefType::get(originalType.getShape(), originalType.getElementType(), 
+                                         originalType.getLayout(),memorySpaceAttr);
+
+    rewriter.setInsertionPoint(allocaOp);
+    auto newAlloca = rewriter.create<memref::AllocaOp>(allocaOp.getLoc(), newType);
+    rewriter.replaceOp(allocaOp, newAlloca.getResult());
     return success();
   }
-};
-
-// memref.alloca的地址空间进行修改pass
-struct AmendAllocaOpAddrSpacePass : public PassWrapper<AmendAllocaOpAddrSpacePass, OperationPass<ModuleOp>> {
-  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AmendAllocaOpAddrSpacePass)
-    explicit AmendAllocaOpAddrSpacePass(Target target) : target(target) {};
   private:
     Target target;
-  
+};
+
+struct AmendAllocaOpAddrSpacePass : public PassWrapper<AmendAllocaOpAddrSpacePass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(AmendAllocaOpAddrSpacePass)
+
+  AmendAllocaOpAddrSpacePass(Target target) : target(target) {}
   void runOnOperation() override {
     RewritePatternSet patterns(&getContext());
-
     patterns.add<AmendAllocaOpAddrSpace>(&getContext(), target);
-    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))){
-      return signalPassFailure();
+    if (failed(applyPatternsAndFoldGreedily(getOperation(), std::move(patterns)))) {
+      signalPassFailure();
     }
-
   }
+  private:
+    Target target;
 };
 
 
@@ -183,8 +183,8 @@ public:
     }
 
     Operation *function;
-    if (auto gpuFunc = op->template getParentOfType<gpu::GPUFuncOp>())
-      function = gpuFunc;
+    if (auto Func = op->template getParentOfType<func::FuncOp>())
+      function = Func;
     if (auto llvmFunc = op->template getParentOfType<LLVM::LLVMFuncOp>())
       function = llvmFunc;
     if (!boundsAttrName.empty() && function) {
@@ -500,9 +500,10 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
     LLVMTypeConverter typeConverter(&getContext(), options);
 
     Codetarget.addIllegalDialect<gpu::GPUDialect>();
-    Codetarget.addLegalDialect<ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
+    Codetarget.addLegalDialect<LLVM::LLVMDialect, ROCDL::ROCDLDialect, NVVM::NVVMDialect>();
 
     if (target == Target::ROCm) {
+      Codetarget.addLegalDialect<arith::ArithDialect>();
       // populateGpuToROCDLConversionPatterns(typeConverter, patterns, gpu::amd::Runtime::HIP);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, ROCDL::BlockIdXOp, 
                                                ROCDL::BlockIdYOp, ROCDL::BlockIdZOp>>(typeConverter, AttrGridDim);
@@ -510,7 +511,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                ROCDL::ThreadIdYOp, ROCDL::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToROCDLLowering>(typeConverter);
       patterns.add<GPUBarrierToROCDLLowering>(&getContext());
-      populateMathToROCDLConversionPatterns(typeConverter, patterns);
+      populateMathToROCDLConversionPatterns(typeConverter, patterns);  // exp仅支持fp64/16
     } else if (target == Target::CUDA) {
       // populateGpuToNVVMConversionPatterns(typeConverter, patterns, 10);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::BlockIdOp, NVVM::BlockIdXOp, 
@@ -519,7 +520,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                NVVM::ThreadIdYOp, NVVM::ThreadIdZOp>>(typeConverter, AttrBlockDim);
       patterns.add<GPUShuffleOpToNVVMLowering>(typeConverter);
       patterns.add<GPUBarrierToNVVMLowering>(&getContext());
-      populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);
+      populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);  // 大部分只支持fp32/fp16
     }
 
     if (failed(applyPartialConversion(getOperation(), Codetarget, std::move(patterns)))){
@@ -607,9 +608,13 @@ struct VectorToLLVMPass : public PassWrapper<VectorToLLVMPass, OperationPass<Mod
 
     LowerToLLVMOptions options(&getContext());
     options.overrideIndexBitwidth(indexBitWidth);
+    bool force32BitVectorIndices = false;
+    if (indexBitWidth == 32) {
+      force32BitVectorIndices = true;
+    }
 
     LLVMTypeConverter converter(&getContext(), options);
-    mlir::populateVectorToLLVMConversionPatterns(converter, patterns, false, true);
+    mlir::populateVectorToLLVMConversionPatterns(converter, patterns, false, force32BitVectorIndices);
     // mlir::populateVectorToLLVMMatrixConversionPatterns(converter, patterns);
 
     if (failed(applyPartialConversion(getOperation(), target, std::move(patterns))))
