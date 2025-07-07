@@ -109,7 +109,7 @@ initialize_module(llvm::Module *module, const std::string &triple,
     tr.setArch(llvm::Triple::ArchType::amdgcn);
     tr.setVendor(llvm::Triple::VendorType::AMD);
     tr.setOS(llvm::Triple::OSType::AMDHSA);
-    tr.setEnvironment(llvm::Triple::EnvironmentType::UnknownEnvironment);
+    // tr.setEnvironment(llvm::Triple::EnvironmentType::UnknownEnvironment);
     module->setTargetTriple(tr);
 
     std::string error;
@@ -330,7 +330,7 @@ std::string generateAmdgcnAndHsacoFromLLIRFile(
     std::string amdgcn = std::get<0>(ret);
     std::string hsacoPath = std::get<1>(ret);
 
-    std::string amdgcnPath{"/home/xiebaokang/projects/evaluate/DeepGen/_TempCodes/rocmshuffle/mlir.s"};
+    std::string amdgcnPath{"/home/xushilong/DeepGen/_TempCodes/rocmshuffle/testgcn.s"};
     std::ofstream outasm(amdgcnPath);
     if (outasm.is_open()) {
         outasm << amdgcn;

@@ -287,8 +287,10 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   pm2.addPass(mlir::createCanonicalizerPass());
   pm2.addPass(mlir::createCSEPass());
   pm2.addPass(mlir::createSymbolDCEPass());
-  if (mlir::failed(pm2.run(mod)))
+  if (mlir::failed(pm2.run(mod))){
     return false;
+  }
+  LOG_DEBUG("========== after lowering_ =======\n",mod);
   return true;
 }
 

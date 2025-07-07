@@ -56,12 +56,13 @@ if __name__ == "__main__":
     batch = 2
     max_seq_len = 1024
     input_ids = torch.randint(1, args.vocab_size, size=(batch, max_seq_len)).to(devid)
-
+    
     # 手动注册已经调好的kernl
     registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
     # 没有调好的kernel，首次执行：
-    # compile_model(7, run_model(optimizedModel,args,input_ids))
-
+    collectInfoOnly = True
+    compile_model(7, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
+    
     def f_benchmark():
         print("========= eval bench time =======",flush=True)
         return model_bench(input_ids)
@@ -70,19 +71,19 @@ if __name__ == "__main__":
         return model(input_ids)
     
     # 
-    
-    out0,t0 = evaluate_model_time(f_base)
-    out1,t1 = evaluate_model_time(f_benchmark)
-    
-    print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t0/t1}")
-    opCallCounter = OpProxy.GetOpCallCounts()
-    print("==== call ops :",opCallCounter)
-    # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
-    
-    if torch.allclose(out0,out1,atol=1e-3,rtol=1e-3):
-        print("===== model test correct ")
-    else:
-        diff, maxerr = compare_with_error(out0,out1)
-        print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
-        print("baseline = ",out0)
-        print("user = ", out1)
+    if not collectInfoOnly :
+        out0,t0 = evaluate_model_time(f_base)
+        out1,t1 = evaluate_model_time(f_benchmark)
+        
+        print(f"=== model run time : ours ={t1}, base = {t0}, speedup : {t0/t1}")
+        opCallCounter = OpProxy.GetOpCallCounts()
+        print("==== call ops :",opCallCounter)
+        # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
+        
+        if torch.allclose(out0,out1,atol=1e-3,rtol=1e-3):
+            print("===== model test correct ")
+        else:
+            diff, maxerr = compare_with_error(out0,out1)
+            print(f"===== model test error ! diff, maxerr = {diff, maxerr}")
+            print("baseline = ",out0)
+            print("user = ", out1)

@@ -235,7 +235,7 @@ def get_baseline_model(original_model : nn.Module) -> nn.Module :
     return wrapped_model
 
 
-def compile_model(devId : int, f_run_model : Callable) :
+def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) :
     output = f_run_model()
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
     mmTemplateJson = f'{PathManager.project_dir()}/TuningConfigs/GEMM_cfg_32.json'
@@ -253,8 +253,9 @@ def compile_model(devId : int, f_run_model : Callable) :
             ts = tune_att.getTuneSpace([1,1,1,1],[])
         else:
             assert False, f"invalid ty : {Ty.__name__}"
-        tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
-        OpProxy.registKernel(tuneRes)
+        if not collectInfoOnly:
+            tuneRes = kernel_compile_tuning(Ty, mmTemplateJson ,devId ,ts)
+            OpProxy.registKernel(tuneRes)
 
 def evaluate_model_time(f : Callable) -> Tuple[torch.Tensor, float]:
     ret = []

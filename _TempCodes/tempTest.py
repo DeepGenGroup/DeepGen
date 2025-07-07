@@ -105,16 +105,13 @@ def test_yield() :
         yield i
 
 if __name__ == '__main__':
-    pp = test_yield()
-    for num in pp :
-        print("num = ",num)
-        if num > 5:
-            break
-    print("============")
-    for num in pp :
-        print("num = ",num)
-        if num > 10:
-            break
+    import sys
+    print(sys.argv) 
+    # pp = test_yield()
+    # for num in pp :
+    #     print("num0 = ",num)
+    # for num in pp :
+    #     print("num1 = ",num)
     # dev = 7
     # init_cuda(dev)
     # a = torch.randn(1024,1024,dtype=torch.float32, device=f"cuda:{dev}")

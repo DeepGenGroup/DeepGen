@@ -96,8 +96,11 @@ else()
 endif()
 
 if(DEBUG_MODE)
-  add_definitions(-DKCG_DEBUG)
-  add_compile_options(-g)
+message(STATUS "==== enable debug_log =======")
+add_definitions(-DKCG_DEBUG)
+add_compile_options(-g)
+else()
+message(STATUS "==== disable debug_log =======")
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

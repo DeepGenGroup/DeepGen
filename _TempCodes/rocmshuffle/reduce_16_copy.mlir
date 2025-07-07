@@ -25,6 +25,7 @@ module {
         // %c16_i32 = arith.constant 16 : i32
         // %shuffleResult_4, %valid_4 = gpu.shuffle  down %4, %c16_i32, %cgroup_i32 : f32
         // %5 = arith.addf %4, %shuffleResult_4 : f32
+        
         affine.store %4, %arg1[%bx * 4 + %tx floordiv 16, %tx mod 16] : memref<8x16xf32, 1>
       } {gpu.index = "threadIdx"}
     } {gpu.index = "blockIdx"}

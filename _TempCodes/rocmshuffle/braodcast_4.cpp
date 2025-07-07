@@ -14,7 +14,10 @@ __global__ void broadcast_4(float* output) {
   float first_elem = __shfl(elem, 0, 4);  // HIP的shuffle函数
   output[offset + ((tid / 4) * 4 + tid % 4)] = first_elem;
 }
-
+// %1, %2 = gpu.shuffle xor %0, %offset, %width : f32
+// For lane k, returns the value %0 from lane k ^ offset. Every lane trades value with exactly one other lane.
+// %0 - 线程内的某个寄存器
+// %offset - laneid偏移量   %width - warp内有几个线程
 int main() {
   // 初始化HIP设备
   int device_count;

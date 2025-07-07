@@ -1,8 +1,8 @@
 #! /bin/bash
 project_dir="$HOME/DeepGen"
 cd $project_dir
-is_as_pymodule='ON'
-debug_mode='OFF'
+is_as_pymodule='OFF'
+debug_mode='ON'
 mkdir build
 mkdir _dump
 cd build  

@@ -33,7 +33,7 @@
     "REG_PREFETCH" : [0, 1],
     "SHARED_PREFETCH" : [0, 1], 
     "LOAD_CONTINUOUS" : [1],
-    "STORE_CONTINUOUS" : [1]
+    "STORE_CONTINUOUS" : [1],
     "UNROLL_NUM" : [8, 16],
     "REG_PREFETCH" : [0, 1],
     "SHARED_PREFETCH" : [0, 1], 

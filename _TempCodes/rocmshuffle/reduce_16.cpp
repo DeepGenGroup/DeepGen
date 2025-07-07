@@ -37,11 +37,12 @@ int main() {
   // 初始化输入矩阵
   std::srand(1);
   for (int i = 0; i < len; ++i) {
-    h_input[i] = (std::rand() % 1000) * 0.01f;
+    // h_input[i] = (std::rand() % 1000) * 0.01f;
+    h_input[i] = 1.0f;
   }
   for (int i=0; i<8; i++) {
     for (int j=0; j<16; j++) {
-      printf("%.7f ", h_input[i * 16 + j]);
+      printf("%.1f ", h_input[i * 16 + j]);
     }
     printf("\n");
   }
@@ -64,8 +65,14 @@ int main() {
   hipMemcpy(h_output, d_output, len * sizeof(float), hipMemcpyDeviceToHost);
   
   // 打印结果
+  // for (int i=0; i<8; i++) {
+  //   printf("%.1f ", d_output[i * 4]);
+  // }
   for (int i=0; i<8; i++) {
-    printf("%.7f ", d_output[i * 4]);
+    for (int j=0; j<16; j++) {
+      printf("%.1f ", h_output[i * 16 + j]);
+    }
+    printf("\n");
   }
   printf("\n\n");
 

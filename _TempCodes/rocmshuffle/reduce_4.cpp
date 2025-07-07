@@ -8,11 +8,12 @@
 
 __global__ void reduce(float* input, float* output) {
   int tid = threadIdx.x;
-  float elem = input[(tid / 4) * 4 + tid % 4];
-  for (int i=1; i<4; i*=2) {
-    elem += __shfl_down(elem, i, 4);  // HIP的shuffle函数
-  }
-  output[(tid / 4) * 4 + tid % 4] = elem;
+  // float elem = input[(tid / 4) * 4 + tid % 4];
+  // for (int i=1; i<4; i*=2) {
+  //   elem += __shfl_down(elem, i, 4);  // HIP的shuffle函数
+  // }
+  // output[(tid / 4) * 4 + tid % 4] = elem;
+  output[tid] = tid;
 }
 
 int main() {
