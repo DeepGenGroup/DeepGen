@@ -56,7 +56,7 @@ class AttentionBaseArgs(OpBaseArgs) :
     def dumpToJson(self,path : str):
         import json
         self.argDict["kind"] = self.operatorKind
-        self.argDict["shape"] = self.intValues[0]
+        self.argDict["shape"] = self.intValues[0]  #  batch, head_num, seq_len, head_dim = shape
         self.argDict["dtype"] = self.intValues[1]
         with open(path,'w') as f:
             json.dump(self.argDict,f)
@@ -66,6 +66,7 @@ class AttentionBaseArgs(OpBaseArgs) :
 class AttentionTuningArgs(TuningArgsInterface) :
     def __init__(self, enumDType : EnumKernelDType = EnumKernelDType.float32):
         super().__init__()
+        self.basearg = AttentionBaseArgs()
         self.Br = 0 
         self.Bc = 0 
         self.Hd = 0 
@@ -243,14 +244,92 @@ class AttentionTuningArgs(TuningArgsInterface) :
     # def assignWithEncoder(self, cfgstr, tse : TuningSpaceEncoder):
     #     config = tse.decode(cfgstr)
     #     self.assignWithDict(config)
-    
+    def assignWithKernelName(self,name : str) -> bool :
+        # kcg_Attention_Br32Bc64Hd128_Sa16Sb8PTr4PTc4OTr4OTc8GLWQ4GLWK4GLWV4BLPY2BLPX1WLPY4WLPX16BSWQ4BSWK2WSWQ4WSWK2BLOY2BLOX1WLOY4WLOX16BSWP4BSWV2WSWP4WSWV1Un16W64LCP1LCO1SPP0RPP0RPO0
+        st = 0
+        items = name.split('_')
+        cfgstr = items[-1]
+        basestr = items[-2]
+        batches = items[2:-2]
+        print('items = ',items)
+        if len(batches) > 0 :
+            self.batch = []
+            for _b in batches :
+                if _b.startswith('b') :
+                    _b = _b[1:]
+                self.batch.append(int(_b))
+        else:
+            self.batch = []
+            
+        i_m = basestr.find('M')
+        i_n = basestr.find('N')
+        i_k = basestr.find('K')
+        i_isAT = basestr.find('isAT')
+        i_w = basestr.find('W')
+        
+        self.M = int(basestr[i_m+1:i_n])
+        self.N = int(basestr[i_n+1:i_k])
+        self.K = int(basestr[i_k+1:i_isAT])
+        self.isATranspose = int(basestr[i_isAT + 4:i_w]) > 0
+        self.WARP_SIZE = int(basestr[i_w+1:])
+        
+        i_BM = cfgstr.find('BM') 
+        i_BN = cfgstr.find('BN') 
+        i_BK = cfgstr.find('BK') 
+        i_TM = cfgstr.find('TM') 
+        i_TN = cfgstr.find('TN') 
+        i_BLY = cfgstr.find('BLY') 
+        i_BLX = cfgstr.find('BLX') 
+        i_WLY = cfgstr.find('WLY') 
+        i_WLX = cfgstr.find('WLX') 
+        i_GLWA = cfgstr.find('GLWA') 
+        i_GLWB = cfgstr.find('GLWB') 
+        i_BSWM = cfgstr.find('BSWM') 
+        i_BSWN = cfgstr.find('BSWN') 
+        i_WSWM = cfgstr.find('WSWM') 
+        i_WSWN = cfgstr.find('WSWN') 
+        i_LSU = cfgstr.find('LSU') 
+        i_Map = cfgstr.find('Map') 
+        i_GSW = cfgstr.find('GSW') 
+        i_UN = cfgstr.find('UN') 
+        i_RP = cfgstr.find('RP') 
+        i_SP = cfgstr.find('SP') 
+        i_LC = cfgstr.find('LC') 
+        i_RC = cfgstr.find('RC') 
+        
+        self.BLOCK_SIZE_M = int(cfgstr[i_BM + 2 : i_BN]) 
+        self.BLOCK_SIZE_N = int(cfgstr[i_BN + 2 : i_BK]) 
+        self.BLOCK_SIZE_K = int(cfgstr[i_BK + 2 : i_TM]) 
+        self.THREAD_SIZE_M = int(cfgstr[i_TM + 2 : i_TN]) 
+        self.THREAD_SIZE_N = int(cfgstr[i_TN + 2 : i_BLY]) 
+        self.BLOCK_LAYOUT_Y = int(cfgstr[i_BLY + 3 : i_BLX]) 
+        self.BLOCK_LAYOUT_X = int(cfgstr[i_BLX + 3 : i_WLY]) 
+        self.WARP_LAYOUT_Y = int(cfgstr[i_WLY + 3 : i_WLX]) 
+        self.WARP_LAYOUT_X = int(cfgstr[i_WLX + 3 : i_GLWA]) 
+        self.GLOB_LOAD_WIDTH_A = int(cfgstr[i_GLWA + 4 : i_GLWB]) 
+        self.GLOB_LOAD_WIDTH_B = int(cfgstr[i_GLWB + 4 : i_BSWM]) 
+        self.BLOCK_SCATTER_WIDTH_M = int(cfgstr[i_BSWM + 4 : i_BSWN]) 
+        self.BLOCK_SCATTER_WIDTH_N = int(cfgstr[i_BSWN + 4 : i_WSWM]) 
+        self.WARP_SCATTER_WIDTH_M = int(cfgstr[i_WSWM + 4 : i_WSWN]) 
+        self.WARP_SCATTER_WIDTH_N = int(cfgstr[i_WSWN + 4 : i_LSU]) 
+        self.LOCAL_SPLIT_U = int(cfgstr[i_LSU + 3 : i_Map]) 
+        self.BLOCK_MAPPING = int(cfgstr[i_Map + 3 : i_GSW]) 
+        self.GLOB_STORE_WIDTH = int(cfgstr[i_GSW + 3 : i_UN]) 
+        self.UNROLL_NUM = int(cfgstr[i_UN + 2 : i_RP]) 
+        self.REG_PREFETCH = int(cfgstr[i_RP + 2 : i_SP]) 
+        self.SHARED_PREFETCH = int(cfgstr[i_SP + 2 : i_LC]) 
+        self.LOAD_CONTINUOUS = int(cfgstr[i_LC + 2 : i_RC]) 
+        self.STORE_CONTINUOUS = int(cfgstr[i_RC + 2 : ]) 
+        return True
+      
     def generateKernelName(self) -> str : 
         ret = "kcg_Attention_"
-        ret += f"Br{ self.Br }"
+        ret += f"{self.basearg.argDict['shape']}".replace(' ','').replace(',','_')[1:-1]
+        ret += f"_Br{ self.Br }"
         ret += f"Bc{ self.Bc }"
         ret += f"Hd{ self.Hd }"
-        ret += f"Slice1_{ self.Slice1 }"
-        ret += f"Slice2_{ self.Slice2 }"
+        ret += f"_Sa{ self.Slice1 }"
+        ret += f"Sb{ self.Slice2 }"
         ret += f"PTr{ self.PTr }"
         ret += f"PTc{ self.PTc }"
         ret += f"OTr{ self.OTr }"
@@ -343,6 +422,7 @@ class AttentionOp(OpInterface) :
         self.BaseArgs = AttentionBaseArgs()
         self.CompileKernel = None
         self.SetPlatform = None
+        self.fastCompile = True
 
     def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Baseline is None :
@@ -350,14 +430,14 @@ class AttentionOp(OpInterface) :
             [shapeList, dtypeInt] = self.BaseArgs.intValues 
 
             assert len(shapeList)==4, f"shapeList= {shapeList}"
-            [ b0, b1, m, n] = shapeList
+            [bs,hn,sl,hd ] = shapeList
             # print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             # print("ety =", ety)
-            a = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
-            b = torch.rand((b0, b1, n,m),dtype=ety, device=f"cuda:{devId}" )
-            c = torch.rand((b0, b1, m,n),dtype=ety, device=f"cuda:{devId}" )
-            self.InputTensors_Baseline = [a,b,c]
+            q = torch.rand((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
+            k = torch.rand((bs,hn,hd,sl ),dtype=ety, device=f"cuda:{devId}" )
+            v = torch.rand((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )
+            self.InputTensors_Baseline = [q,k,v]
         return self.InputTensors_Baseline
 
     def GetBenchmarkInputTensor(self,devId : int) -> List[torch.Tensor] : 
@@ -369,8 +449,9 @@ class AttentionOp(OpInterface) :
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             qq = q.transpose(-1,-2).contiguous() 
+            kk = k.transpose(-1,-2).contiguous()
             d = torch.empty((b0, b1,m,n), dtype=ety, device=f"cuda:{devId}")
-            self.InputTensors_Benchmark = [qq,k,v,d]
+            self.InputTensors_Benchmark = [qq,kk,v,d]
         return self.InputTensors_Benchmark
 
     
@@ -384,8 +465,7 @@ class AttentionOp(OpInterface) :
             self.SetKernelName = mod.set_kernel_name
             self.SetPlatform = mod.set_platform
 
-    
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo ) -> Tuple[List,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo, opt : CompileOption = None ) -> Tuple[List,KernelConfigs,CompiledKernel] :
         Print = print
         # compile kernel
         # Print("===== KCGCompiler ctor ========")
@@ -410,14 +490,17 @@ class AttentionOp(OpInterface) :
         kernelName = info.kernelName
         self.SetKernelName( kernelName )
 
-        # if is_hip():
-        #     # hip compile
-        #     hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
-        #     res = HIPCompiler().build(Kernel.Attention, [1, 32, 4096, 128], config[info.kernelName], hsacopath, info.kernelName)
-        # else:
+        if is_hip():
+            # hip compile
+            hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
+            fastCompile = True
+            if opt is not None :
+                fastCompile = opt.fastCompile
+            res = HIPCompiler().build(Kernel.Attention, shape, config[info.kernelName], hsacopath, info.kernelName, fastCompile)
+        else:
             # compile using llvm
-        res = self.CompileKernel(shape , config)
-##########        
+            res = self.CompileKernel(shape , config)
+##########
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims
         gridDimX, gridDimY, gridDimZ = info.gridDims
@@ -488,11 +571,11 @@ class AttentionOp(OpInterface) :
         [q,k,v] = self.GetBaselineInputTensor(devId)
         ev_start = torch.cuda.Event(enable_timing=True)
         ev_end = torch.cuda.Event(enable_timing=True)
+        d = q.shape[1] * q.shape[3]
         ev_start.record()
-        a,b,m,n = self.BaseArgs.getIntDatalist()
-        self.OutputTensor_Baseline = torch.matmul(torch.softmax(torch.matmul(q,k),-1),v)  
-        # self.OutputTensor_Baseline = torch.empty(a,b,m,n,dtype=self.BaseArgs.getTorchDType(), device=f"cuda:{devId}")
-        # self.OutputTensor_Baseline = F.scaled_dot_product_attention(q,k,v)
+        p = torch.matmul(q, k) / math.sqrt(d)
+        s = F.softmax(p, dim=-1)
+        self.OutputTensor_Baseline = torch.matmul(s,v)
         ev_end.record()
         torch.cuda.synchronize()
         eps = ev_start.elapsed_time(ev_end)

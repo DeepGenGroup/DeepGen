@@ -13,6 +13,7 @@ __global__ void reduce(float* input, float* output) {
   float elem = input[offset + ((tid / 16) * 16 + tid % 16)];
   for (int i=1; i<16; i*=2) {
     elem += __shfl_down(elem, i, 64);  // HIP的shuffle函数
+    
   }
   output[offset + ((tid / 16) * 16 + tid % 16)] = elem;
 }

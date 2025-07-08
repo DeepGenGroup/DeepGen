@@ -5,6 +5,7 @@ import multiprocessing
 from kcg.Kernel import *
 import kcg.Operators.matmul as kcg_mm
 import kcg.Operators.attention as kcg_att
+import numpy as np
 
 ctx = multiprocessing.get_context('spawn')
 Process = ctx.Process
@@ -28,19 +29,19 @@ def init_cuda(_devId : List) :
         torch.cuda.init()
         torch.cuda.empty_cache()
 
-def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int) :
+def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int, opt : CompileOption) :
     # print("enter __compile_task_func",flush=True)
     op = OpTy()
     # print("[D] info.baseArgs = ", info.baseArgs)
     # print("[D] info dtype =",info.torchDataType)
-    ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info)
+    ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info, opt)
     pklName = f"{PathManager.pikle_dir()}/{deviceId}/kfg_{index}.pkl"
     # print(f"__compile_task_func : ba = {ba}")
     serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
 
 
 g_index : int = 0
-def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10, globalLimit = 0) -> bool:
+def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10, globalLimit = 0, compileOpt : CompileOption = None) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     global g_index
     localIndex = 0
@@ -57,7 +58,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
         # for needInfo in tsGenerator :
             print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
             # create compile process
-            p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index))
+            p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index, compileOpt))
             procs.append(p)
             p.start()
             localIndex += 1
@@ -130,16 +131,22 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             # init tensors
             op = OpTy()
             op.InitBaseArgs(ba)
-            tQ,tK,tV = op.GetBaselineInputTensor(devId)
-            tQQ,tKK,tVV,tO = op.GetBenchmarkInputTensor(devId)
+            op.GetBaselineInputTensor(devId)
+            op.GetBenchmarkInputTensor(devId)
             print("[D] tensor shape verify ======",flush=True)
-            print(tQ.shape, tK.shape, tV.shape, flush=True)
-            print(tQQ.shape, tKK.shape, tVV.shape, flush=True)
+            # print(tQ.shape, tK.shape, tV.shape, flush=True)
+            # print(tQQ.shape, tKK.shape, tVV.shape, flush=True)
             
             kernel = op.GetCompiledKernel(config,devId)
             # warmup
             # op.Test_warmup(kernel,1,devId)
-            r0, t0 = op.Test_baseline(7)
+            time_base = []
+            r0 = None
+            t0 = 0
+            for i in range(0,7):
+                r0, t0 = op.Test_baseline(7)
+                time_base.append(t0)
+            t0 = np.median(time_base)
             if time_0.value <= 0 :
                 time_0.value = t0
             else:
@@ -241,11 +248,11 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 
 
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
-def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int, checktflops:bool, checkAcc:float) :
+def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, compileOption : CompileOption, backend : EnumBackendType , arch : str ,devId : int, checktflops:bool, checkAcc:float) :
     maxSpeedups = []
     currIter = 0
 
-    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter, cc.maxCount) :
+    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter, cc.maxCount, compileOption) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups, checktflops, checkAcc)
@@ -297,11 +304,11 @@ if __name__ == '__main__' :
     print(f"==== tune space size = {tssize}")
     print("=== checktflops, checkAcc",checktflops, checkAcc)
     ts = get_tuning_space(opty, cfgFile)
-    cc = BenchmarkConfig()
-    cc.keepTopNum = 10
-    cc.max_kernel_per_iter = 75
-    cc.result_json_path = result_json_path
-    cc.maxCount = maxCount
+    bc = BenchmarkConfig()
+    bc.keepTopNum = 10
+    bc.max_kernel_per_iter = 40
+    bc.result_json_path = result_json_path
+    bc.maxCount = maxCount
     st = time.time()
     print(f"=====  start at : {st}")
     
@@ -312,7 +319,9 @@ if __name__ == '__main__' :
             i+=1
             if i >= start:
                 break 
-    do_compile_and_benchmark_alternatively(opty,ts,cc,backend,arch,devId,checktflops, checkAcc)
+    co = CompileOption()
+    co.fastCompile = False
+    do_compile_and_benchmark_alternatively(opty,ts,bc,co,backend,arch,devId,checktflops, checkAcc)
     # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
     # do_benchmark(opty,devId,cc,[])
     et = time.time()

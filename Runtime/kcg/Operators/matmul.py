@@ -466,7 +466,7 @@ class MatmulOp(OpInterface) :
         # attn_spec.loader.exec_module(attn_mod)
         # self.__compile_kernel_FA = attn_mod.compile_attn
     
-    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo) -> Tuple[List,KernelConfigs,CompiledKernel] :
+    def Compile(self, deviceId:int, backendtype : EnumBackendType, arch : str, info : CompileNeededInfo, opt : CompileOption = None) -> Tuple[List,KernelConfigs,CompiledKernel] :
         Print = print
         _backend = 0
         if backendtype.value == EnumBackendType.CUDA.value :

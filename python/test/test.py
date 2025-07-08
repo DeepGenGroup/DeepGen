@@ -18,7 +18,9 @@ def autoTuneAttn(inputs):
   best_cfg, best_t = {}, 9999
   inputs_ = [inp.data_ptr() for inp in inputs]
   # for cfg in tqdm(cfgs, desc=f" Start Auto Tuning "):
-  for i in tqdm(range(0, len(cfgs)), desc=f" Start Auto Tuning "):
+  maxlen = 1
+  # maxlen = len(cfgs)
+  for i in tqdm(range(0, maxlen ), desc=f" Start Auto Tuning "):
     func = rt.compile("attention", cfgs[i])
     t = perf(kernelFunc=func, inputs=inputs_)
     if t < 10:

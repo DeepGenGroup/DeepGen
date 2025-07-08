@@ -174,7 +174,7 @@ def buildSapce(kernel: str, inputs, gpu_info):
     # input_shape: [bs, hn, sl, hd]
     batch_size, head_num, head_dim, seq_len = inputs[0].shape  # Q shape: [batch_size, head_num, head_dim, seq_len]
     shape = [batch_size, head_num, seq_len, head_dim]
-    path = "/home/xiebaokang/projects/evaluate/DeepGen/python/deepgen/cfg_jsons/attn.json"
+    path = f"/home/xushilong/DeepGen/python/deepgen/cfg_jsons/attn.json"
     cfg_dict = readConfigJson(path)
     cfg_dict["Hd"] = [head_dim]
     cc = CreateAttnConfig(cfg_dict, shape, smem_size=gpu_info.shared_mem_per_block, sm_num=gpu_info.compute_units)

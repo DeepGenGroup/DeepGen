@@ -99,7 +99,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.SHARED_PREFETCH_P = 0 
         self.REG_PREFETCH_P = 0 
         self.REG_PREFETCH_O = 0 
-        
+    def assignWithKernelName(self, name):
+        return super().assignWithKernelName(name)
     def assignWithList(self, *args):
         self.Br= args[0]
         self.Bc= args[1]

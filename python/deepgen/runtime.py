@@ -124,7 +124,13 @@ class Runtime:
     deep_gen_so = os.path.join(dirname, "../../bin", f"lib{lib_name}.so")
     mod = loadLibModule(lib_name, deep_gen_so)
     match = re.findall(r'(?:gfx|sm_)(\d+)', arch)
-    mod.set_platform(target, match[0])
+    if target == 'rocm' :
+      targetID = 2
+    elif target == 'cuda':
+      targetID = 1
+    else:
+      assert False, f'invalid targetname {target} !'
+    mod.set_platform(targetID, match[0])
     self.compile_mm = mod.compile_mm
     self.compile_attn = mod.compile_attn
   

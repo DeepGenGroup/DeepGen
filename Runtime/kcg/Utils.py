@@ -616,7 +616,12 @@ class CompileNeededInfo :
         self.gridDims : List[int] = None # optional. If needed, we can assign and use
         self.shmBytes : int = None # optional. If needed, we can assign and use
         self.kernelName : str = None #  optional. If need, we can assign and use
-        
+
+class CompileOption :
+    def __init__(self):
+        self.toolchain = "llvm" # "other"
+        self.fastCompile = False  # 是否关闭优化以加速编译
+
 #  关键字
 class ConfigKeywords :
     # common

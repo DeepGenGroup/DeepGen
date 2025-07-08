@@ -353,6 +353,8 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorT
       }
     temp = AttentionTuningArgs(ToEnumIntDType(torch.float32))
     temp.assignWithDict(valDict)
+    temp.basearg.argDict['shape'] = shape
+    temp.basearg.argDict['dtype'] = EnumKernelDType.float32
     kernelName = temp.generateKernelName()
     config = {kernelName : valDict}
     
@@ -361,9 +363,8 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorT
     ret.baseArgs = shape
     ret.torchDataType = torch.float32
     ret.tsArgs = [shape,config]
-    ret.blockDims = [th_num, 1, 1]  # tx
-    ret.gridDims = [int(shape[2]/br), shape[1], shape[0]]
-    # ret.shmBytes = 32768 
+    ret.blockDims = [ valDict[kw.KEY_BLOCK_DIM_X], valDict[kw.KEY_BLOCK_DIM_Y], valDict[kw.KEY_BLOCK_DIM_Z] ]  # tx
+    ret.gridDims = [ valDict[ kw.KEY_GRID_DIM_X], valDict[ kw.KEY_GRID_DIM_Y], valDict[ kw.KEY_GRID_DIM_Z] ]
     ret.shmBytes = smem_size
     yield ret
     

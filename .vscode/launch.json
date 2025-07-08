@@ -5,14 +5,15 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "name": "pydebug: startupCluster",
+            "name": "pydebug: debugAttention",
             "type": "debugpy",
             "request": "launch",
-            "program": "${workspaceFolder}/Runtime/kcg/startup_cluster_tasks.py",
+            "program": "${workspaceFolder}/Runtime/kcg/SimpleLocalTester.py",
             "console": "integratedTerminal",
             "env": {"PYTHONPATH":"${workspaceFolder}/Runtime", "HIP_VISIBLE_DEVICES":"7"},
             "cwd": "${workspaceFolder}/Runtime/kcg",
-            "python": "/home/xushilong/anaconda3/envs/py310/bin/python"
+            "python": "/home/xushilong/anaconda3/envs/torch-mlir/bin/python",
+            "args": ["/home/xushilong/DeepGen/TuningConfigs/attn_llama2.json", "/home/xushilong/DeepGen/_cluster_run/temp.json", "0", "1", "0", "1.5"]
         },
         {
             "name": "Python Debugger: main_process.py",

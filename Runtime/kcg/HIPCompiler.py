@@ -3,6 +3,7 @@ from enum import Enum
 import subprocess
 import tempfile
 import math
+import kcg.Utils as kcg_utils
 
 dirname = os.path.dirname(os.path.realpath(__file__))
 
@@ -33,7 +34,8 @@ __device__ __forceinline__ void VecCpy<1>(float* a, float* b) {{
   (reinterpret_cast<float*>(a)[0]) = (reinterpret_cast<float*>(b)[0]);
 }} 
 extern "C" __global__
-void {kernelName}(float* Q, float* K, float* V, float* O) {{
+void {kernelName}(float* Q, float* K, float* V, float* O) 
+{{
   const int warp_id = threadIdx.x / {args["WarpSize"]};
   const int lane_id = threadIdx.x % {args["WarpSize"]};
   const int warp_y = warp_id / {args["BlockLayoutXP"]};
@@ -278,8 +280,9 @@ void {kernelName}(float* Q, float* K, float* V, float* O) {{
   return code
 
 class HIPCompiler:
-  def __init__(self, arch="906"):
+  def __init__(self, arch="906", index = 0):
     self.arch = f"gfx{arch}:sramecc+:xnack-"
+    self.id = index
   
   def generate(self, kernel, shape, config, kernelName):
     if kernel == Kernel.Attention:
@@ -342,30 +345,47 @@ class HIPCompiler:
       # print(args)
       return makeAttnSrc(args=args,kernelName=kernelName)
     
-  def build(self, kernel, shape, config, hsacopath, kernelName):
+  def build(self, kernel, shape, config, hsacopath, kernelName, isFastCompile = True):
     code = self.generate( kernel, shape, config, kernelName)
     # print(code)
     with tempfile.TemporaryDirectory() as tmpdir:
-      src_path = os.path.join(tmpdir, "main.cpp")
-      with open(src_path, "w") as f:
-        f.write(code)
-      hsaco = os.path.join(dirname, "tmp/attn.hsaco")  # 这修改hsaco生成地址
+      # tmpdir = str(kcg_utils.PathManager.tmp_dir())
+      src_path = f"{tmpdir}/att_main.cpp"
+      with open(src_path, "w+") as f:
+          f.write(code)
+      # hsaco = os.path.join(tmpdir, "/attn.hsaco")  # 这修改hsaco生成地址
       hipcc = "/opt/dtk/hip/bin/hipcc"
       if 'HIP_PATH' in os.environ:
-        # print(os.getenv("HIP_PATH"))
-        hipcc = os.path.join(os.getenv("HIP_PATH"), "bin/hipcc")
-      cmd = [hipcc, 
-             "-c", 
-             "--genco", 
-             f"--offload-arch={self.arch}", 
-             "-O3", 
-             "-ffast-math", 
-             "-g0", 
-             "-o", hsacopath, src_path]
-      ret = subprocess.check_call(cmd)
-      if ret == 0:
-        return hsacopath
-    return None
+          # print(os.getenv("HIP_PATH"))
+          hipcc = os.path.join(os.getenv("HIP_PATH"), "bin/hipcc")
+      if isFastCompile:
+          print("--- Fast compile ---",flush=True)
+          cmd = [hipcc, 
+                  "-c", 
+                  "-w",
+                  "--genco", 
+                  f"--offload-arch=gfx906", 
+                  "-fno-unroll-loops", 
+                  "-g0", 
+                  "-o", hsacopath, src_path]
+          timeout = 30
+      else:
+          print("--- FullOpt compile ---",flush=True)
+          cmd = [hipcc, 
+                  "-c", 
+                  "--genco", 
+                  f"--offload-arch=gfx906", 
+                  "-O1", 
+                  "-ffast-math", 
+                  "-g0", 
+                  "-o", hsacopath, src_path]
+          timeout = 60 * 20
+      try:
+          subprocess.run(cmd,timeout=timeout, check=True)
+      except Exception as err:
+          print(f"Exception occur : {err}")
+          return None
+      return hsacopath
 
 
 # if __name__ == "__main__":
