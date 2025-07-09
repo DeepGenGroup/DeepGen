@@ -374,6 +374,20 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
   }
 };
 
+static NVVM::ShflKind convertShflKind(gpu::ShuffleMode mode) {
+  switch (mode) {
+  case gpu::ShuffleMode::XOR:
+    return NVVM::ShflKind::bfly;
+  case gpu::ShuffleMode::UP:
+    return NVVM::ShflKind::up;
+  case gpu::ShuffleMode::DOWN:
+    return NVVM::ShflKind::down;
+  case gpu::ShuffleMode::IDX:
+    return NVVM::ShflKind::idx;
+  }
+  llvm_unreachable("unknown shuffle mode");
+}
+
 struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp> {
   using ConvertOpToLLVMPattern<gpu::ShuffleOp>::ConvertOpToLLVMPattern;
 
@@ -553,7 +567,7 @@ struct LLVMFuncOpAddGPUAttrPass : public PassWrapper<LLVMFuncOpAddGPUAttrPass, O
       auto reqdAttr =  DenseI32ArrayAttr::get(funcOp->getContext(), llvm::ArrayRef<int32_t>({flatSize,1,1}));
       if (target == Target::CUDA) {
         funcOp->setAttr(mlir::NVVM::NVVMDialect::getKernelFuncAttrName(), builder.getIntegerAttr(builder.getI1Type(), 1));
-        funcOp->setAttr(mlir::NVVM::NVVMDialect::getMaxntidAttrName(), builder.getI32ArrayAttr(flatSize));
+        funcOp->setAttr(mlir::NVVM::NVVMDialect::getMaxntidAttrName(), reqdAttr);
       } else {
         funcOp->setAttr(ROCDL::ROCDLDialect::getKernelFuncAttrName(), builder.getIntegerAttr(builder.getI1Type(), 1));
         funcOp->setAttr(ROCDL::ROCDLDialect::getReqdWorkGroupSizeAttrName(), reqdAttr);
