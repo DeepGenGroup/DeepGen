@@ -294,12 +294,14 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   return true;
 }
 
-std::string KernelCodeGenerator::readMLIRAndLowering(const std::string& filePath) {
+std::string KernelCodeGenerator::readMLIRAndLowering(const std::string& filePath, bool isLLVM) {
   // read mlir file
   mlir::OwningOpRef<mlir::ModuleOp> mod = parseSourceFile<mlir::ModuleOp>(filePath, &(this->context));
   mlir::ModuleOp module = *mod;
-  this->transform(module);
-  this->lowering_(module);
+  if(!isLLVM){
+    this->transform(module);
+    this->lowering_(module);
+  }
   LOG_DEBUG("===== llvm: =======\n", module);
   auto path = this->translate(module);
   return path;

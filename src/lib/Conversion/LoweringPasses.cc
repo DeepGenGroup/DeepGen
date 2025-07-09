@@ -544,12 +544,22 @@ struct LLVMFuncOpAddGPUAttrPass : public PassWrapper<LLVMFuncOpAddGPUAttrPass, O
     auto module = dyn_cast<ModuleOp>(getOperation());
     OpBuilder builder(module);
     module.walk<WalkOrder::PreOrder>([&](LLVM::LLVMFuncOp funcOp) {
-      if (target == Target::CUDA) {
-        funcOp->setAttr(AttrCUDAKernelFunc, builder.getIntegerAttr(builder.getI1Type(), 1));
-      } else {
-        funcOp->setAttr(AttrROCmKernelFunc, builder.getIntegerAttr(builder.getI1Type(), 1));
+      auto blockdims = mlir::dyn_cast<DenseI32ArrayAttr>(funcOp->getAttr(AttrBlockDim)); 
+      int32_t flatSize = 1;
+      auto len = blockdims.asArrayRef().size();
+      for (int32_t size : blockdims.asArrayRef()) {
+        flatSize *= size;
       }
-      // funcOp->setAttr(AttrMaxBlockThreads, builder.getI32ArrayAttr(256));  // 这个固定了
+      auto reqdAttr =  DenseI32ArrayAttr::get(funcOp->getContext(), llvm::ArrayRef<int32_t>({flatSize,1,1}));
+      if (target == Target::CUDA) {
+        funcOp->setAttr(mlir::NVVM::NVVMDialect::getKernelFuncAttrName(), builder.getIntegerAttr(builder.getI1Type(), 1));
+        funcOp->setAttr(mlir::NVVM::NVVMDialect::getMaxntidAttrName(), builder.getI32ArrayAttr(flatSize));
+      } else {
+        funcOp->setAttr(ROCDL::ROCDLDialect::getKernelFuncAttrName(), builder.getIntegerAttr(builder.getI1Type(), 1));
+        funcOp->setAttr(ROCDL::ROCDLDialect::getReqdWorkGroupSizeAttrName(), reqdAttr);
+        StringAttr flatSizeAttr = StringAttr::get(funcOp->getContext(), Twine(flatSize) + "," + Twine(flatSize));
+        funcOp->setAttr(ROCDL::ROCDLDialect::getFlatWorkGroupSizeAttrName(),flatSizeAttr);
+      }
     });
   }
 };

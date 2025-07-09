@@ -19,8 +19,8 @@ def test_attention(devid) :
 
     op = attnOp.AttentionOp()
     # binpath = "/home/xushilong/DeepGen/_tmp/test.hsaco"
-    binpath = "/home/xushilong/DeepGen/_tmp/kernelatt.hsaco"
-    func_name = "kcg_Attention_1_32_2048_128_Br32Bc32Hd128_Sa8Sb8PTr4PTc4OTr8OTc8GLWQ4GLWK4GLWV4BLPY1BLPX1WLPY8WLPX8BSWQ4BSWK4WSWQ2WSWK4BLOY1BLOX1WLOY4WLOX16BSWP8BSWV2WSWP2WSWV1Un16W64LCP1LCO1SPP0RPP0RPO0"
+    binpath = "/tmp/kcg_kernel-f9490e.hsaco"
+    func_name = "kcg_Attention_1_32_2048_128_Br32Bc64Hd128_Sa16Sb8PTr4PTc4OTr4OTc8GLWQ4GLWK4GLWV4BLPY2BLPX1WLPY4WLPX16BSWQ4BSWK2WSWQ1WSWK1BLOY1BLOX2WLOY8WLOX8BSWP4BSWV2WSWP1WSWV1Un16W64LCP1LCO1SPP0RPP0RPO0"
     dtypes = [torch.float32]
     backend = EnumBackendType.HIP
         
@@ -33,10 +33,10 @@ def test_attention(devid) :
             return O
         # t = perf(attnFunc, inputs)
         return attnFunc(*inputs)
-  
     kc = KernelConfigs(binpath, func_name, dtypes, backend)
+    # func.block.dim = array<i32: 128>, func.grid.dim = array<i32: 64, 32, 1>
     kc.m_gridDims = [64,32,1]
-    kc.m_blockDims = [64,1,1]
+    kc.m_blockDims = [128,1,1]
     kernel = op.GetCompiledKernel(kc,devid)
     # test 8x16
 
@@ -79,30 +79,30 @@ def test_attention(devid) :
         print("test error!")
     print(f'eps_ours = {eps}, eps_baseline = {eps_0}, acc = {eps_0/eps}')
     
-# if __name__ == "__main__" :
-#     devid = 7
-#     DeviceInfo.init_cuda([devid])
-#     test_attention(devid)
-    
 if __name__ == "__main__" :
-    binpath = sys.argv[1]
     devid = 7
-    op = testOp.ReduceOp()
-    # binpath = "/tmp/kcg_kernel-336c5b.hsaco"
-    
-    func_name = "reduce"
-    dtypes = [torch.float32]
-    backend = EnumBackendType.HIP
-    
-    kc = KernelConfigs(binpath, func_name, dtypes, backend)
-    kc.m_gridDims = [2,1,1]
-    kc.m_blockDims = [64,1,1]
-    kernel = op.GetCompiledKernel(kc,devid)
-    # test 8x16
     DeviceInfo.init_cuda([devid])
-    a = torch.ones((8,16),dtype=torch.float32,device=f'cuda:{devid}')
-    b = torch.empty((8,16),dtype=torch.float32,device=f'cuda:{devid}')
-    kernel.run(a,b)
-    print("a = ",a)
-    print("b = ",b)
+    test_attention(devid)
+    
+# if __name__ == "__main__" :
+#     binpath = sys.argv[1]
+#     devid = 7
+#     op = testOp.ReduceOp()
+#     # binpath = "/tmp/kcg_kernel-336c5b.hsaco"
+    
+#     func_name = "reduce"
+#     dtypes = [torch.float32]
+#     backend = EnumBackendType.HIP
+    
+#     kc = KernelConfigs(binpath, func_name, dtypes, backend)
+#     kc.m_gridDims = [2,1,1]
+#     kc.m_blockDims = [64,1,1]
+#     kernel = op.GetCompiledKernel(kc,devid)
+#     # test 8x16
+#     DeviceInfo.init_cuda([devid])
+#     a = torch.ones((8,16),dtype=torch.float32,device=f'cuda:{devid}')
+#     b = torch.empty((8,16),dtype=torch.float32,device=f'cuda:{devid}')
+#     kernel.run(a,b)
+#     print("a = ",a)
+#     print("b = ",b)
     

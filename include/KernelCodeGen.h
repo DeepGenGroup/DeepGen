@@ -33,6 +33,8 @@ namespace KernelCodeGen {
       context.getOrLoadDialect<mlir::func::FuncDialect>();
       context.getOrLoadDialect<mlir::arith::ArithDialect>();
       context.getOrLoadDialect<mlir::gpu::GPUDialect>();
+      context.getOrLoadDialect<mlir::ROCDL::ROCDLDialect>();
+      context.getOrLoadDialect<mlir::NVVM::NVVMDialect>();
       context.getOrLoadDialect<mlir::vector::VectorDialect>();
       context.getOrLoadDialect<mlir::scf::SCFDialect>();
       context.getOrLoadDialect<mlir::math::MathDialect>();
@@ -72,7 +74,7 @@ namespace KernelCodeGen {
 
     bool lowering_(mlir::ModuleOp& mod);
 
-    std::string readMLIRAndLowering(const std::string& filePath);
+    std::string readMLIRAndLowering(const std::string& filePath, bool isLLVM = false);
 
     bool lowering(mlir::ModuleOp& mod/*, std::vector<int>& griddims, std::vector<int>& blockdims, int& shmbytes*/);
 
