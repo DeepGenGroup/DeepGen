@@ -110,7 +110,7 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
 #if READ
 
 int main(int argc, char* argv[]) {
-  generator.setPaltform(Target::ROCm, "906");
+  generator.setPaltform(Target::CUDA, "80");
   bool isLLVM = (std::string(argv[2]) == "llvm");
   auto path = generator.readMLIRAndLowering(argv[1], isLLVM);
   llvm::outs() << "path: " << path << "\n";
@@ -120,7 +120,7 @@ int main(int argc, char* argv[]) {
 #else
 
 int main() {
-  std::vector<int64_t> shape{1, 1, 128, 128};
+  std::vector<int64_t> shape{1, 32, 2048, 128};
   // generator.setPaltform(Target::CUDA, "90");
   // TuneConfig attn_cfg = {
   //   {"attention", 
@@ -139,25 +139,26 @@ int main() {
   //      {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 8}, {"WARP_SCATTER_WIDTH_P", 2}, {"WARP_SCATTER_WIDTH_V", 4},
   //      {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
   // };
-  generator.setPaltform(Target::ROCm, "906");
+  generator.setPaltform(Target::CUDA, "80");
+  // 
   TuneConfig attn_cfg = {
     {"attention", 
-      {{"Br", 64}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 16}, 
+      {{"Br", 32}, {"Bc", 64}, {"Hd", 128}, {"Slice1", 16}, {"Slice2", 8}, 
        {"PTr", 4}, {"PTc", 4}, {"OTr", 4}, {"OTc", 8}, 
        // global to shared
        {"GLOB_LOAD_WIDTH_Q", 4}, {"GLOB_LOAD_WIDTH_K", 4}, {"GLOB_LOAD_WIDTH_V", 4}, 
        {"LOAD_CONTINUOUS_P", 1}, {"LOAD_CONTINUOUS_O", 1}, 
        // prefecth
-       {"SHARED_PREFETCH_P", 1}, {"REG_PREFETCH_P", 1}, {"SHARED_PREFETCH_O", 1}, {"REG_PREFETCH_O", 1},
+       {"SHARED_PREFETCH_P", 0}, {"REG_PREFETCH_P", 0}, {"SHARED_PREFETCH_O", 0}, {"REG_PREFETCH_O", 0},
        // P = Q * K
-       {"BLOCK_LAYOUT_P_Y", 4}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 4}, {"WARP_LAYOUT_P_X", 16},
-       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 4}, {"WARP_SCATTER_WIDTH_Q", 2}, {"WARP_SCATTER_WIDTH_K", 2},
+       {"BLOCK_LAYOUT_P_Y", 4}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 2}, {"WARP_LAYOUT_P_X", 16},
+       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
        // O = P * V
-       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 2}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 8},
-       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 8}, {"WARP_SCATTER_WIDTH_P", 2}, {"WARP_SCATTER_WIDTH_V", 4},
-       {"WARP_SIZE", 64}, {"UNROLL_NUM", 16}}}
+       {"BLOCK_LAYOUT_O_Y", 1}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
+       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
+       {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
   };
   std::string path = attention(shape, attn_cfg);
-  llvm::outs() << "DCU hsaco file path: " << path << "\n";
+  llvm::outs() << "kernel binary file path: " << path << "\n";
 }
 #endif

@@ -246,6 +246,7 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   mlir::PassManager pm1(context);
   // affine to scf/vector
   pm1.addPass(mlir::createLowerAffinePass());
+  pm1.addPass(mlir::createConvertVectorToGPUPass());
   pm1.addNestedPass<func::FuncOp>(mlir::createLoopInvariantCodeMotionPass());
   pm1.addPass(mlir::createCanonicalizerPass());         // 代数简化、死代码消除、冗余操作合并
   pm1.addPass(mlir::createCSEPass());                   // 冗余消除

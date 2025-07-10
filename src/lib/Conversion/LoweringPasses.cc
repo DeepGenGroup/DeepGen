@@ -463,6 +463,185 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
   }
 };
 
+
+LLVM::LLVMFuncOp getOrDefineFunction(mlir::ModuleOp moduleOp,
+                                           Location loc, OpBuilder &b,
+                                           StringRef name,
+                                           LLVM::LLVMFunctionType type) {
+  LLVM::LLVMFuncOp ret;
+  if (!(ret = moduleOp.template lookupSymbol<LLVM::LLVMFuncOp>(name))) {
+    OpBuilder::InsertionGuard guard(b);
+    b.setInsertionPointToStart(moduleOp.getBody());
+    ret = b.create<LLVM::LLVMFuncOp>(loc, name, type, LLVM::Linkage::External);
+  }
+  return ret;
+}
+
+SmallString<16> getUniqueSymbolName(mlir::ModuleOp moduleOp,
+                                           StringRef prefix) {
+  // Get a unique global name.
+  unsigned stringNumber = 0;
+  SmallString<16> stringConstName;
+  do {
+    stringConstName.clear();
+    (prefix + Twine(stringNumber++)).toStringRef(stringConstName);
+  } while (moduleOp.lookupSymbol(stringConstName));
+  return stringConstName;
+}
+
+LLVM::GlobalOp getOrCreateStringConstant(OpBuilder &b, Location loc,
+                                mlir::ModuleOp moduleOp, Type llvmI8,
+                                StringRef namePrefix, StringRef str,
+                                uint64_t alignment = 0, unsigned addrSpace = 0) {
+  llvm::SmallString<20> nullTermStr(str);
+  nullTermStr.push_back('\0'); // Null terminate for C
+  auto globalType =
+      LLVM::LLVMArrayType::get(llvmI8, nullTermStr.size_in_bytes());
+  StringAttr attr = b.getStringAttr(nullTermStr);
+
+  // Try to find existing global.
+  for (auto globalOp : moduleOp.getOps<LLVM::GlobalOp>())
+    if (globalOp.getGlobalType() == globalType && globalOp.getConstant() &&
+        globalOp.getValueAttr() == attr &&
+        globalOp.getAlignment().value_or(0) == alignment &&
+        globalOp.getAddrSpace() == addrSpace)
+      return globalOp;
+
+  // Not found: create new global.
+  OpBuilder::InsertionGuard guard(b);
+  b.setInsertionPointToStart(moduleOp.getBody());
+  SmallString<16> name = getUniqueSymbolName(moduleOp, namePrefix);
+  return b.create<LLVM::GlobalOp>(loc, globalType,
+                                  /*isConstant=*/true, LLVM::Linkage::Internal,
+                                  name, attr, alignment, addrSpace);
+}
+
+// for HIP printop lowering
+struct GPUPrintfOpToLLVMCallLowering
+    : public ConvertOpToLLVMPattern<gpu::PrintfOp> {
+  GPUPrintfOpToLLVMCallLowering(const LLVMTypeConverter &converter,
+                                int addressSpace = 0)
+      : ConvertOpToLLVMPattern<gpu::PrintfOp>(converter),
+        addressSpace(addressSpace) {}
+
+  LogicalResult
+  matchAndRewrite(gpu::PrintfOp gpuPrintfOp, gpu::PrintfOpAdaptor adaptor,
+                  ConversionPatternRewriter &rewriter) const override
+  {
+    Location loc = gpuPrintfOp->getLoc();
+
+    mlir::Type llvmI8 = typeConverter->convertType(rewriter.getIntegerType(8));
+    mlir::Type ptrType =
+        LLVM::LLVMPointerType::get(rewriter.getContext(), addressSpace);
+
+    // Note: this is the GPUModule op, not the ModuleOp that surrounds it
+    // This ensures that global constants and declarations are placed within
+    // the device code, not the host code
+    auto moduleOp = gpuPrintfOp->getParentOfType<mlir::ModuleOp>();
+
+    auto printfType =
+        LLVM::LLVMFunctionType::get(rewriter.getI32Type(), {ptrType},
+                                    /*isVarArg=*/true);
+    LLVM::LLVMFuncOp printfDecl =
+        getOrDefineFunction(moduleOp, loc, rewriter, "printf", printfType);
+
+    // Create the global op or find an existing one.
+    LLVM::GlobalOp global = getOrCreateStringConstant(
+        rewriter, loc, moduleOp, llvmI8, "printfFormat_", adaptor.getFormat(),
+        /*alignment=*/0, addressSpace);
+
+    // Get a pointer to the format string's first element
+    Value globalPtr = rewriter.create<LLVM::AddressOfOp>(
+        loc,
+        LLVM::LLVMPointerType::get(rewriter.getContext(), global.getAddrSpace()),
+        global.getSymNameAttr());
+    Value stringStart =
+        rewriter.create<LLVM::GEPOp>(loc, ptrType, global.getGlobalType(),
+                                    globalPtr, ArrayRef<LLVM::GEPArg>{0, 0});
+
+    // Construct arguments and function call
+    auto argsRange = adaptor.getArgs();
+    SmallVector<Value, 4> printfArgs;
+    printfArgs.reserve(argsRange.size() + 1);
+    printfArgs.push_back(stringStart);
+    printfArgs.append(argsRange.begin(), argsRange.end());
+
+    rewriter.create<LLVM::CallOp>(loc, printfDecl, printfArgs);
+    rewriter.eraseOp(gpuPrintfOp);
+    return success();
+  }
+
+private:
+  int addressSpace;
+};
+
+// for CUDA printop lowering
+struct GPUPrintfOpToVPrintfLowering
+    : public ConvertOpToLLVMPattern<gpu::PrintfOp> {
+  using ConvertOpToLLVMPattern<gpu::PrintfOp>::ConvertOpToLLVMPattern;
+
+  LogicalResult
+  matchAndRewrite(gpu::PrintfOp gpuPrintfOp, gpu::PrintfOpAdaptor adaptor, ConversionPatternRewriter &rewriter) const override
+  {
+    Location loc = gpuPrintfOp->getLoc();
+
+    mlir::Type llvmI8 = typeConverter->convertType(rewriter.getIntegerType(8));
+    mlir::Type ptrType = LLVM::LLVMPointerType::get(rewriter.getContext());
+
+    // Note: this is the GPUModule op, not the ModuleOp that surrounds it
+    // This ensures that global constants and declarations are placed within
+    // the device code, not the host code
+    auto moduleOp = gpuPrintfOp->getParentOfType<mlir::ModuleOp>();
+
+    auto vprintfType =
+        LLVM::LLVMFunctionType::get(rewriter.getI32Type(), {ptrType, ptrType});
+    LLVM::LLVMFuncOp vprintfDecl =
+        getOrDefineFunction(moduleOp, loc, rewriter, "vprintf", vprintfType);
+
+    // Create the global op or find an existing one.
+    LLVM::GlobalOp global = getOrCreateStringConstant(
+        rewriter, loc, moduleOp, llvmI8, "printfFormat_", adaptor.getFormat());
+
+    // Get a pointer to the format string's first element
+    Value globalPtr = rewriter.create<LLVM::AddressOfOp>(loc, global);
+    Value stringStart =
+        rewriter.create<LLVM::GEPOp>(loc, ptrType, global.getGlobalType(),
+                                    globalPtr, ArrayRef<LLVM::GEPArg>{0, 0});
+    SmallVector<Type> types;
+    SmallVector<Value> args;
+    // Promote and pack the arguments into a stack allocation.
+    for (Value arg : adaptor.getArgs()) {
+      Type type = arg.getType();
+      Value promotedArg = arg;
+      assert(type.isIntOrFloat());
+      if (isa<FloatType>(type)) {
+        type = rewriter.getF64Type();
+        promotedArg = rewriter.create<LLVM::FPExtOp>(loc, type, arg);
+      }
+      types.push_back(type);
+      args.push_back(promotedArg);
+    }
+    Type structType =
+        LLVM::LLVMStructType::getLiteral(gpuPrintfOp.getContext(), types);
+    Value one = rewriter.create<LLVM::ConstantOp>(loc, rewriter.getI64Type(),
+                                                  rewriter.getIndexAttr(1));
+    Value tempAlloc =
+        rewriter.create<LLVM::AllocaOp>(loc, ptrType, structType, one,
+                                        /*alignment=*/0);
+    for (auto [index, arg] : llvm::enumerate(args)) {
+      Value ptr = rewriter.create<LLVM::GEPOp>(
+          loc, ptrType, structType, tempAlloc,
+          ArrayRef<LLVM::GEPArg>{0, static_cast<int32_t>(index)});
+      rewriter.create<LLVM::StoreOp>(loc, arg, ptr);
+    }
+    std::array<Value, 2> printfArgs = {stringStart, tempAlloc};
+
+    rewriter.create<LLVM::CallOp>(loc, vprintfDecl, printfArgs);
+    rewriter.eraseOp(gpuPrintfOp);
+    return success();
+  }
+};
+
 // 将gpu barrier转成rocdl的barrier
 struct GPUBarrierToROCDLLowering : public OpRewritePattern<gpu::BarrierOp> {
   using OpRewritePattern<gpu::BarrierOp>::OpRewritePattern;
@@ -523,6 +702,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                ROCDL::BlockIdYOp, ROCDL::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, ROCDL::ThreadIdXOp,
                                                ROCDL::ThreadIdYOp, ROCDL::ThreadIdZOp>>(typeConverter, AttrBlockDim);
+      patterns.add<GPUPrintfOpToLLVMCallLowering>(typeConverter);
       patterns.add<GPUShuffleOpToROCDLLowering>(typeConverter);
       patterns.add<GPUBarrierToROCDLLowering>(&getContext());
       populateMathToROCDLConversionPatterns(typeConverter, patterns);  // exp仅支持fp64/16
@@ -532,6 +712,7 @@ struct GPUToROCDLOrNVVMPass : public PassWrapper<GPUToROCDLOrNVVMPass, Operation
                                                NVVM::BlockIdYOp, NVVM::BlockIdZOp>>(typeConverter, AttrGridDim);
       patterns.add<GPUIndexIntrinsicOpLowering<gpu::ThreadIdOp, NVVM::ThreadIdXOp,
                                                NVVM::ThreadIdYOp, NVVM::ThreadIdZOp>>(typeConverter, AttrBlockDim);
+      patterns.add<GPUPrintfOpToVPrintfLowering>(typeConverter);
       patterns.add<GPUShuffleOpToNVVMLowering>(typeConverter);
       patterns.add<GPUBarrierToNVVMLowering>(&getContext());
       populateLibDeviceConversionPatterns(typeConverter, patterns, /*benefit*/10);  // 大部分只支持fp32/fp16
