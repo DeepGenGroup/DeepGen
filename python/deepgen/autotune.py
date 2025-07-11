@@ -100,7 +100,7 @@ class CreateAttnConfig:
           for rpp in self.cfg["REG_PREFETCH_P"]:
             for rpo in self.cfg["REG_PREFETCH_O"]:
               for unroll in self.cfg["UNROLL_NUM"]:
-                result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), smem_size))  # 只能连续访存
+                result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), smem_size * self.type_width))  # 只能连续访存
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
     # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg, pf_o))
     return result

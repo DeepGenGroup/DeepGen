@@ -449,7 +449,7 @@ class AttentionOp(OpInterface) :
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             qq = q.transpose(-1,-2).contiguous() 
-            kk = k.transpose(-1,-2).contiguous()
+            kk = k
             d = torch.empty((b0, b1,m,n), dtype=ety, device=f"cuda:{devId}")
             self.InputTensors_Benchmark = [qq,kk,v,d]
         return self.InputTensors_Benchmark
@@ -582,7 +582,7 @@ class AttentionOp(OpInterface) :
         return (self.OutputTensor_Baseline, eps)
     
     def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
-        a,b,c,d = self.GetBenchmarkInputTensor(devId)
+        [a,b,c,d] = self.GetBenchmarkInputTensor(devId)
         # print("a.shape = ",a.shape)
         # print("b.shape = ",b.shape)
         # print("c.shape = ",c.shape)

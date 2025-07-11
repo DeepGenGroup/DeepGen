@@ -15,14 +15,17 @@ def perf(fn) :
     t = st.elapsed_time(et)
     return t
 
-def test_attention(devid) :
+def test_attention(devid, binpath, func_name, isCuda) :
 
     op = attnOp.AttentionOp()
     # binpath = "/home/xushilong/DeepGen/_tmp/test.hsaco"
-    binpath = "/tmp/kcg_kernel-f9490e.hsaco"
-    func_name = "kcg_Attention_1_32_2048_128_Br32Bc64Hd128_Sa16Sb8PTr4PTc4OTr4OTc8GLWQ4GLWK4GLWV4BLPY2BLPX1WLPY4WLPX16BSWQ4BSWK2WSWQ1WSWK1BLOY1BLOX2WLOY8WLOX8BSWP4BSWV2WSWP1WSWV1Un16W64LCP1LCO1SPP0RPP0RPO0"
+    # binpath = "/tmp/kcg_kernel-f9490e.hsaco"
+    # func_name = "kcg_Attention_1_32_2048_128_Br32Bc64Hd128_Sa16Sb8PTr4PTc4OTr4OTc8GLWQ4GLWK4GLWV4BLPY2BLPX1WLPY4WLPX16BSWQ4BSWK2WSWQ1WSWK1BLOY1BLOX2WLOY8WLOX8BSWP4BSWV2WSWP1WSWV1Un16W64LCP1LCO1SPP0RPP0RPO0"
     dtypes = [torch.float32]
-    backend = EnumBackendType.HIP
+    if isCuda:
+        backend = EnumBackendType.CUDA
+    else:
+        backend = EnumBackendType.HIP
         
     def testTorch(inputs):
         def attnFunc(Q, K, V, O):
@@ -82,7 +85,11 @@ def test_attention(devid) :
 if __name__ == "__main__" :
     devid = 7
     DeviceInfo.init_cuda([devid])
-    test_attention(devid)
+    binpath, funcName, backend = sys.argv[1:4]
+    isCuda = True
+    if backend == 'hip':
+        isCuda = False
+    test_attention(devid,binpath, funcName, isCuda)
     
 # if __name__ == "__main__" :
 #     binpath = sys.argv[1]
@@ -92,7 +99,7 @@ if __name__ == "__main__" :
     
 #     func_name = "reduce"
 #     dtypes = [torch.float32]
-#     backend = EnumBackendType.HIP
+#     backend = EnumBackendType.CUDA
     
 #     kc = KernelConfigs(binpath, func_name, dtypes, backend)
 #     kc.m_gridDims = [2,1,1]
@@ -100,7 +107,12 @@ if __name__ == "__main__" :
 #     kernel = op.GetCompiledKernel(kc,devid)
 #     # test 8x16
 #     DeviceInfo.init_cuda([devid])
+    
+    
 #     a = torch.ones((8,16),dtype=torch.float32,device=f'cuda:{devid}')
+#     a[0,2] = 2
+#     a[5,4] = 2
+#     a[6,4] = 2
 #     b = torch.empty((8,16),dtype=torch.float32,device=f'cuda:{devid}')
 #     kernel.run(a,b)
 #     print("a = ",a)

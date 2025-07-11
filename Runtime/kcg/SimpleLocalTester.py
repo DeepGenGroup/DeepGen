@@ -287,7 +287,7 @@ def getInputs() :
 if __name__ == '__main__' :
     cfgFile,result_json_path,start,maxCount,checktflops, checkAcc = getInputs()
     # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
-    # opty = matmul.MatmulOp
+    # opty = kcg_mm.MatmulOp
     opty = kcg_att.AttentionOp
     devId = 7
 

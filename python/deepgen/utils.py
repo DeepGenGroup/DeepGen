@@ -54,7 +54,7 @@ def _build(name, src, srcdir, library_dirs, include_dirs, libraries):
   py_include_dir = sysconfig.get_paths(scheme=scheme)["include"]
   include_dirs = include_dirs + [srcdir, py_include_dir]
   # for -Wno-psabi, see https://gcc.gnu.org/bugzilla/show_bug.cgi?id=111047
-  cc_cmd = [cc, src, "-O3", "-shared", "-fPIC", "-Wno-psabi", "-Wno-unused-result", "-o", so]
+  cc_cmd = ["g++", src, "-O3", "-shared", "-fPIC", "-Wno-psabi", "-Wno-unused-result", "-o", so]
   cc_cmd += [f'-l{lib}' for lib in libraries]
   cc_cmd += [f"-L{dir}" for dir in library_dirs]
   cc_cmd += [f"-I{dir}" for dir in include_dirs if dir is not None]

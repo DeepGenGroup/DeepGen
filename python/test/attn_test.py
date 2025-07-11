@@ -37,11 +37,14 @@ if __name__ == "__main__":
   Q = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
   K = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
   V = torch.randn(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
-  O = torch.empty(bs, hn, sl, hd, dtype=torch.float32, device='cuda').contiguous()
-
+  O = torch.empty(bs, hn, sl, hd, dtype=torch.float32, device='cuda')
   inputs = [Q.transpose(2, 3).contiguous(), K.transpose(2, 3).contiguous(), V, O]
-  O = attnFunc(Q, K, V)
-  print(O)
-
   test(inputs=inputs)
   print(O)
+  O_ = attnFunc(Q, K, V)
+  print(O_)
+  
+  if torch.allclose(O,O_,1e-3,1e-3) :
+    print('test corect!')
+  else:
+    print('test error!')
