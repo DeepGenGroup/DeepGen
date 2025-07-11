@@ -57,6 +57,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             needInfo = next(tsGenerator)
         # for needInfo in tsGenerator :
             print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
+            print(f"shmBytes = ",needInfo.shmBytes) 
+            print(f"blockDims = {needInfo.blockDims}") 
+            print(f"gridDims = {needInfo.gridDims}") 
             # create compile process
             p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index, compileOpt))
             procs.append(p)

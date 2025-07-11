@@ -131,10 +131,12 @@ class Runtime:
     else:
       assert False, f'invalid targetname {target} !'
     mod.set_platform(targetID, match[0])
+    self.set_kernel_name = mod.set_kernel_name
     self.compile_mm = mod.compile_mm
     self.compile_attn = mod.compile_attn
   
   def compile(self, kernel: str, cfg: dict):
+    self.set_kernel_name(kernel)
     if kernel == "matmul":  # compile_mm 应该接受 cfg["type"]
       kernel_dir = self.compile_mm(cfg["shape"], cfg["config"])
     elif kernel == "attention":

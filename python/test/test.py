@@ -56,8 +56,10 @@ if __name__ == "__main__":
   inputs = [Q.transpose(2, 3).contiguous(), K.transpose(2, 3).contiguous(), V, O]
   inputs_ = [Q, K, V, O]
   t = testTorch(inputs=inputs_)
+  print(O)
   print(f"torch time cost: {t} ms")
 
   cfg, t = autoTuneAttn(inputs=inputs)
+  print(O)
   print(f"best config: {cfg}")
   print(f"best time cost: {t} ms")

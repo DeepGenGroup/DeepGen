@@ -53,7 +53,7 @@ def test_attn(Q, K, V, O):
   t = perf(torch_attn, inputs=inputs)
   print(f"torch time cost: {t} ms")
   # auto tune
-  cfg, tt = compile("attention", inputs=our_inputs, target="rocm")
+  cfg, tt = compile("attention", inputs=our_inputs, target="cuda")
   print(f"our best config: {cfg}")
   print(f"our best time cost: {tt} ms")
 

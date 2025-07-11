@@ -152,11 +152,11 @@ int main() {
        {"SHARED_PREFETCH_P", 0}, {"REG_PREFETCH_P", 0}, {"SHARED_PREFETCH_O", 0}, {"REG_PREFETCH_O", 0},
        // P = Q * K
        {"BLOCK_LAYOUT_P_Y", 4}, {"BLOCK_LAYOUT_P_X", 1}, {"WARP_LAYOUT_P_Y", 2}, {"WARP_LAYOUT_P_X", 16},
-       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 1}, {"WARP_SCATTER_WIDTH_K", 1},
+       {"BLOCK_SCATTER_WIDTH_Q", 4}, {"BLOCK_SCATTER_WIDTH_K", 2}, {"WARP_SCATTER_WIDTH_Q", 4}, {"WARP_SCATTER_WIDTH_K", 2},
        // O = P * V
-       {"BLOCK_LAYOUT_O_Y", 1}, {"BLOCK_LAYOUT_O_X", 4}, {"WARP_LAYOUT_O_Y", 8}, {"WARP_LAYOUT_O_X", 4},
-       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 2}, {"WARP_SCATTER_WIDTH_P", 1}, {"WARP_SCATTER_WIDTH_V", 1},
-       {"WARP_SIZE", 32}, {"UNROLL_NUM", 16}}}
+       {"BLOCK_LAYOUT_O_Y", 2}, {"BLOCK_LAYOUT_O_X", 2}, {"WARP_LAYOUT_O_Y", 4}, {"WARP_LAYOUT_O_X", 8},
+       {"BLOCK_SCATTER_WIDTH_P", 4}, {"BLOCK_SCATTER_WIDTH_V", 4}, {"WARP_SCATTER_WIDTH_P", 4}, {"WARP_SCATTER_WIDTH_V", 4},
+       {"WARP_SIZE", 32}, {"UNROLL_NUM", 8}}}
   };
   std::string path = attention(shape, attn_cfg);
   llvm::outs() << "kernel binary file path: " << path << "\n";

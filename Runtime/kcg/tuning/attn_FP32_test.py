@@ -12,7 +12,7 @@ def readConfigJson(path):
   return cfg_dict
 
 class CreateAttnConfig:
-  def __init__(self, cfg_dict ,shape, max_thread=256, type_width=4, smem_size=65536, sm_num=60):
+  def __init__(self, cfg_dict ,shape, max_thread=256, type_width=4, smem_size=65536, sm_num=108):
     self.cfg = cfg_dict
     self.batch, self.head_num, self.seq_len, self.head_dim = shape
     # print(self.seq_len, shape)
@@ -92,51 +92,63 @@ class CreateAttnConfig:
     # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv))
     return result
   
-  # def storeSizeAndOther(self, old_cfgs):
-  #   result = []
-  #   for old_cfg in old_cfgs:
-  #     for spp in self.cfg["SHARED_PREFETCH_P"]:
-  #       smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
-  #                   old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
-  #       if spp == 1:
-  #         smem_size += old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3]
-  #       if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
-  #         for rpp in self.cfg["REG_PREFETCH_P"]:
-  #           for rpo in self.cfg["REG_PREFETCH_O"]:
-  #             for unroll in self.cfg["UNROLL_NUM"]:
-  #               result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), ))  # 只能连续访存
-  #   # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
-  #   # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg, pf_o))
-  #   return result
-
-  def storeSizeAndOther_(self, old_cfgs):
+  def storeSizeAndOther(self, old_cfgs):
     result = []
     for old_cfg in old_cfgs:
-      smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
-                  old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
-      if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
-        result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), smem_size))  # 只能连续访存
+      for spp in self.cfg["SHARED_PREFETCH_P"]:
+        smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+                    old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+        if spp == 1:
+          smem_size += old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3]
+        if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
+          for rpp in self.cfg["REG_PREFETCH_P"]:
+            for rpo in self.cfg["REG_PREFETCH_O"]:
+              for unroll in self.cfg["UNROLL_NUM"]:
+                result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), smem_size))  # 只能连续访存
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
-    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o))
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg, pf_o))
     return result
+
+  # def storeSizeAndOther_(self, old_cfgs):
+  #   result = []
+  #   for old_cfg in old_cfgs:
+  #     smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
+  #                 old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+  #     if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
+  #       result.append(old_cfg + ((16, self.cfg["WARP_SIZE"][0], 1, 1, 0, 0, 0), ))  # 只能连续访存
+  #   # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
+  #   # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg_pf_o))
+  #   return result
   
   def cut(self, old_cfgs):
     result = []
+    # max_util = 0
+    # for old in old_cfgs:
+    #   # print(old)
+    #   sm_util = (self.seq_len / old[1][0])
+    #   if (sm_util >= max_util):
+    #     max_util = sm_util
+    
     for old in old_cfgs:
       # print(old)
-      sm_util = (self.seq_len / old[1][0])
+      # sm_util = (self.seq_len / old[1][0])  # block_num
       # sm占用率 / 离散化约束
-      if (sm_util >= self.sm_num):
-        br_div_bk = old[1][0] / 32  #  br / bank num(32)
-        bc_div_bk = old[1][1] / 32  #  br / bank num(32)
-        hd_div_bk = old[1][2] / 32  #  hd / bank num(32)
-        brep_q = old[2][0] / old[4][4]
-        brep_k = old[2][1] / old[4][5]
-        brep_p = old[2][2] / old[5][4]
-        brep_v = old[2][3] / old[5][5]
-        if (brep_q == br_div_bk and brep_k == bc_div_bk and brep_p == br_div_bk and brep_v == hd_div_bk):
-          # if old[4][4] == old[4][6] and old[4][5] == old[4][7] and old[5][4] == old[5][6] and old[5][5] == old[5][7]:
-          result.append(old)
+      # if (sm_util == max_util):
+      rep_p_y = (old[2][0] // old[4][4]) * (old[4][4] // old[4][6])  # (ptr / bswq) * (bswq / wswq)
+      rep_p_x = (old[2][1] // old[4][5]) * (old[4][5] // old[4][7])  # (ptc / bswk) * (bswk / wswk)
+      rep_o_y = (old[2][2] // old[5][4]) * (old[5][4] // old[5][6])  # (otr / bswp) * (bswp / wswp)
+      rep_o_x = (old[2][3] // old[5][5]) * (old[5][5] // old[5][7])  # (otc / bswv) * (bswv / wswv)
+      best_rep_p_y = (old[4][2] * old[2][0] * (4 // self.type_width)) // 32  # wly * ptr * (fp32w / typew) / 32
+      best_rep_p_x = (old[4][3] * old[2][1] * (4 // self.type_width)) // 32  # wly * ptr * (fp32w / typew) / 32
+      best_rep_o_y = (old[5][2] * old[2][2] * (4 // self.type_width)) // 32  # wly * otr * (fp32w / typew) / 32
+      best_rep_o_x = (old[5][3] * old[2][3] * (4 // self.type_width)) // 32  # wly * otc * (fp32w / typew) / 32
+      best_rep_p_y = 1 if best_rep_p_y == 0 else best_rep_p_y
+      best_rep_p_x = 1 if best_rep_p_x == 0 else best_rep_p_x
+      best_rep_o_y = 1 if best_rep_o_y == 0 else best_rep_o_y
+      best_rep_o_x = 1 if best_rep_o_x == 0 else best_rep_o_x
+      # print(rep_p_y, best_rep_p_y, rep_p_x, best_rep_p_x, rep_o_y, best_rep_o_y, rep_o_x, best_rep_o_x)
+      if rep_p_y == best_rep_p_y and rep_p_x == best_rep_p_x and rep_o_y == best_rep_o_y and rep_o_x == best_rep_o_x:
+        result.append(old)
     return result
 
     
@@ -145,13 +157,13 @@ class CreateAttnConfig:
     result = self.blockTile(result)
     result = self.layoutAndScatterP(result)
     result = self.layoutAndScatterO(result)
-    # result = self.storeSizeAndOther(result)
-    result = self.storeSizeAndOther_(result)
+    result = self.storeSizeAndOther(result)
     result = self.cut(result)
     if len(result):
       return result
     return None
-  
+
+ 
 class CreateConfig:
   def __init__(self, json_path, shape):
     f = open(json_path, "r")
