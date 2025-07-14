@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 set(CMAKE_CXX_COMPILER /usr/bin/g++)
 set(CMAKE_C_COMPILER /usr/bin/gcc)
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/llvm-install")
+set(LLVM_INSTALL_DIR "/home/xushilong/llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 # set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
 # After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available
@@ -45,7 +45,6 @@ endif()
 # message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
-option(DEBUG_MODE "Enable debug log & add -g compile option" OFF)
 # close some warnings
 add_compile_options(
   -Wno-maybe-uninitialized
@@ -95,12 +94,16 @@ else()
   set(MLIR_INCLUDE_DIRS "${MLIR_INCLUDE_DIR};${MLIR_GENERATED_INCLUDE_DIR}")
 endif()
 
-if(DEBUG_MODE)
-message(STATUS "==== enable debug_log =======")
-add_definitions(-DKCG_DEBUG)
-add_compile_options(-g)
+if(CMAKE_BUILD_TYPE STREQUAL "" )
+set(CMAKE_BUILD_TYPE "Debug")
+endif()
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  message(STATUS "==== enable debug_log =======")
+  add_definitions(-DKCG_DEBUG)
+  add_compile_options(-g)
 else()
-message(STATUS "==== disable debug_log =======")
+  message(STATUS "==== disable debug_log =======")
 endif()
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
