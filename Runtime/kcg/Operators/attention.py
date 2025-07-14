@@ -573,7 +573,8 @@ class AttentionOp(OpInterface) :
         ev_end = torch.cuda.Event(enable_timing=True)
         d = q.shape[1] * q.shape[3]
         ev_start.record()
-        p = torch.matmul(q, k) / math.sqrt(d)
+        p = torch.matmul(q, k) 
+        # p = p / math.sqrt(d)
         s = F.softmax(p, dim=-1)
         self.OutputTensor_Baseline = torch.matmul(s,v)
         ev_end.record()
