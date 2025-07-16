@@ -82,39 +82,42 @@ def test_attention(devid, binpath, func_name, isCuda) :
         print("test error!")
     print(f'eps_ours = {eps}, eps_baseline = {eps_0}, acc = {eps_0/eps}')
     
-if __name__ == "__main__" :
-    devid = 7
-    DeviceInfo.init_cuda([devid])
-    binpath, funcName, backend = sys.argv[1:4]
-    isCuda = True
-    if backend == 'hip':
-        isCuda = False
-    test_attention(devid,binpath, funcName, isCuda)
-    
 # if __name__ == "__main__" :
-#     binpath = sys.argv[1]
 #     devid = 7
-#     op = testOp.ReduceOp()
-#     # binpath = "/tmp/kcg_kernel-336c5b.hsaco"
-    
-#     func_name = "reduce"
-#     dtypes = [torch.float32]
-#     backend = EnumBackendType.CUDA
-    
-#     kc = KernelConfigs(binpath, func_name, dtypes, backend)
-#     kc.m_gridDims = [2,1,1]
-#     kc.m_blockDims = [64,1,1]
-#     kernel = op.GetCompiledKernel(kc,devid)
-#     # test 8x16
 #     DeviceInfo.init_cuda([devid])
+#     binpath, funcName, backend = sys.argv[1:4]
+#     isCuda = True
+#     if backend == 'hip':
+#         isCuda = False
+#     test_attention(devid,binpath, funcName, isCuda)
     
+if __name__ == "__main__" :
+    if len(sys.argv) < 2 :
+        print("usage : kernelBinPath")
+        sys.exit()
+    binpath = sys.argv[1]
+    devid = 7
+    op = testOp.BroadcastOp()
     
-#     a = torch.ones((8,16),dtype=torch.float32,device=f'cuda:{devid}')
-#     a[0,2] = 2
-#     a[5,4] = 2
-#     a[6,4] = 2
-#     b = torch.empty((8,16),dtype=torch.float32,device=f'cuda:{devid}')
-#     kernel.run(a,b)
-#     print("a = ",a)
-#     print("b = ",b)
+    func_name = "broadcast"
+    dtypes = [torch.float32]
+    backend = EnumBackendType.HIP
+    
+    kc = KernelConfigs(binpath, func_name, dtypes, backend)
+    kc.m_gridDims = [2,1,1]
+    kc.m_blockDims = [64,1,1]
+    kernel = op.GetCompiledKernel(kc,devid)
+    # test 8x16
+    DeviceInfo.init_cuda([devid])
+    
+    tensorSHape = (32,4)
+    a = torch.ones(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
+    for i in range(0,tensorSHape[0]) :
+        a[i,0] = i+10
+    # b = torch.empty(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
+    print("original a = ",a)
+    kernel.run(a)
+    print("result a = ",a)
+    # print("b = ",b)
+    
     
