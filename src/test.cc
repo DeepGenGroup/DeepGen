@@ -110,7 +110,7 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
 #if READ
 
 int main(int argc, char* argv[]) {
-  generator.setPaltform(Target::CUDA, "80");
+  generator.setPaltform(Target::ROCm, "906");
   bool isLLVM = (std::string(argv[2]) == "llvm");
   auto path = generator.readMLIRAndLowering(argv[1], isLLVM);
   llvm::outs() << "path: " << path << "\n";

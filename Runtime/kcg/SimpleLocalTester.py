@@ -117,6 +117,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
         with open(save_to,'r') as f:
             obj = json.load(f)
             maxSppedups = obj['testResult']
+            f.close()
     for pkl in pkls :
         try:
             (ba ,config ) = deserialize_from_file(pkl) 
@@ -160,7 +161,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             acc = 0
             if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
                 acc = t0 / t
-                print(f"Test Correct! speedup = {acc}")
+                print(f"Test Correct! {op.GetKernelName()} , speedup = {acc}")
             else:
                 print("Test Error!")
             funName = config.kernelFuncName
@@ -187,6 +188,8 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
         with open(save_to,'w+') as f:
             result = {"testResult" : maxSppedups}
             json.dump(result,f,indent=2)
+            f.flush()
+    return
 
 g_time0 = Value('d',0.0)
 tensor_input_baseline = None
@@ -203,11 +206,11 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     pkls = glob.glob(name_format)
     p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls, checkTflops, checkAcc))
     p.start()
-    p.join(timeout= 40)
+    p.join()
     # process terminated. clean undealed pkls
-    if p.is_alive():
-        p.terminate()
-        p.join(5)
+    # if p.is_alive():
+    #     p.terminate()
+    #     p.join(5)
     for pkl in pkls :
         if os.path.exists(pkl) :
             os.remove(pkl)   # delete crashed pkl
@@ -284,7 +287,7 @@ def getInputs() :
         checktflops, checkAcc = True, 0
     return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc)
 
-if __name__ == '__main__' :
+def main():
     cfgFile,result_json_path,start,maxCount,checktflops, checkAcc = getInputs()
     # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
     # opty = kcg_mm.MatmulOp
@@ -305,11 +308,13 @@ if __name__ == '__main__' :
     for c in  get_tuning_space(opty, cfgFile):
         tssize += 1
     print(f"==== tune space size = {tssize}")
+    
+    # return
     print("=== checktflops, checkAcc",checktflops, checkAcc)
     ts = get_tuning_space(opty, cfgFile)
     bc = BenchmarkConfig()
     bc.keepTopNum = 10
-    bc.max_kernel_per_iter = 40
+    bc.max_kernel_per_iter = 80
     bc.result_json_path = result_json_path
     bc.maxCount = maxCount
     st = time.time()
@@ -330,3 +335,7 @@ if __name__ == '__main__' :
     et = time.time()
     print(f"===== Complete! Total spends {(et - st)/ 60} minutes")
     
+    
+if __name__ == '__main__' :
+    print(time.strftime('------------- %Y-%m-%d %H:%M:%S ------------- ',time.localtime(time.time())))       # 打印按指定格式排版的时间
+    main()

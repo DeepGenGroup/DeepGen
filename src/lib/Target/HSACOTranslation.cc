@@ -248,7 +248,7 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     std::string lld_path = USER_LLD_PATH;
     if (!std::filesystem::exists(lld_path))
     {
-        std::string rocm_path = getenv("ROCM_PATH");
+        std::string rocm_path = getenv("HIP_PATH");
         auto ROCM_DEFAULT_DIR = "/opt/dtk";
         lld_path = (rocm_path.empty()) ? ROCM_DEFAULT_DIR : rocm_path;
         lld_path += "/llvm/bin/ld.lld";

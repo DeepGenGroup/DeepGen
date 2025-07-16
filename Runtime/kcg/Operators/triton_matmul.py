@@ -1,7 +1,8 @@
 import triton
 import triton.language as tl
 import torch
-
+import numpy as np
+import kcg.Utils as utils
 
 # @triton.jit
 # def bmm_kernel(
@@ -38,7 +39,38 @@ import torch
 #   c_mask = (offs_cm[:, None] < M) & (offs_cn[None, :] < N)
 #   tl.store(c_ptrs, c, mask=c_mask)
 
+m,n,k = 512,2048,8192
+def get_gemm_configs(m,n,k) :
+  bm = [32,64,128]
+  bn = [32,64,128]
+  bk = [8,16,32,64]
+  tm = [1,2,4]
+  tn = [1,2,4]
+  ret = []
+  for _bm in bm :
+    for _bn in bn :
+      for _bk in bk :
+        for _tm in tm :
+          for _tn in tn :
+            thm = _bm // _tm
+            thn = _bn // _tn
+            if m / _bm < 4 or n / _bn < 4 :
+              continue
+            th = thm * thn
+            if _bm % _tm == 0 and _bn % _tn == 0 and th >= 64 and th % 64 == 0:
+              ret.append(triton.Config({'BLOCK_SIZE_M': _bm, 'BLOCK_SIZE_N': _bn, 'BLOCK_SIZE_K': _bk, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=th // 64))  
+  return ret
 
+@triton.autotune(
+  configs=[
+      # triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 16, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=4),  # best
+      # triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=2),  # best
+      # triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=4),  # best
+      # triton.Config({'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 64, 'BLOCK_SIZE_K': 32, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=4),  # best
+      triton.Config({'BLOCK_SIZE_M': 32, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 16, 'GROUP_SIZE_M': 4, }, num_stages=0,num_warps=4),  # not best
+  ]
+  ,key=['M', 'N', 'K'],
+)
 @triton.jit
 def matmul_kernel(
   a_ptr, b_ptr, c_ptr, M, N, K,
@@ -118,14 +150,9 @@ def matmul(a, b):
   matmul_kernel[grid](
     a, b, c, M, N, K,
     a.stride(0), a.stride(1), b.stride(0), b.stride(1), c.stride(0), c.stride(1),
-    128, 64, 16, 4
+    # 128, 64, 16, 4
   )
   return c
-
-
-import torch
-import triton
-import triton.language as tl
 
 @triton.jit
 def bmm_kernel(
@@ -260,19 +287,104 @@ def bmm(a: torch.Tensor, b: torch.Tensor):
     # 恢复原始形状
     final_shape = outshape[:-2] + (M, N)
     return c.view(final_shape)
-  
-if __name__ == "__main__":
-  # ...
-  a = torch.randn((1,12 , 1024, 64), device='cuda', dtype=torch.float32)
-  b = torch.randn((1,12 , 64, 1024), device='cuda', dtype=torch.float32)
-  # c = matmul(a, b)
-  
-  c = bmm(a, b)
-  d = torch.matmul(a,b)
-  print(c.shape, d.shape)
-  if torch.allclose(c,d, atol=1e-5,rtol=1e-5):
-    print("test OK!")
-  else:
-    print("test error!")
+
+def clear_l2_cache(device=None):
+    """清除 GPU L2 缓存的专业方法"""
+    if device is None:
+        device = torch.cuda.current_device()
     
-  # print(c)
+    # 获取 GPU L2 缓存大小
+    total_mem = torch.cuda.get_device_properties(device).total_memory
+    # print(f'totalMEm = {total_mem}')
+    # l2_size = 4 * 1024 * 1024  # 典型 L2 缓存大小 (根据 GPU 调整)
+    l2_size = total_mem  # 典型 L2 缓存大小 (根据 GPU 调整)
+    
+    # 创建足够覆盖 L2 缓存的随机数据
+    buffer_size = int( 0.8 * l2_size)  # 2 倍 L2 大小确保覆盖
+    fill_buffer = torch.randn(buffer_size // 4, dtype=torch.float32, device=device)  # 每个 float32 占 4 字节
+    
+    # 执行覆盖操作
+    fill_buffer.zero_()  # 确保实际写入操作
+    torch.cuda.synchronize(device)
+
+
+def test_perf(mm_base, mm_benchmark, testCount) :
+  st = torch.cuda.Event(enable_timing=True)
+  et = torch.cuda.Event(enable_timing=True)
+  st_bench = torch.cuda.Event(enable_timing=True)
+  et_bench = torch.cuda.Event(enable_timing=True)
+  times_base = []
+  times_bench = []
+  for i in range(testCount) :
+    st.record()
+    r0 = mm_base()
+    et.record()
+    torch.cuda.synchronize()
+    eps = st.elapsed_time(et)
+    
+    st_bench.record()
+    r = mm_benchmark()
+    et_bench.record()
+    torch.cuda.synchronize()
+    eps_bench = st_bench.elapsed_time(et_bench)
+    
+    if torch.allclose(r,r0,1e-3,1e-3) :
+      times_base.append(eps)
+      times_bench.append(eps_bench)
+  t0 = np.median(times_base)
+  t = np.median(times_bench)
+  return (t0,t)
+
+def testGEMMTriton(m,n,k, filepath = None) :
+  # m,n,k = 512,2048,8192
+  utils.DeviceInfo.init_cuda([7])
+  a = torch.randn((m,k), device='cuda:7', dtype=torch.float32)
+  b = torch.randn((k,n), device='cuda:7', dtype=torch.float32)
+  c = matmul(a, b)
+  
+  # a = torch.randn((1,12 , 1024, 64), device='cuda', dtype=torch.float32)
+  # b = torch.randn((1,12 , 64, 1024), device='cuda', dtype=torch.float32)
+  # c = bmm(a, b)
+  d = torch.matmul(a,b)
+  
+  def f_mm_base() :
+    return torch.matmul(a,b)
+  def f_mm_bench() :
+    return matmul(a,b)
+  print(f'-------- perf test: m={m} n={n} k = {k} ')
+  (t_torch, t_triton) = test_perf(f_mm_base, f_mm_bench, 10)
+  if filepath is not None:
+    import json
+    with open(filepath) as f:
+      perfs_ours_vs_torch = json.load(f)
+    t_ours = perfs_ours_vs_torch['testResult'][0]['time']
+    print(f'---- GEMM test : m,n,k = {m,n,k}')
+    print(f'  time(ms) : torch = {t_torch}, triton = {t_triton}, ours = {t_ours}')
+    print(f'  ours speedup : 和torch比 = {t_torch / t_ours}, 和triton比 = {t_triton / t_ours}')
+    
+if __name__ == '__main__' :
+  cases = [
+    [512,2048,8192, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-512-2048-8192.json'],
+    [1024,2048,4096, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-1024-2048-4096.json'],
+    [1024,4096,2048, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-1024-4096-2048.json'],
+    [2048,2048,2048, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-2048-2048-2048.json'],
+  ]
+  for e in cases :
+    testGEMMTriton(*e) 
+  
+# -------- perf test: m=512 n=2048 k = 8192 
+# torch = 2.8954415321350098, triton = 3.507841944694519, speedup = 0.8254196106281977
+    # {
+    #   "name": "kcg_MM_bM512N2048K8192isAT1W64_BM64BN64BK16TM4TN4BLY2BLX2WLY8WLX8GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU1Map4GSW0UN16RP0SP1LC1RC0",
+    #   "speedup": 1.1667429692735567,
+    #   "time": 2.4747190475463867,
+    #   "time_base": 2.8873610496520996
+    # },
+    ## 加速比 (和triton比 : 1.4174， 和torch比：)
+    
+# -------- perf test: m=1024 n=2048 k = 4096 
+# torch = 2.7201614379882812, triton = 3.0925610065460205, speedup = 0.879582143159187
+# -------- perf test: m=1024 n=4096 k = 2048 
+# torch = 2.212561011314392, triton = 2.955441474914551, speedup = 0.7486397650213537
+# -------- perf test: m=2048 n=2048 k = 2048 
+# torch = 2.2156810760498047, triton = 2.961761951446533, speedup = 0.7480955972736633

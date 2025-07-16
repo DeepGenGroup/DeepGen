@@ -90,8 +90,8 @@ def test_attention(devid, binpath, func_name, isCuda) :
 #     if backend == 'hip':
 #         isCuda = False
 #     test_attention(devid,binpath, funcName, isCuda)
-    
-if __name__ == "__main__" :
+
+def test_broadcastOp() :
     if len(sys.argv) < 2 :
         print("usage : kernelBinPath")
         sys.exit()
@@ -120,4 +120,37 @@ if __name__ == "__main__" :
     print("result a = ",a)
     # print("b = ",b)
     
+def test_reduceOp() :
+    if len(sys.argv) < 2 :
+        print("usage : kernelBinPath")
+        sys.exit()
+    binpath = sys.argv[1]
+    devid = 7
+    op = testOp.ReduceOp()
     
+    func_name = "reduce"
+    dtypes = [torch.float32]
+    backend = EnumBackendType.HIP
+    
+    kc = KernelConfigs(binpath, func_name, dtypes, backend)
+    kc.m_gridDims = [2,1,1]
+    kc.m_blockDims = [64,1,1]
+    kernel = op.GetCompiledKernel(kc,devid)
+    # test 8x16
+    DeviceInfo.init_cuda([devid])
+    
+    tensorSHape = (8,16)
+    a = torch.ones(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
+    b = torch.empty(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
+    for i in range(0,tensorSHape[0]) :
+        a[i,0] = i+10
+    # b = torch.empty(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
+    print("original a = ",a)
+    kernel.run(a,b)
+    print("result b = ",b)
+    # print("b = ",b)
+    
+
+if __name__ == "__main__" :
+    # test_broadcastOp()
+    test_reduceOp()

@@ -326,35 +326,50 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     Value srcLaneId = getLaneId(rewriter, loc, indexBitwidth);
 
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+    auto boolType = mlir::IntegerType::get(rewriter.getContext(), 1);
     Value width = adaptor.getWidth();
     Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
+    Value trueVal = rewriter.create<LLVM::ConstantOp>(loc, boolType, 1);
     Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
-    Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);
+    Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);  // selfLane + width
     Value widthOrZeroIfOutside =
-        rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);
+        rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);  // (selfLane + width) & (-width)
     Value dstLane;
 
     switch (op.getMode()) {
     case gpu::ShuffleMode::UP:
       dstLane = rewriter.create<LLVM::SubOp>(loc, int32Type, srcLaneId,
-                                             adaptor.getOffset());
+                                             adaptor.getOffset());  // read from lane[srcLaneId - offs]
       break;
     case gpu::ShuffleMode::DOWN:
       dstLane = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId,
-                                             adaptor.getOffset());
+                                             adaptor.getOffset());  // read from lane[srcLaneId + offs]
       break;
     case gpu::ShuffleMode::XOR:
       dstLane = rewriter.create<LLVM::XOrOp>(loc, int32Type, srcLaneId,
                                              adaptor.getOffset());
       break;
     case gpu::ShuffleMode::IDX:
-      dstLane = adaptor.getOffset();
+      // width 代表了划分的组长度。 offset 表示组内偏移
+      auto offset = adaptor.getOffset();
+      auto rem = rewriter.create<LLVM::SRemOp>(loc, int32Type, srcLaneId, width);
+      auto sub = rewriter.create<LLVM::SubOp>(loc, int32Type, srcLaneId, rem);  
+      dstLane = rewriter.create<LLVM::AddOp>(loc, int32Type, sub, offset);  // read from lane[srcLaneId - srcLaneId % width + offset]
       break;
     }
-    Value isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
-        loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
-    Value selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane,
-                                                          dstLane, srcLaneId);
+    Value selectDstLane;
+    Value isActiveSrcLane;
+    if(op.getMode() != gpu::ShuffleMode::IDX){
+      isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
+          loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
+      selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane,
+                                                            dstLane, srcLaneId);
+    }
+    else{
+      // 对于 shuffle idx，不必检查 dstLane 和 width的关系
+      selectDstLane = dstLane;
+      isActiveSrcLane = trueVal;
+    }
     Value two = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 2);
     Value dwordAlignedDstLane =
         rewriter.create<LLVM::ShlOp>(loc, int32Type, selectDstLane, two);
