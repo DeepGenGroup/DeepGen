@@ -567,8 +567,11 @@ void FlashAttnOptimizer::moveMemrefDefineAhead(mlir::Operation* threadParallelOp
     }
   }
   assert(firstForOp != nullptr);
-  // collect alloca op
+  // collect alloca & allocop
   parallelop.walk([&](mlir::memref::AllocaOp op){
+    opsToMove.push_back(op.getOperation());
+  });
+  parallelop.walk([&](mlir::memref::AllocOp op){
     opsToMove.push_back(op.getOperation());
   });
   // move

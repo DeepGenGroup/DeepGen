@@ -230,7 +230,7 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
   pm.addPass(ReplaceAllocToGetglobalPass());
   pm.addPass(createAmendAllocaOpAddrSpacePass(this->target));
   pm.addNestedPass<func::FuncOp>(affine::createAffineLoopInvariantCodeMotionPass());
-  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopNormalizePass());
+  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopNormalizePass(true));
   pm.addPass(createAffineUnrollPass());
   pm.addPass(mlir::createCSEPass());  // 冗余消除
   pm.addPass(mlir::createSymbolDCEPass());  // 死代码消除/化简
