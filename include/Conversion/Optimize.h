@@ -144,6 +144,8 @@ struct FlashAttnOptimizer : Optimizer {
                    mlir::Value smFactor, 
                    mlir::Value tileO, 
                    std::string bufDesc);
+
+  void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
 };
 
 }  // KernelCodeGen

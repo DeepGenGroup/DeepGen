@@ -555,6 +555,28 @@ void FlashAttnOptimizer::updateTileO(mlir::Operation* localtionOp, mlir::Value s
   }
 }
 
+void FlashAttnOptimizer::moveMemrefDefineAhead(mlir::Operation* threadParallelOp){
+  auto parallelop = mlir::dyn_cast<mlir::affine::AffineParallelOp>(threadParallelOp);
+  assert(parallelop != nullptr);
+  mlir::affine::AffineForOp firstForOp {};
+  std::vector<mlir::Operation*> opsToMove {};
+  for(auto& childop : parallelop->getRegion(0).getOps()) {
+    firstForOp = mlir::dyn_cast<mlir::affine::AffineForOp>(childop);
+    if(firstForOp != nullptr){
+      break;  // find first affine.for in thread parallelop
+    }
+  }
+  assert(firstForOp != nullptr);
+  // collect alloca op
+  parallelop.walk([&](mlir::memref::AllocaOp op){
+    opsToMove.push_back(op.getOperation());
+  });
+  // move
+  for(auto op : opsToMove){
+    op->moveBefore(firstForOp);
+  }
+}
+
 // ================================== applyOptimzer ========================================
 
 void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
@@ -721,6 +743,18 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
   updateTileO(tyds.back(), smSum, tileO[0], "ORegSum");
   LOG_DEBUG("===== update last TileO =======\n",module);
+
+  mlir::affine::AffineParallelOp threadParallelOp;
+  funcOp.walk([&](mlir::affine::AffineParallelOp p){
+    auto attr = p.getOperation()->getAttr(AttrGPUIndex);
+    auto stringattr = mlir::dyn_cast<mlir::StringAttr>(attr);
+    if(std::string(stringattr.data()) == THREADIDX){
+      threadParallelOp = p;
+      return mlir::WalkResult::interrupt();
+    } 
+  });
+  moveMemrefDefineAhead(threadParallelOp.getOperation());
+  LOG_DEBUG("===== moveMemrefDefineAhead =======\n",module);
 
   mlir::affine::AffineForOp regRearForOp, regRearForOp_;
   std::vector<mlir::affine::AffineForOp> pfLdRegForOps, pfLdSMForOps, pfLdRegForOps_, pfLdRegForOps__;
