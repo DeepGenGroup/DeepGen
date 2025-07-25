@@ -85,24 +85,6 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
         pp.join()
     procs.clear()
     return iterationEnds
-    
-
-# def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmupCount : int, benchCount : int,devId : int) -> Tuple[float, str] :
-#     op.InitBaseArgs(baseArg)
-#     op.GetBaselineInputTensor(devId)
-#     kernel = op.GetCompiledKernel(cfg,devId)
-    
-#     op.Test_warmup(kernel,warmupCount,devId)
-#     r0,t0 = op.Test_baseline(devId)
-#     for i in range(benchCount):
-#         r,t = op.Test_benchmark(kernel, benchCount , devId)
-#     acc = 0
-#     if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
-#         acc = t0 / t
-#         print(f"Test Correct! speedup = {acc}")
-#     else:
-#         print("Test Error!")
-#     return (acc,cfg.kernelFuncName,t,t0)
 
 def is_tflops_ok(b,m,n,k,t) :
     TargetTFLOPS = 12.2 * 0.6
@@ -163,7 +145,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 acc = t0 / t
                 print(f"Test Correct! {op.GetKernelName()} , speedup = {acc}")
             else:
-                print("Test Error!")
+                print(f"Test Error! r= {r} , r0 = {r0}")
             funName = config.kernelFuncName
             # save result
 
