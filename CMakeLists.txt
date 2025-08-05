@@ -97,7 +97,7 @@ endif()
 if(CMAKE_BUILD_TYPE STREQUAL "" )
 set(CMAKE_BUILD_TYPE "Debug")
 endif()
-
+message("=== buildType : ${CMAKE_BUILD_TYPE} ===")
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   message(STATUS "==== enable debug_log =======")
   add_definitions(-DKCG_DEBUG)

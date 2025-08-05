@@ -328,12 +328,10 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
     auto boolType = mlir::IntegerType::get(rewriter.getContext(), 1);
     Value width = adaptor.getWidth();
-    Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
     Value trueVal = rewriter.create<LLVM::ConstantOp>(loc, boolType, 1);
-    Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
+
     Value add = rewriter.create<LLVM::AddOp>(loc, int32Type, srcLaneId, width);  // selfLane + width
-    Value widthOrZeroIfOutside =
-        rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);  // (selfLane + width) & (-width)
+
     Value dstLane;
 
     switch (op.getMode()) {
@@ -360,6 +358,9 @@ struct GPUShuffleOpToROCDLLowering : public ConvertOpToLLVMPattern<gpu::ShuffleO
     Value selectDstLane;
     Value isActiveSrcLane;
     if(op.getMode() != gpu::ShuffleMode::IDX){
+      Value zero = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 0);
+      Value negwidth = rewriter.create<LLVM::SubOp>(loc, int32Type, zero, width);
+      Value widthOrZeroIfOutside = rewriter.create<LLVM::AndOp>(loc, int32Type, add, negwidth);  // (selfLane + width) & (-width)
       isActiveSrcLane = rewriter.create<LLVM::ICmpOp>(
           loc, LLVM::ICmpPredicate::slt, dstLane, widthOrZeroIfOutside);
       selectDstLane = rewriter.create<LLVM::SelectOp>(loc, isActiveSrcLane,
