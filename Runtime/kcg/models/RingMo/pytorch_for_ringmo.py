@@ -14,6 +14,8 @@ import torch.distributed as dist
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
+f_linear = nn.Linear
+f_matmul = torch.matmul
 
 class WindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.
@@ -54,9 +56,9 @@ class WindowAttention(nn.Module):
         relative_coords[:, :, 0] *= 2 * self.window_size[1] - 1
         relative_position_index = relative_coords.sum(-1)  # Wh*Ww, Wh*Ww
         self.register_buffer("relative_position_index", relative_position_index)
-        self.qkv = nn.Linear(dim, dim * 3, bias=qkv_bias)
+        self.qkv = f_linear(dim, dim * 3, bias=qkv_bias)
         self.attn_drop = nn.Dropout(attn_drop)
-        self.proj = nn.Linear(dim, dim)
+        self.proj = f_linear(dim, dim)
         self.proj_drop = nn.Dropout(proj_drop)
 
         trunc_normal_(self.relative_position_bias_table, std=.02)
@@ -130,9 +132,9 @@ class Mlp(nn.Module):
         super().__init__()
         out_features = out_features or in_features
         hidden_features = hidden_features or in_features
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = f_linear(in_features, hidden_features)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, out_features)
+        self.fc2 = f_linear(hidden_features, out_features)
         self.drop = nn.Dropout(drop)
 
     def forward(self, x):
@@ -147,9 +149,9 @@ class Mlp(nn.Module):
 class Expert(nn.Module):
     def __init__(self, in_features, hidden_features, act_layer=nn.GELU, mlp_drop=0.0):
         super().__init__()
-        self.fc1 = nn.Linear(in_features, hidden_features)
+        self.fc1 = f_linear(in_features, hidden_features)
         self.act = act_layer()
-        self.fc2 = nn.Linear(hidden_features, in_features)
+        self.fc2 = f_linear(hidden_features, in_features)
         self.dropout = nn.Dropout(p=mlp_drop)
     
     def forward(self, x):
@@ -184,9 +186,9 @@ class MoELayer(nn.Module):
         
         # 门控网络
         if self.gate_type['type'] == 'top':
-            self.gate = nn.Linear(model_dim, self.num_experts)
+            self.gate = f_linear(model_dim, self.num_experts)
         elif self.gate_type['type'] == 'cosine_top':
-            self.gate = nn.Linear(model_dim, self.proj_dim)
+            self.gate = f_linear(model_dim, self.proj_dim)
             self.expert_centroids = nn.Parameter(torch.randn(self.num_experts, self.proj_dim))
         
         # 专家网络
@@ -217,7 +219,7 @@ class MoELayer(nn.Module):
             proj_x = self.gate(x_flat)  # [batch_size * seq_len, proj_dim]
             proj_x = F.normalize(proj_x, dim=-1)
             centroids = F.normalize(self.expert_centroids, dim=-1)
-            cosine_sim = torch.matmul(proj_x, centroids.t())  # [batch_size * seq_len, num_experts]
+            cosine_sim = f_matmul(proj_x, centroids.t())  # [batch_size * seq_len, num_experts]
             gate_scores = cosine_sim / self.init_t
             if self.normalize_gate:
                 gate_scores = F.softmax(gate_scores, dim=-1)
@@ -501,7 +503,7 @@ class PatchMerging(nn.Module):
         super().__init__()
         self.input_resolution = input_resolution
         self.dim = dim
-        self.reduction = nn.Linear(4 * dim, 2 * dim, bias=False)
+        self.reduction = f_linear(4 * dim, 2 * dim, bias=False)
         self.norm = norm_layer(4 * dim)
 
     def forward(self, x):
@@ -718,14 +720,14 @@ class SwinTransformer(MegatronModule):
 
         self.norm = norm_layer(self.num_features)
         self.avgpool = nn.AdaptiveAvgPool1d(1)
-        self.head = nn.Linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
+        self.head = f_linear(self.num_features, num_classes) if num_classes > 0 else nn.Identity()
 
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        if isinstance(m, nn.Linear):
+        if isinstance(m, f_linear):
             trunc_normal_(m.weight, std=.02)
-            if isinstance(m, nn.Linear) and m.bias is not None:
+            if isinstance(m, f_linear) and m.bias is not None:
                 nn.init.constant_(m.bias, 0)
         elif isinstance(m, nn.LayerNorm):
             nn.init.constant_(m.bias, 0)

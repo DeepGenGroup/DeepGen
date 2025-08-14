@@ -364,10 +364,15 @@ def testGEMMTriton(m,n,k, filepath = None) :
     
 if __name__ == '__main__' :
   cases = [
-    [512,2048,8192, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-512-2048-8192.json'],
-    [1024,2048,4096, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-1024-2048-4096.json'],
-    [1024,4096,2048, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-1024-4096-2048.json'],
-    [2048,2048,2048, '/home/xushilong/DeepGen/项目交付/gemm_result/res-mm-2048-2048-2048.json'],
+    [512,2048,8192, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res-mm-512-2048-8192.json'],
+    [1024,2048,4096, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res-mm-1024-2048-4096.json'],
+    [1024,4096,2048, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res-mm-1024-4096-2048.json'],
+    [2048,2048,2048, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res-mm-2048-2048-2048.json'],
+    
+    [2048,8192,2048, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res_mm-2048-8192-2048.json'],
+    [2048,4096,8192, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res_mm0-2048-4096-8192.json'],
+    [4096,4096,4096, '/home/xushilong/DeepGen/Jiaofu/gemm_result/res_mm-4096-4096-4096.json'],
+    
   ]
   for e in cases :
     testGEMMTriton(*e) 
