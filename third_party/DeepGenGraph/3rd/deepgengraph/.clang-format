@@ -1,7 +1,0 @@
----
-BasedOnStyle: LLVM
-AlwaysBreakTemplateDeclarations: Yes
-ColumnLimit: 120
-SortIncludes: false
-
-...

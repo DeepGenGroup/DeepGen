@@ -1,8 +1,0 @@
-{
-    "out": "dist/docs",
-    "readme": "none",
-    "excludeProtected": true,
-    "excludePrivate": true,
-    "includes": ["src"],
-    "exclude": ["**/node_modules/**"]
-}
