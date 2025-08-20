@@ -1,0 +1,2 @@
+add_subdirectory(Deepgengraph)
+add_subdirectory(DeepgengraphTriton)
