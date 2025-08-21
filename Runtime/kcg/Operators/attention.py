@@ -475,6 +475,10 @@ class AttentionOp(OpInterface) :
             _backend = 1
         elif backendtype.value == EnumBackendType.HIP.value :
             _backend = 2
+        elif backendtype.value == EnumBackendType.MLU.value :  # hanwuji mlu
+            _backend = 3
+        elif backendtype.value == EnumBackendType.NPU.value :  # huawei npu
+            _backend = 4
         else:
             assert False, f'invalid backendtype {backendtype}, Ty is {type(backendtype)}'
 
