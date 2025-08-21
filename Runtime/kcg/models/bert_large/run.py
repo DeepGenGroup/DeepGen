@@ -46,7 +46,7 @@ def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
 
 
 if __name__ == "__main__":
-    devid = 7
+    devid = 0
     PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
     DeviceInfo.init_cuda([devid])
 
@@ -61,7 +61,7 @@ if __name__ == "__main__":
     # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
     # 没有调好的kernel，首次执行：
     collectInfoOnly = False
-    compile_model(7, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
+    compile_model(devid, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
     
     def f_benchmark():
         print("========= eval bench time =======",flush=True)

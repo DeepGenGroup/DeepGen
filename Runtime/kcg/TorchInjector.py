@@ -1,7 +1,7 @@
 from kcg.Operators import matmul, attention
 from kcg.Kernel import *
 from kcg.KernelTuneUtils import TuneResult
-from kcg.Operators import triton_matmul
+# from kcg.Operators import triton_matmul
 import torch.nn.functional as F
 import math
 
