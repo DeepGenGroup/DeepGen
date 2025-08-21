@@ -96,7 +96,7 @@ class HIPLoaderST(object):
             self.load_binary = self.mod.load_binary
             self.unload_binary = self.mod.unload_binary
             self.get_device_properties = self.mod.get_device_properties
-        if kernelFile.m_kernelInfo is None:
+        if kernelFile.m_kernelInfo is None and kernelFile.m_filePath is not None:
             binaryPath = kernelFile.m_filePath
             name = kernelFile.m_kernelFuncName
             shared = int(kernelFile.m_shmSize)

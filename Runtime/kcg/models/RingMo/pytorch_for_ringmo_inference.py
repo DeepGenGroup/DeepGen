@@ -20,10 +20,11 @@ class ModelArgs:
     max_seq_len: int = 2048
 
 
-f_linear = CustomLinear
 # f_linear = nn.Linear
 # f_matmul = torch.mm
+f_linear = CustomLinear
 f_matmul = OpProxy.f_matmul
+f_attention = OpProxy.f_attention
 
 class WindowAttention(nn.Module):
     r""" Window based multi-head self attention (W-MSA) module with relative position bias.

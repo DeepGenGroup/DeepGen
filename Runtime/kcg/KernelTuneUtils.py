@@ -225,7 +225,8 @@ def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, t
     else:
         backend = EnumBackendType.CUDA
         arch = "80"
-    
+    backend = EnumBackendType.HIP
+    arch = "906"
     PathManager.init(clearPkl=True, clearCache=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
     resultPath = str(PathManager.project_dir()) + "/testResult.json"

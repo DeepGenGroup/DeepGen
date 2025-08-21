@@ -496,6 +496,8 @@ class MatmulOp(OpInterface) :
         else:
             shape = shape[1:]
         print(f"shape = {shape}, cfg = {cfg}",flush=True)
+        def is_power_of_two(num : int) :
+            return (num & (num-1)) == 0
         hsacoPath = self.CompileKernelMatmul( shape,cfg)
         # hsacoPath,kernelName,gridDimX,gridDimY,gridDimZ,blockDimX,blockDimY,blockDimZ,shmBytes = res[0]
         kernelName = info.kernelName
@@ -503,12 +505,16 @@ class MatmulOp(OpInterface) :
         blockDimX,blockDimY,blockDimZ = info.blockDims
         shmBytes = info.shmBytes
         
-        print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
-        print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
-        Print("========= hsacoPath = ",hsacoPath)
+        # print(f"blockdims = {blockDimX,blockDimY,blockDimZ}")
+        # print(f"griddims = {gridDimX,gridDimY,gridDimZ}")
+        # Print("========= hsacoPath = ",hsacoPath)
         Print("========= kernelName = ",kernelName)
-        print(f"==== backend is {backendtype}")
-        print(f"==== shmBytes is {shmBytes}")
+        if is_power_of_two(shape[-1]) and is_power_of_two(shape[-2]) and is_power_of_two(shape[-3]) :
+            ...
+        else:
+            hsacoPath = None
+        # print(f"==== backend is {backendtype}")
+        # print(f"==== shmBytes is {shmBytes}")
         dt = info.torchDataType
         inConfig = KernelConfigs(hsacoPath, kernelName, [ dt,dt,dt ], backendtype)
         inConfig.m_gridDims = [gridDimX,gridDimY,gridDimZ]

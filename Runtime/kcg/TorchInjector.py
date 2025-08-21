@@ -82,7 +82,7 @@ class OpProxy :
     @staticmethod
     def registKernel(tr : TuneResult) :
         if tr is None or tr.bestConfigPkl is None:
-            print("register failed : bestConfigPkl is None")
+            print("regist done")
             return
         if tr.bestSpeedup > 1 :
             if tr.OpTy is matmul.MatmulOp :
@@ -91,9 +91,9 @@ class OpProxy :
             elif tr.OpTy is attention.AttentionOp :
                 OpProxy.__registedKernels_att.append(tr)
             else :
-                print(f"registerKernel failed : {tr.OpTy.__name__} is unsupport")
+                print(f"registerKernel err : {tr.OpTy.__name__} is unsupport")
         else:
-            print(f"registerKernel : acc <= 1 ,skip ")
+            print(f"regist skipped ")
             
         
     @staticmethod

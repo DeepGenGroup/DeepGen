@@ -103,7 +103,8 @@ def main():
     # 手动注册已经调好的kernl
     # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
-    compile_model(7, run_model(model,args,input_tensor),True)
+    collectInfoOnly = False
+    compile_model(devid, run_model(model,args,input_tensor),collectInfoOnly)
     for (ty,args) in OpProxy.collector.getInfo() :
         print(f"---- {ty.__name__} : {args}")
     # if isBase :
@@ -121,12 +122,12 @@ def main():
 
     out0,t0 = evaluate_model_time(f_base)
     # out1,t1 = evaluate_model_time(f_benchmark)
-    
-    print(f"=== model run time : {t0}, ")
-    opCallCounter = OpProxy.GetOpCallCounts()
-    print("==== call ops :",opCallCounter)
-    for (ty,arg) in OpProxy.GetCollectedKernelArgs() :
-        print(f"------ {ty.__name__}, {arg}")
+    print('====== model test done ! =======')
+    # print(f"=== model run time : {t0}, ")
+    # opCallCounter = OpProxy.GetOpCallCounts()
+    # print("==== call ops :",opCallCounter)
+    # for (ty,arg) in OpProxy.GetCollectedKernelArgs() :
+    #     print(f"------ {ty.__name__}, {arg}")
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
     
     # if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
