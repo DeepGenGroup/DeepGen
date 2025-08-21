@@ -122,7 +122,7 @@ def main():
 
     out0,t0 = evaluate_model_time(f_base)
     # out1,t1 = evaluate_model_time(f_benchmark)
-    print('====== model test done ! =======')
+    print(f'====== model test done ! out0 = {out0} =======')
     # print(f"=== model run time : {t0}, ")
     # opCallCounter = OpProxy.GetOpCallCounts()
     # print("==== call ops :",opCallCounter)

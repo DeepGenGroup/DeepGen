@@ -378,25 +378,27 @@ def get_kernel_name(src: str, pattern: str) -> str:
 def calculate_file_hash(file_path ,algorithm='md5',hash_len=10) -> int:
     # 以二进制只读模式打开文件
     ret = ""
-    with open(file_path, 'rb') as file:
-        # 选择哈希算法
-        if algorithm == 'md5':
-            hasher = hashlib.md5()
-        elif algorithm == 'sha1':
-            hasher = hashlib.sha1()
-        elif algorithm == 'sha256':
-            hasher = hashlib.sha256()
-        else:
-            raise ValueError("Unsupported algorithm. Please choose from 'md5', 'sha1', or 'sha256'.")
+    try:
+        with open(file_path, 'rb') as file:
+            # 选择哈希算法
+            if algorithm == 'md5':
+                hasher = hashlib.md5()
+            elif algorithm == 'sha1':
+                hasher = hashlib.sha1()
+            elif algorithm == 'sha256':
+                hasher = hashlib.sha256()
+            else:
+                raise ValueError("Unsupported algorithm. Please choose from 'md5', 'sha1', or 'sha256'.")
 
-        # 逐块更新哈希值
-        for chunk in iter(lambda: file.read(4096), b''):
-            hasher.update(chunk)
+            # 逐块更新哈希值
+            for chunk in iter(lambda: file.read(4096), b''):
+                hasher.update(chunk)
 
-        # 返回计算得到的哈希值
-        ret = hasher.hexdigest()
-        return int(ret[:hash_len],16)
-
+            # 返回计算得到的哈希值
+            ret = hasher.hexdigest()
+            return int(ret[:hash_len],16)
+    except Exception as e :
+        print('file_hash calcuate skipped ')
 
 
 class DeviceInfo :
@@ -761,6 +763,8 @@ class KernelLibFile :
     
     @functools.lru_cache
     def hash(self)->int :
+        if self.m_filePath is None :
+            return 0
         return calculate_file_hash(self.m_filePath) 
 
     def signature_str(self) -> str :
