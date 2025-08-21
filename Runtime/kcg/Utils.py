@@ -298,8 +298,10 @@ def build(name, src, srcdir):
 
 class EnumBackendType(IntEnum):
     CUDA = 1
-    HIP = 2
-    INVALID = 3
+    HIP = 2  # DCU
+    MLU = 3  # hanwuji
+    NPU = 4  # huawei
+    INVALID = 9
     def __str__(self):
         return f'{self.name}'
 

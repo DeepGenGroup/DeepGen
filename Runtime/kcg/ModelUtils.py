@@ -303,11 +303,20 @@ def registerPreCompiledKernel(opTy : Type[OpInterface] ,kernlName : str, speedup
         
     ta.assignWithKernelName(kernlName)
     info = ta.getCompileNeededInfo()
+    p = get_platform_type()
     backendType = EnumBackendType.CUDA
     arch = "80"
-    if is_hip() :
-        arch = "906"
-        backendType = EnumBackendType.HIP
+    if p == 'dcu' :
+        if is_hip() :
+            arch = "906"
+            backendType = EnumBackendType.HIP
+    if p == 'mlu' :
+        arch = "370"
+        backendType = EnumBackendType.MLU
+    if p == 'npu' :
+        arch = "370"
+        backendType = EnumBackendType.NPU
+        
     ba, kernelCfg,  packedKernl = op.Compile(devId,backendType,arch,info)    
     
     tr = TuneResult()
