@@ -2,6 +2,9 @@ from kcg.Operators import matmul, attention
 from kcg.Kernel import *
 from kcg.KernelTuneUtils import TuneResult
 from kcg.Operators import triton_matmul
+import torch.nn.functional as F
+import math
+
 # 注入器。通过反序列化 compile过程得到的最佳 kernelConfig，构造该kernel的调用器
 class OpInjector :
     def __init__(self, devId : int = 0):
@@ -71,7 +74,7 @@ class OpProxy :
     @staticmethod
     def GetOpCallCounts() -> Dict :
         return OpProxy.collector.getOpCallCount()
-     
+
     @staticmethod
     def GetOpCallCountsDetailed() -> Dict :
         return OpProxy.collector.getOpCallCountInDetail()
@@ -124,6 +127,33 @@ class OpProxy :
         print("select default matmul")
         return default
     
+    def __select_attention(q:torch.Tensor, k:torch.Tensor, v:torch.Tensor, batch, head_num, seq_len, head_dim, f_matmul : Callable, mask) :
+
+        dev = q.get_device()
+        def default() :
+            scores = f_matmul(q, k.transpose(2, 3)) / math.sqrt(head_dim) # q*k
+            if mask is not None:
+                scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+            scores = F.softmax(scores.float(), dim=-1).type_as(q)
+            output = f_matmul(scores, v)  # (bs, n_local_heads, seqlen, head_dim)
+            return output
+        for tr in OpProxy.__registedKernels_att :
+            [_batch, _head_num, _seq_len, _head_dim] = tr.bestKernelBaseArg[0:-1]
+            dt = tr.bestKernelBaseArg[-1]
+            print(f'__select_att : tr = {_batch, _head_num, _seq_len, _head_dim}, required ={batch, head_num, seq_len, head_dim}')
+            if [_batch, _head_num, _seq_len, _head_dim] == [batch, head_num, seq_len, head_dim] :
+                def _f() :
+                    shapeO = [batch, head_num, seq_len, head_dim]
+                    o = torch.empty(shapeO,dtype=ToTorchType(EnumKernelDType(dt)), device=f'cuda:{dev}')
+                    f = OpInjector(dev).parseOp(tr.bestConfigPkl, attention.AttentionOp)
+                    qT = q.transpose(-1,-2).contiguous()
+                    f(qT,k,v,o)
+                    return o
+                return _f()
+        OpProxy.collector.addInfo(attention.AttentionOp,[batch, head_num, seq_len, head_dim], q.dtype)
+        print("select default attn")
+        return default()
+        
     @staticmethod
     def f_matmul(a : torch.Tensor, b : torch.Tensor) :
         m = int(a.shape[-2])
@@ -133,40 +163,10 @@ class OpProxy :
         # print(f"b,m,n,k = {batch,m,n,k}")
         # ret = torch._C._VariableFunctions.matmul(a, b)
         return OpProxy.__select_matmul(a,b,batch,m,n,k)
-# /home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl
-# /home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:512:256:4:.pkl
 
-        try:
-            if [m,n,k] == [256,256,512]: 
-                c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
-                def _f() :
-                    f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:256:512:4:.pkl',matmul.MatmulOp)
-                    aT = a.transpose(-1,-2).contiguous()
-                    f(aT,b,c)
-                    return c
-                return _f()
-            elif [m,n,k] == [256,512,256] : 
-                c = torch.empty((m,n),dtype=torch.float32, device='cuda:7')
-                def _f() :
-                    f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp_[]:256:512:256:4:.pkl',matmul.MatmulOp)
-                    aT = a.transpose(-1,-2).contiguous()
-                    f(aT,b,c)
-                    return c
-                return _f()
-            else:
-                OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
-        except Exception as e:
-            print(e)
-        except IOError as e:
-            print(e)
-        return ret
     
     @staticmethod
-    def f_attention(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor) :
-        r = torch.empty((1024,1024),dtype=torch.float32, device='cuda:7')
-        def _f() :
-            f = OpInjector().parseOp('/home/xushilong/DeepGen/_tmp/bestConfig_MatmulOp.pkl',matmul.MatmulOp)
-            f(q,k,v,r)
-            return r
-        return _f()
+    def f_attention(q : torch.Tensor, k : torch.Tensor, v : torch.Tensor, batch, head_num, seq_len, head_dim, mask = None) :
+        return OpProxy.__select_attention(q, k, v, batch, head_num, seq_len, head_dim, OpProxy.f_matmul, mask)
+
     

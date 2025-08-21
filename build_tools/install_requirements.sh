@@ -29,6 +29,8 @@ install_rocm_llvm(){
         echo "==== rocm-llvm-project exsits"
     else
         echo "==== Installing rocm-llvm-project"
+        pip install pybind11
+        pip install nanobind
         cd $HOME ; git clone https://github.com/DeepGenGroup/rocm-llvm-project.git ;
         git switch deepgen-dev;
         mkdir build ; cd build;
@@ -39,8 +41,6 @@ install_rocm_llvm(){
             -DMLIR_ENABLE_BINDINGS_PYTHON=ON \
             -DLLVM_ENABLE_ASSERTIONS=ON \
             -Wno-unused-but-set-parameter \
-            -Dpybind11_DIR=$pybind11_DIR \
-            -Dnanobind_DIR=$nanobind_DIR \
             -DCMAKE_INSTALL_PREFIX=$llvm_install_dir
         ninja -j8; ninja install; 
     fi
@@ -73,8 +73,6 @@ install_torch_mlir(){
         cmake -G Ninja .. -DCMAKE_INSTALL_PREFIX=$llvm_install_dir  \
             -DCMAKE_CXX_COMPILER=$llvm_install_dir/g++ \
             -DCMAKE_C_COMPILER=$llvm_install_dir/gcc \
-            -Dpybind11_DIR=$pybind11_DIR \
-            -Dnanobind_DIR=$nanobind_DIR \
             -DProtobuf_DIR=$HOME/protobuf-3.21.12-install/lib/cmake/protobuf
         ninja -j8; ninja install; 
         ln -s $HOME/rocm-torch-mlir/build/bin/torch-mlir-import-onnx $llvm_install_dir/bin/torch-mlir-import-onnx

@@ -277,7 +277,9 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));
   pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));  // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
   // gpu to rocdl/nvvm
-  pm2.addPass(createGPUToROCDLOrNVVMPass(this->target, INDEX_BIT_WIDTH));
+  if(this->target == Target::CUDA || this->target == Target::ROCm ){
+    pm2.addPass(createGPUToROCDLOrNVVMPass(this->target, INDEX_BIT_WIDTH));
+  }
   // math to llvm
   pm2.addPass(mlir::createConvertMathToLLVMPass());  // ConvertMathToLLVMPassOptions options.approximateLog1p 精度换性能(true)
   // arith to llvm

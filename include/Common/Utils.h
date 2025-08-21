@@ -82,6 +82,8 @@ namespace KernelCodeGen {
 enum class Target {
   CUDA = 0,
   ROCm = 1,
+  Hanwuji = 2,
+  Huawei = 3
 };
 
 enum class MemorySpace {

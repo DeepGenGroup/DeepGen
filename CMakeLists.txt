@@ -16,7 +16,9 @@ set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas")
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
 set(CUDA_INCLUDE_DIR "/home/xushilong/anaconda3/include")
+option(ENABLE_GRAPH_OPT "enable graph optimizer" OFF)
 option(USE_STABLEHLO_EMBEDDED "Use embedded stableHLO(ON) or external stableHLO(OFF)" ON)
+
 
 #############################################################
 find_package(Python COMPONENTS Interpreter Development)
@@ -134,14 +136,16 @@ include(AddMLIR)
 include(AddMLIRPython)
 
 # Use embedded stablehlo
-# if (USE_STABLEHLO_EMBEDDED)
-#   set(STABLEHLO_BUILD_EMBEDDED ON)
-#   set(STABLEHLO_ENABLE_BINDINGS_PYTHON ON)
-#   add_subdirectory(${KernelCodeGen_SOURCE_DIR}/externals/rocm-stablehlo
-#     ${KernelCodeGen_BINARY_DIR}/rocm-stablehlo
-#     EXCLUDE_FROM_ALL)
-#   include_directories(${CMAKE_CURRENT_SOURCE_DIR}/externals/rocm-stablehlo)
-# endif()
+if (ENABLE_GRAPH_OPT)
+  if (USE_STABLEHLO_EMBEDDED)
+    set(STABLEHLO_BUILD_EMBEDDED ON)
+    set(STABLEHLO_ENABLE_BINDINGS_PYTHON ON)
+    add_subdirectory(${KernelCodeGen_SOURCE_DIR}/externals/rocm-stablehlo
+      ${KernelCodeGen_BINARY_DIR}/rocm-stablehlo
+      EXCLUDE_FROM_ALL)
+    include_directories(${CMAKE_CURRENT_SOURCE_DIR}/externals/rocm-stablehlo)
+  endif(USE_STABLEHLO_EMBEDDED)
+endif(ENABLE_GRAPH_OPT)
 
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)

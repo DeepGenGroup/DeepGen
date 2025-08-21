@@ -239,6 +239,7 @@ def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) 
     output = f_run_model()
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
     mmTemplateJson = f'{PathManager.project_dir()}/TuningConfigs/GEMM_cfg_32.json'
+    attnJson = f'{PathManager.project_dir()}/TuningConfigs/attn_llama2.json'
     for (Ty , args ) in OpProxy.GetCollectedKernelArgs() :
         assert issubclass(Ty,OpInterface) , f"Ty must be inherited from OpInterface : invalid {Ty.__name__}"
         assert isinstance(args,List)
@@ -247,10 +248,13 @@ def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) 
         if Ty is matmul.MatmulOp :
             import kcg.tuning.NewCfgTest as tune_mm
             ts = tune_mm.getTuneSpaceWithBaseargs(mmTemplateJson,args)
-            print("collected args = ",args)
+            print("collected mm args = ",args)
         elif Ty is attention.AttentionOp :
+            print("----------- attention detected. graph optimizing ... ------")
             import kcg.tuning.attn_FP32_test as tune_att
-            ts = tune_att.getTuneSpace([1,1,1,1],[])
+            print("collected attn args = ",args)
+            [batch, head_num, seq_len, headdim  ]= args[0:-1]
+            ts = tune_att.getTuneSpace([batch, head_num, seq_len, headdim], attnJson, [])
         else:
             assert False, f"invalid ty : {Ty.__name__}"
         if not collectInfoOnly:
@@ -345,3 +349,11 @@ def create_fixed_embedding(num_embeddings, embedding_dim):
     emb.weight.requires_grad = False
     return emb
 
+        
+# def f_att(f_mm : Callable, query : torch.Tensor ,keys : torch.Tensor, values : torch.Tensor, mask : torch.Tensor = None) :
+#     scores = f_mm(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
+#     if mask is not None:
+#         scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+#     scores = F.softmax(scores.float(), dim=-1).type_as(query)
+#     output = f_mm(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+#     return output

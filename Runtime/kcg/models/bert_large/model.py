@@ -5,7 +5,17 @@ from dataclasses import dataclass
 from kcg.TorchInjector import *
 from kcg.ModelUtils import *
 
-g_FmmBaseline=triton_matmul.bmm
+g_FmmBaseline = torch.matmul
+# g_FmmBaseline = triton_matmul.bmm
+
+def g_FattnBaseline(q, k, v, batch_size, head_num, seq_len, head_dim, mask = None) :
+    scores = g_FmmBaseline(q, k.transpose(2, 3)) / math.sqrt(head_dim) # q*k
+    if mask is not None:
+        scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+    scores = F.softmax(scores.float(), dim=-1).type_as(q)
+    output = g_FmmBaseline(scores, v)  # (bs, n_local_heads, seqlen, head_dim)
+    return output
+
 
 @dataclass
 class ModelArgs:
@@ -82,8 +92,10 @@ class Attention(nn.Module):
         self.head_dim = dim // head_num
         if isBaseline :
             f_mm = g_FmmBaseline
+            f_attention = g_FattnBaseline
         else:
             f_mm = OpProxy.f_matmul
+            f_attention = OpProxy.f_attention
         # f_lin = nn.Linear
         f_lin = CustomLinear
         self.wq = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
@@ -91,6 +103,7 @@ class Attention(nn.Module):
         self.wv = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
         self.wo = f_lin(head_num * self.head_dim, dim, bias=False, f_mm=f_mm)
         self.f_matmul = f_mm
+        self.f_attention = f_attention
         
     def forward(self, x, mask):
         batch_size, seq_len, _ = x.shape  # [batch_size, seq_len, hidden_dim]
@@ -103,14 +116,18 @@ class Attention(nn.Module):
         query = xq.transpose(1, 2) # [batch_size, head_num, seq_len, head_dim]
         keys = xk.transpose(1, 2)
         values = xv.transpose(1, 2)
+        
+        def _f() :
+            scores = self.f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
+            if mask is not None:
+                scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+            scores = F.softmax(scores.float(), dim=-1).type_as(query)
+            output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
 
-        scores = self.f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
-        if mask is not None:
-            scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
-        scores = F.softmax(scores.float(), dim=-1).type_as(query)
-        output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-
-        output = query
+            # output = query
+            return output        
+        output = self.f_attention(query,keys,values,batch_size,self.head_num, seq_len, self.head_dim, mask)
+        # output = _f()
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 

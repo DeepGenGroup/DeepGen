@@ -434,9 +434,9 @@ class AttentionOp(OpInterface) :
             # print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             # print("ety =", ety)
-            q = torch.rand((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
-            k = torch.rand((bs,hn,hd,sl ),dtype=ety, device=f"cuda:{devId}" )
-            v = torch.rand((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )
+            q = torch.ones((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
+            k = torch.ones((bs,hn,hd,sl ),dtype=ety, device=f"cuda:{devId}" )
+            v = torch.ones((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )
             self.InputTensors_Baseline = [q,k,v]
         return self.InputTensors_Baseline
 

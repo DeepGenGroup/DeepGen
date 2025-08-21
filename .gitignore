@@ -19,3 +19,5 @@ _TempCodes/bin
 _cluster_run/
 _override/
 TuningCombs/
+Runtime/kcg/DeepGenGraph/3rd/deepgengraph/build
+

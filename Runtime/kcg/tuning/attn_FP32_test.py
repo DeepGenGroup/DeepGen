@@ -327,6 +327,9 @@ class CreateConfig:
 def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128]) -> List:
   # cfgfilepath = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
   cfg_dict = readConfigJson(cfgfilepath)
+  print(f'get_cfgs shape = {shape}',flush=True)
+  cfg_dict['Hd'] = [shape[3]]
+  print(f"attn Hd = {cfg_dict['Hd']}",flush=True)
   cc = CreateAttnConfig(cfg_dict, shape)
   cfgs = cc.main()
   return cfgs

@@ -198,7 +198,7 @@ def rocm_path_dir():
     if (os.path.exists(default_path+"/include/hip/hip_runtime.h")):
         return default_path
     else:
-        return os.getenv("ROCM_PATH", default="/opt/rocm")
+        return os.getenv("HIP_PATH", default="/opt/rocm")
 
 
 @contextlib.contextmanager

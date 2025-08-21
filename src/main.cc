@@ -214,6 +214,12 @@ static PyObject* set_platform(PyObject* self, PyObject* args) {
     else if(target == 1){
       enumTarget = KernelCodeGen::Target::CUDA;
     }
+    else if(target == 3){
+      enumTarget = KernelCodeGen::Target::Hanwuji;
+    }
+    else if(target == 4){
+      enumTarget = KernelCodeGen::Target::Huawei;
+    }
     else{
       std::cout << "DeepGen Error : Invalid Platform id " << target << std::endl;
       std::abort();

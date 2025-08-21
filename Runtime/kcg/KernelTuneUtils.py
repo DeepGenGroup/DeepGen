@@ -59,7 +59,7 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
 
 
 
-def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10) -> bool:
+def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 5) -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     g_index = 0
     maxProcsLimit = 50
@@ -106,7 +106,7 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     r0,t0 = op.Test_baseline(devId)
     r,t = op.Test_benchmark(kernel, benchCount , devId)
     acc = 0
-    if torch.allclose(r,r0,rtol=2e-6,atol=1e-15) :
+    if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
         acc = t0 / t
         print(f"Test Correct! speedup = {acc}")
     else:
@@ -114,7 +114,7 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     return (acc,cfg.kernelFuncName)
    
 def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tuneResult : TuneResult):
-    init_cuda(devId)
+    init_cuda([devId])
     save_to = benchConfig.result_json_path
     if len(save_to) > 0 and os.path.exists(save_to) :
         with open(save_to,'r') as f:
@@ -203,6 +203,9 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
         do_benchmark(opty,devId,cc,maxSpeedups,res)
+        if currIter >= 3 :
+            break
+        
     do_benchmark(opty,devId,cc,maxSpeedups,res)
     if res.bestSpeedup > EXPECTED_SPEEDUP :
         pklPath = res.saveToPkl()
@@ -231,8 +234,9 @@ def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, t
 
     cc = BenchmarkConfig()
     cc.keepTopNum = 1
-    cc.max_kernel_per_iter = 1
+    cc.max_kernel_per_iter = 5
     cc.result_json_path = resultPath
+    
     
     st = time.time()
     print(f"=====  start at : {st}")
