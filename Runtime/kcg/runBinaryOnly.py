@@ -29,12 +29,12 @@ def row_wise_softmax(matrix, dim=-1):
 
 
 def perf(fn) :
-    st = torch.cuda.Event(enable_timing=True)
-    et = torch.cuda.Event(enable_timing=True)
+    st = torch_ns.Event(enable_timing=True)
+    et = torch_ns.Event(enable_timing=True)
     st.record()
     fn()
     et.record()
-    torch.cuda.synchronize()
+    torch_ns.synchronize()
     t = st.elapsed_time(et)
     return t
 

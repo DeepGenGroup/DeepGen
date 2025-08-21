@@ -43,9 +43,9 @@ def init_cuda(_devId : List) :
     print("init_cuda devid=",_devId)
     DeviceInfo.set_visible_devices(_devId)
     DeviceInfo.set_current_device(_devId[0])  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
-    if not torch.cuda.is_available() :
-        torch.cuda.init()
-        torch.cuda.empty_cache()
+    if not torch_ns.is_available() :
+        torch_ns.init()
+        torch_ns.empty_cache()
 
 def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int) :
     # print("enter __compile_task_func",flush=True)

@@ -264,12 +264,12 @@ def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) 
 def evaluate_model_time(f : Callable) -> Tuple[torch.Tensor, float]:
     ret = []
     for i in range(5):
-        ev_st = torch.cuda.Event(enable_timing=True)
-        ev_et = torch.cuda.Event(enable_timing=True)
+        ev_st = torch_ns.Event(enable_timing=True)
+        ev_et = torch_ns.Event(enable_timing=True)
         ev_st.record()
         out1 = f()
         ev_et.record()
-        torch.cuda.synchronize()
+        torch_ns.synchronize()
         eps = ev_st.elapsed_time(ev_et)
         ret.append(eps)
     return (out1, np.median(ret))
@@ -331,12 +331,12 @@ def release_model(model):
     gc.collect()  # 回收Python对象
     
     # 3.3 清空CUDA缓存
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()  # 释放未使用的GPU显存
+    if torch_ns.is_available():
+        torch_ns.empty_cache()  # 释放未使用的GPU显存
     
     # 3.4 验证内存释放
-    if torch.cuda.is_available():
-        print(f"释放后GPU内存: {torch.cuda.memory_allocated()/1e6:.2f} MB")
+    if torch_ns.is_available():
+        print(f"释放后GPU内存: {torch_ns.memory_allocated()/1e6:.2f} MB")
 
 
 

@@ -2,15 +2,15 @@
 import os
 import re
 import subprocess
-import torch
+from kcg.TorchNamespace import *
 
 def get_current_device():
     import torch
-    return torch.cuda.current_device()
+    return torch_ns.current_device()
 
 def get_device_capability(idx):
     import torch
-    return torch.cuda.get_device_capability(idx)
+    return torch_ns.get_device_capability(idx)
 
 def get_cuda_capability(capability):
     if capability is None:

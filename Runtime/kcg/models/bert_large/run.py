@@ -5,14 +5,14 @@ import torch
 def test_model(model, input):
     times = []
     for i in range(20):
-        start_event = torch.cuda.Event(enable_timing=True)
-        end_event = torch.cuda.Event(enable_timing=True)
+        start_event = torch_ns.Event(enable_timing=True)
+        end_event = torch_ns.Event(enable_timing=True)
         start_event.record()
 
         output = model(input)
 
         end_event.record()
-        torch.cuda.synchronize()
+        torch_ns.synchronize()
         elapsed_time = start_event.elapsed_time(end_event)
         times.append(elapsed_time)
     times = sorted(times)

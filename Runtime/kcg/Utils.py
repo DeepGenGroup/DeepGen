@@ -21,6 +21,7 @@ import torch
 from typing import List,Tuple,Dict
 from datetime import datetime
 import traceback
+from kcg.TorchNamespace import *
 
 class CacheManager(ABC):
     def __init__(self, key):
@@ -410,17 +411,17 @@ class DeviceInfo :
             return _cuda_getCurrentRawStream(idx)
         except ImportError:
             import torch
-            return torch.cuda.current_stream(idx).cuda_stream
+            return torch_ns.current_stream(idx).cuda_stream
 
     @staticmethod
     def get_current_device():
         import torch
-        return torch.cuda.current_device()
+        return torch_ns.current_device()
 
     @staticmethod
     def set_current_device(idx):
         import torch
-        torch.cuda.set_device(idx)
+        torch_ns.set_device(idx)
 
     @staticmethod
     def set_visible_devices(devids : List):
@@ -448,7 +449,7 @@ class DeviceInfo :
     @staticmethod
     def get_device_capability(idx):
         import torch
-        return torch.cuda.get_device_capability(idx)
+        return torch_ns.get_device_capability(idx)
     
     @staticmethod
     def get_warp_size():
@@ -463,9 +464,9 @@ class DeviceInfo :
         print("init_cuda devid=",_devId)
         DeviceInfo.set_visible_devices(_devId)
         DeviceInfo.set_current_device(_devId[0])  # no comment! set_current_device() still essential for gpu device initialilze. otherwise error occurs
-        if not torch.cuda.is_available() :
-            torch.cuda.init()
-            torch.cuda.empty_cache()
+        if not torch_ns.is_available() :
+            torch_ns.init()
+            torch_ns.empty_cache()
     
     @staticmethod
     def __init_gpu_info() :
