@@ -52,7 +52,7 @@ def run(max_seq_len=2048, max_batch_size=16, vocab_size=32000):
     
 # 如何运行模型
 def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
-    input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
+    # input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
     def _f() :
         out = model(input_ids)
         return out
@@ -82,9 +82,9 @@ if __name__ == "__main__":
     # optimizedModel = get_op_optimized_model(model).to(devid)
     
     # 手动注册已经调好的kernl
-    registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
+    # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
-    # compile_model(7, run_model(optimizedModel,args,input_ids))
+    compile_model(devid, run_model(model, args, input_ids))
     
     # if isBase :
     def f_base():
@@ -102,11 +102,12 @@ if __name__ == "__main__":
     out0,t0 = evaluate_model_time(f_base)
     # out1,t1 = evaluate_model_time(f_benchmark)
     
-    print(f"=== model run time : {t0}, ")
-    opCallCounter = OpProxy.GetOpCallCounts()
+    # print(f"=== model run time : {t0}, ")
+    # opCallCounter = OpProxy.GetOpCallCounts()
     # print("==== call ops :",opCallCounter)
     # mmCallCount = opCallCounter[matmul.MatmulOp.__name__]
     
+    print("===== model test done! ")
     # if torch.allclose(out0,out1,atol=1e-1,rtol=1e-1):
     #     print("===== model test correct ")
     # else:

@@ -108,9 +108,9 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
     acc = 0
     if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
         acc = t0 / t
-        print(f"Test Correct! speedup = {acc}")
+        print(f"kernl test Correct!")
     else:
-        print("Test Error!")
+        print("kernl test Error!")
     return (acc,cfg.kernelFuncName)
    
 def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tuneResult : TuneResult):

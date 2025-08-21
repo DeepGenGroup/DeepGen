@@ -124,7 +124,7 @@ class OpProxy :
                     return c
                 return _f()
         OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
-        print("select default matmul")
+        # print("select default matmul")
         return default
     
     def __select_attention(q:torch.Tensor, k:torch.Tensor, v:torch.Tensor, batch, head_num, seq_len, head_dim, f_matmul : Callable, mask) :
@@ -151,7 +151,7 @@ class OpProxy :
                     return o
                 return _f()
         OpProxy.collector.addInfo(attention.AttentionOp,[batch, head_num, seq_len, head_dim], q.dtype)
-        print("select default attn")
+        # print("select default attn")
         return default()
         
     @staticmethod

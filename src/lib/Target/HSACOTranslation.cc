@@ -339,7 +339,7 @@ std::string generateAmdgcnAndHsacoFromLLIRFile(
     } else {
         // std::cout << "write amdgcn error!" << std::endl;
     }
-    std::cout << "amdgcnpath=" << amdgcnPath << std::endl;
+    // std::cout << "amdgcnpath=" << amdgcnPath << std::endl;
     // std::cout << "hsacopath=" << hsacoPath << std::endl;
     return hsacoPath;
 }
