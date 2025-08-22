@@ -572,12 +572,12 @@ class MatmulOp(OpInterface) :
         
         epsList = []
         for i in range(5) :
-            ev_start = torch.cuda.Event(enable_timing=True)
-            ev_end = torch.cuda.Event(enable_timing=True)
+            ev_start = torch_ns.Event(enable_timing=True)
+            ev_end = torch_ns.Event(enable_timing=True)
             ev_start.record()
             self.OutputTensor_Baseline = torchMM(matrixA, matrixB)
             ev_end.record()
-            torch.cuda.synchronize()
+            torch_ns.synchronize()
             eps = ev_start.elapsed_time(ev_end)
             epsList.append(eps)
             
@@ -588,12 +588,12 @@ class MatmulOp(OpInterface) :
         eps = []
         for i in range(benchmarkCount):
             a,b,c = self.GetBenchmarkInputTensor(devId)
-            st = torch.cuda.Event(enable_timing=True)
-            et = torch.cuda.Event(enable_timing=True)
+            st = torch_ns.Event(enable_timing=True)
+            et = torch_ns.Event(enable_timing=True)
             st.record()
             packedKernel.run(a,b,c)
             et.record()
-            torch.cuda.synchronize()
+            torch_ns.synchronize()
             elapsed_time = st.elapsed_time(et)
             eps.append(elapsed_time)
         t = np.median(eps)

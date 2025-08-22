@@ -573,8 +573,8 @@ class AttentionOp(OpInterface) :
     
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
         [q,k,v] = self.GetBaselineInputTensor(devId)
-        ev_start = torch.cuda.Event(enable_timing=True)
-        ev_end = torch.cuda.Event(enable_timing=True)
+        ev_start = torch_ns.Event(enable_timing=True)
+        ev_end = torch_ns.Event(enable_timing=True)
         d = q.shape[1] * q.shape[3]
         ev_start.record()
         p = torch.matmul(q, k) 
@@ -582,18 +582,18 @@ class AttentionOp(OpInterface) :
         s = F.softmax(p, dim=-1)
         self.OutputTensor_Baseline = torch.matmul(s,v)
         ev_end.record()
-        torch.cuda.synchronize()
+        torch_ns.synchronize()
         eps = ev_start.elapsed_time(ev_end)
         return (self.OutputTensor_Baseline, eps)
     
     def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         [a,b,c,d] = self.GetBenchmarkInputTensor(devId)
-        st = torch.cuda.Event(enable_timing=True)
-        et = torch.cuda.Event(enable_timing=True)
+        st = torch_ns.Event(enable_timing=True)
+        et = torch_ns.Event(enable_timing=True)
         st.record()
         packedKernel.run(a,b,c,d)
         et.record()
-        torch.cuda.synchronize()
+        torch_ns.synchronize()
         # print(d)
         elapsed_time = st.elapsed_time(et)
         return (d,elapsed_time)
