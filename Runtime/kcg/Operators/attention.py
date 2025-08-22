@@ -434,9 +434,9 @@ class AttentionOp(OpInterface) :
             # print(f"GetBaselineInputTensor : shape = {b0,b1,m,n}")
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             # print("ety =", ety)
-            q = torch.ones((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
-            k = torch.ones((bs,hn,hd,sl ),dtype=ety, device=f"cuda:{devId}" )
-            v = torch.ones((bs,hn,sl,hd ),dtype=ety, device=f"cuda:{devId}" )
+            q = torch.ones((bs,hn,sl,hd ),dtype=ety, device= dev_name(devId) )  # matmul(softmax(matmul(mn, nm)) , mn) = mn
+            k = torch.ones((bs,hn,hd,sl ),dtype=ety, device= dev_name(devId) )
+            v = torch.ones((bs,hn,sl,hd ),dtype=ety, device= dev_name(devId) )
             self.InputTensors_Baseline = [q,k,v]
         return self.InputTensors_Baseline
 
@@ -450,7 +450,7 @@ class AttentionOp(OpInterface) :
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             qq = q.transpose(-1,-2).contiguous() 
             kk = k
-            d = torch.empty((b0, b1,m,n), dtype=ety, device=f"cuda:{devId}")
+            d = torch.empty((b0, b1,m,n), dtype=ety, device= dev_name(devId) )
             self.InputTensors_Benchmark = [qq,kk,v,d]
         return self.InputTensors_Benchmark
 
@@ -588,15 +588,6 @@ class AttentionOp(OpInterface) :
     
     def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         [a,b,c,d] = self.GetBenchmarkInputTensor(devId)
-        # print("a.shape = ",a.shape)
-        # print("b.shape = ",b.shape)
-        # print("c.shape = ",c.shape)
-        # print("d.shape = ",d.shape)
-        # a = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
-        # b = torch.rand((1, 32, 128,2048),dtype=torch.float32, device=f"cuda:{devId}")
-        # c = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
-        # d = torch.rand((1, 32, 2048, 128),dtype=torch.float32, device=f"cuda:{devId}")
-        # assert self.InputTensors_Benchmark  is not None, "error benchmark"
         st = torch.cuda.Event(enable_timing=True)
         et = torch.cuda.Event(enable_timing=True)
         st.record()
@@ -620,5 +611,5 @@ class AttentionOp(OpInterface) :
         if self.OutputTensor_Baseline is None :
             b,bb,m,n = self.BaseArgs.getIntDatalist()
             dt = self.BaseArgs.getTorchDType()
-            self.OutputTensor_Baseline = torch.empty(m,n,dtype=dt, device=f'cuda:{devId}')
+            self.OutputTensor_Baseline = torch.empty(m,n,dtype=dt, device= dev_name(devId))
 

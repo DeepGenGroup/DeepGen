@@ -117,7 +117,7 @@ class OpProxy :
             if isBatchEqual and [m,n,k] == [mm,nn,kk]: 
                 def _f() :
                     shapeC = bb + [m,n]
-                    c = torch.empty(shapeC,dtype=ToTorchType(EnumKernelDType(dt)), device=f'cuda:{dev}')
+                    c = torch.empty(shapeC,dtype=ToTorchType(EnumKernelDType(dt)), device= dev_name(dev))
                     f = OpInjector(dev).parseOp(tr.bestConfigPkl, matmul.MatmulOp)
                     aT = a.transpose(-1,-2).contiguous()
                     f(aT,b,c)
@@ -144,7 +144,7 @@ class OpProxy :
             if [_batch, _head_num, _seq_len, _head_dim] == [batch, head_num, seq_len, head_dim] :
                 def _f() :
                     shapeO = [batch, head_num, seq_len, head_dim]
-                    o = torch.empty(shapeO,dtype=ToTorchType(EnumKernelDType(dt)), device=f'cuda:{dev}')
+                    o = torch.empty(shapeO,dtype=ToTorchType(EnumKernelDType(dt)), device= dev_name(dev))
                     f = OpInjector(dev).parseOp(tr.bestConfigPkl, attention.AttentionOp)
                     qT = q.transpose(-1,-2).contiguous()
                     f(qT,k,v,o)

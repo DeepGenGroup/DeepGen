@@ -424,8 +424,8 @@ class MatmulOp(OpInterface) :
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             shapeA = batch + [m,k]
             shapeB = batch + [k,n]
-            a = torch.rand(shapeA,dtype=ety, device=f"cuda:{devId}" )
-            b = torch.rand(shapeB,dtype=ety, device=f"cuda:{devId}" )
+            a = torch.rand(shapeA,dtype=ety, device= dev_name(devId) )
+            b = torch.rand(shapeB,dtype=ety, device= dev_name(devId) )
             self.InputTensors_Baseline = [a,b]
         return self.InputTensors_Baseline
             
@@ -437,10 +437,7 @@ class MatmulOp(OpInterface) :
             ety = ToTorchType(EnumKernelDType(dtypeInt))
             aa = a.transpose(-1,-2).contiguous()
             shapeC = batch + [m,n]
-            c = torch.empty(shapeC, dtype=ety, device=f"cuda:{devId}")
-            # else :
-            #     aa = a.transpose(0,1).contiguous()
-            #     c = torch.empty((m,n), dtype=ety, device=f"cuda:{devId}")
+            c = torch.empty(shapeC, dtype=ety, device= dev_name(devId) )
             self.InputTensors_Benchmark = [aa,b,c]
         return self.InputTensors_Benchmark
     
@@ -614,8 +611,8 @@ class MatmulOp(OpInterface) :
             datatype = ToTorchType(EnumKernelDType(dtypeInt))
             shapeA = batch + [m,k]
             shapeB = batch + [k,n]
-            matA = torch.randn(shapeA, dtype= datatype, device=f'cuda:{devId}')
-            matB = torch.randn(shapeB, dtype= datatype, device=f'cuda:{devId}')
+            matA = torch.randn(shapeA, dtype= datatype, device= dev_name(devId))
+            matB = torch.randn(shapeB, dtype= datatype, device= dev_name(devId))
             self.InputTensors_Baseline = [matA ,matB]
         else:
             matA, matB = self.InputTensors_Baseline
@@ -639,18 +636,10 @@ class MatmulOp(OpInterface) :
             b,m,n,k,dtypeInt = self.BaseArgs.getIntDatalist()
             dt = ToTorchType(EnumKernelDType(dtypeInt))
             shapeC = b + [m,n]
-            ret = torch.empty(shapeC,dtype=dt, device=f'cuda:{devId}')
+            ret = torch.empty(shapeC,dtype=dt, device= dev_name(devId))
             self.OutputTensor_Baseline = ret
 
     
-    # def GetBenchmarkOutputTensor(self,  devId : int) -> torch.Tensor :
-    #     b,m,n,k,dtypeInt = self.BaseArgs.getIntDatalist()
-    #     dt = ToTorchType(EnumKernelDType(dtypeInt))
-    #     if b > 1:
-    #         ret = torch.empty(b,m,n,dtype=dt, device=f'cuda:{devId}')
-    #     else:
-    #         ret = torch.empty(m,n,dtype=dt, device=f'cuda:{devId}')
-    #     return ret
 
     
     

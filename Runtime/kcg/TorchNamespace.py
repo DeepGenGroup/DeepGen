@@ -17,3 +17,7 @@ except ImportError :
 def get_platform_type() :
     return __plat_kind
 
+def dev_name(devid) :
+    if get_platform_type() == 'npu' :
+        return f"npu:{devid}"
+    return f"cuda:{devid}"
