@@ -290,15 +290,23 @@ class CompiledKernel:
             self.release()
 
     def setDevice(self,devId : int) :
-        if self.m_launcher is None:
-            self.buildLoaderAndLauncher()
-        self.m_launcher.m_kernelLib.m_device = devId
-    
+        try:
+            if self.m_launcher is None:
+                self.buildLoaderAndLauncher()
+            self.m_launcher.m_kernelLib.m_device = devId
+        except Exception :
+            ...
+        except RuntimeError :
+            ...
     def run(self,*args):
-        if self.m_launcher is None :
-            self.buildLoaderAndLauncher()
-        self.m_launcher.launchKernel(*args)
-    
+        try:
+            if self.m_launcher is None :
+                self.buildLoaderAndLauncher()
+            self.m_launcher.launchKernel(*args)
+        except Exception :
+            ...
+        except RuntimeError :
+            ...
     def release(self):
         self.m_launcher.releaseKernel()
 

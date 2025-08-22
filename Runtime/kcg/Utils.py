@@ -219,12 +219,20 @@ def cuda_include_dir():
 
 
 def build(name, src, srcdir):
-    if is_hip():
-        hip_lib_dir = os.path.join(rocm_path_dir(), "lib")
-        hip_include_dir = os.path.join(rocm_path_dir(), "include")
-    else:
-        cuda_lib_dirs = libcuda_dirs()
-        cu_include_dir = cuda_include_dir()
+    p = get_platform_type()
+    lib_dir = '/usr/lib'
+    include_dir = '/usr/include'
+    if p == 'dcu' :
+        if is_hip():
+            lib_dir = os.path.join(rocm_path_dir(), "lib")
+            include_dir = os.path.join(rocm_path_dir(), "include")
+        else:
+            lib_dir = libcuda_dirs()
+            include_dir = cuda_include_dir()
+    elif p == 'npu' or p == 'mlu' :
+        ...
+    else :
+        ...
     suffix = sysconfig.get_config_var('EXT_SUFFIX')
     so = os.path.join(srcdir, '{name}{suffix}'.format(name=name, suffix=suffix))
     # try to avoid setuptools if possible
@@ -247,25 +255,27 @@ def build(name, src, srcdir):
         scheme = 'posix_prefix'
     py_include_dir = sysconfig.get_paths(scheme=scheme)["include"]
 
-    if is_hip():
-        ret = subprocess.check_call([
-            cc, src, f"-I{hip_include_dir}", f"-I{py_include_dir}", f"-I{srcdir}", "-shared", "-fPIC",
-            f"-L{hip_lib_dir}", "-lamdhip64", f"-Wl,-rpath,{hip_lib_dir}", "-o", so
-        ])
-    else:
-        cc_cmd = [
-            cc, src, "-O3", f"-I{cu_include_dir}", f"-I{py_include_dir}", f"-I{srcdir}", "-shared", "-fPIC", "-lcuda",
-            "-o", so
-        ]
-        cc_cmd += [f"-L{dir}" for dir in cuda_lib_dirs]
-        ret = subprocess.check_call(cc_cmd)
-
+    if p=='dcu':
+        if is_hip():
+            ret = subprocess.check_call([
+                cc, src, f"-I{include_dir}", f"-I{py_include_dir}", f"-I{srcdir}", "-shared", "-fPIC",
+                f"-L{lib_dir}", "-lamdhip64", f"-Wl,-rpath,{lib_dir}", "-o", so
+            ])
+        else:
+            cc_cmd = [
+                cc, src, "-O3", f"-I{include_dir}", f"-I{py_include_dir}", f"-I{srcdir}", "-shared", "-fPIC", "-lcuda",
+                "-o", so
+            ]
+            cc_cmd += [f"-L{dir}" for dir in lib_dir]
+            ret = subprocess.check_call(cc_cmd)
+    elif p == 'mlu' or p == 'npu':
+        ret = 0
     if ret == 0:
         return so
     # fallback on setuptools
     extra_compile_args = []
-    library_dirs = cuda_lib_dirs
-    include_dirs = [srcdir, cu_include_dir]
+    library_dirs = lib_dir
+    include_dirs = [srcdir, include_dir]
     libraries = ['cuda']
     # extra arguments
     extra_link_args = []
