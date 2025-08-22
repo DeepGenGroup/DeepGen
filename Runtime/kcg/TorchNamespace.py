@@ -20,4 +20,6 @@ def get_platform_type() :
 def dev_name(devid) :
     if get_platform_type() == 'npu' :
         return f"npu:{devid}"
+    if get_platform_type() == 'mlu' :
+        return f"mlu:{devid}"
     return f"cuda:{devid}"
