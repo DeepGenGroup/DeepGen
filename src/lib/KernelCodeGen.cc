@@ -256,42 +256,44 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   if (mlir::failed(pm1.run(mod)))
     return false;
   
-  // == lowering to llvm  ==
-  mlir::PassManager pm2(context);
-  // cf to llvm
-  ConvertControlFlowToLLVMPassOptions cfOptions;
-  cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  pm2.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));
-  // vector to llvm
-  pm2.addPass(createVectorToLLVMPass(INDEX_BIT_WIDTH));
-  // memref to llvm
-  FinalizeMemRefToLLVMConversionPassOptions memrefOptions;
-  memrefOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  // memrefOptions.useAlignedAlloc = true;
-  pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));
-  pm2.addPass(createGlobalShmSetZeroPass());
-  // func to llvm
-  ConvertFuncToLLVMPassOptions funcOptions;
-  funcOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  funcOptions.useBarePtrCallConv = true;
-  pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));
-  pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));  // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
-  // gpu to rocdl/nvvm
-  if(this->target == Target::CUDA || this->target == Target::ROCm ){
-    pm2.addPass(createGPUToROCDLOrNVVMPass(this->target, INDEX_BIT_WIDTH));
-  }
-  // math to llvm
-  pm2.addPass(mlir::createConvertMathToLLVMPass());  // ConvertMathToLLVMPassOptions options.approximateLog1p 精度换性能(true)
-  // arith to llvm
-  ArithToLLVMConversionPassOptions arithOptions;
-  arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
-  pm2.addPass(mlir::createArithToLLVMConversionPass(arithOptions));
-  // simipfy
-  pm2.addPass(mlir::createCanonicalizerPass());
-  pm2.addPass(mlir::createCSEPass());
-  pm2.addPass(mlir::createSymbolDCEPass());
-  if (mlir::failed(pm2.run(mod))){
-    return false;
+  if(this->target == Target::CUDA || this->target == Target::ROCm){
+    // == lowering to llvm  ==
+    mlir::PassManager pm2(context);
+    // cf to llvm
+    ConvertControlFlowToLLVMPassOptions cfOptions;
+    cfOptions.indexBitwidth = INDEX_BIT_WIDTH;
+    pm2.addPass(mlir::createConvertControlFlowToLLVMPass(cfOptions));
+    // vector to llvm
+    pm2.addPass(createVectorToLLVMPass(INDEX_BIT_WIDTH));
+    // memref to llvm
+    FinalizeMemRefToLLVMConversionPassOptions memrefOptions;
+    memrefOptions.indexBitwidth = INDEX_BIT_WIDTH;
+    // memrefOptions.useAlignedAlloc = true;
+    pm2.addPass(mlir::createFinalizeMemRefToLLVMConversionPass(memrefOptions));
+    pm2.addPass(createGlobalShmSetZeroPass());
+    // func to llvm
+    ConvertFuncToLLVMPassOptions funcOptions;
+    funcOptions.indexBitwidth = INDEX_BIT_WIDTH;
+    funcOptions.useBarePtrCallConv = true;
+    pm2.addPass(mlir::createConvertFuncToLLVMPass(funcOptions));
+    pm2.addPass(createLLVMFuncOpAddGPUAttrPass(target));  // llvmfuncOp add nvvm/rocdl.kernel or nvvm.maxnid
+    // gpu to rocdl/nvvm
+    if(this->target == Target::CUDA || this->target == Target::ROCm ){
+      pm2.addPass(createGPUToROCDLOrNVVMPass(this->target, INDEX_BIT_WIDTH));
+    }
+    // math to llvm
+    pm2.addPass(mlir::createConvertMathToLLVMPass());  // ConvertMathToLLVMPassOptions options.approximateLog1p 精度换性能(true)
+    // arith to llvm
+    ArithToLLVMConversionPassOptions arithOptions;
+    arithOptions.indexBitwidth = INDEX_BIT_WIDTH;
+    pm2.addPass(mlir::createArithToLLVMConversionPass(arithOptions));
+    // simipfy
+    pm2.addPass(mlir::createCanonicalizerPass());
+    pm2.addPass(mlir::createCSEPass());
+    pm2.addPass(mlir::createSymbolDCEPass());
+    if (mlir::failed(pm2.run(mod))){
+      return false;
+    }
   }
   LOG_DEBUG("========== after lowering_ =======\n",mod);
   return true;
@@ -465,7 +467,8 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
     const std::string gfx_features{""};
     // const std::string gfx_features{"+code-object-v4"};
     return generateAmdgcnAndHsacoFromLLIRFile(llvmIR, "gfx" + arch, gfx_triple, gfx_features);
-  } else {
+  }
+  if(target == Target::CUDA){
     std::string llvmIR = std::move(translateMLIRToLLVMIR(mod, target));
     // llvm::outs() << " =========== after LLVM IR ============\n";
     // llvm::outs() << llvmIR << "\n";
@@ -474,6 +477,7 @@ std::string KernelCodeGenerator::translate(mlir::ModuleOp& mod) {
     auto paths = generatePTXAndCubinFromLLIRFile(llvmIR, std::stoi(arch), version);
     return paths.second;
   }
+  return "-";
 #endif
 
 #if 0  // 外部导入 mlir llvm

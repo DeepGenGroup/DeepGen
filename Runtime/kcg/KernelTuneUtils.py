@@ -49,14 +49,18 @@ def init_cuda(_devId : List) :
 
 def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int) :
     # print("enter __compile_task_func",flush=True)
-    op = OpTy()
-    # print("[D] info.baseArgs = ", info.baseArgs)
-    # print("[D] info dtype =",info.torchDataType)
-    ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info)
-    pklName = f"{PathManager.pikle_dir()}/{deviceId}/kfg_{index}.pkl"
-    # print(f"__compile_task_func : ba = {ba}")
-    serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
-
+    try:
+        op = OpTy()
+        # print("[D] info.baseArgs = ", info.baseArgs)
+        # print("[D] info dtype =",info.torchDataType)
+        ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info)
+        pklName = f"{PathManager.pikle_dir()}/{deviceId}/kfg_{index}.pkl"
+        # print(f"__compile_task_func : ba = {ba}")
+        serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
+    except RuntimeError :
+        ...
+    except Exception :
+        ...
 
 
 def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 5) -> bool:
@@ -218,15 +222,22 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
 def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, tuningSpace : TsGeneratorType) -> TuneResult :
 
     assert os.path.exists(cfgFile), f'Tuningparam file {cfgFile} not exist'
-
-    if is_hip():
-        backend = EnumBackendType.HIP
-        arch = "906"
+    p = get_platform_type()
+    if p == 'dcu':
+        if is_hip():
+            backend = EnumBackendType.HIP
+            arch = "906"
+        else:
+            backend = EnumBackendType.CUDA
+            arch = "80"
+    elif p == 'npu' :
+        backend = EnumBackendType.NPU
+        arch = "-"
+    elif p == 'mlu' :
+        backend = EnumBackendType.MLU
+        arch = "-"
     else:
-        backend = EnumBackendType.CUDA
-        arch = "80"
-    backend = EnumBackendType.HIP
-    arch = "906"
+        assert False
     PathManager.init(clearPkl=True, clearCache=True)
     os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
     resultPath = str(PathManager.project_dir()) + "/testResult.json"
