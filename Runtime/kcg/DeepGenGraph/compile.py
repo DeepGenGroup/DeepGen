@@ -59,7 +59,7 @@ def compile(model, input_names, inputs, output_names, system):
     import time
     tik = time.time()
     module = deepgengraph_from_onnx(onnx_model, func_name)
-    print("--------step: aft deepgengraph_from_onnx----------")
+    # print("--------step: aft deepgengraph_from_onnx----------")
     # module.dump()
     fission(module)
     # 3rd/deepgengraph/python/deepgengraph/transform/fission.py
@@ -70,12 +70,12 @@ def compile(model, input_names, inputs, output_names, system):
     # 掩码优化：在掩码后乘全非零常数时省去一次乘法。
     ### LowerComplexReducePass，3rd/deepgengraph/lib/Dialect/Deepgengraph/Transforms/LowerComplexReduce.cpp
     # 展开 softmax、normalize 算子成基础op
-    print("--------step: aft fission----------")
+    # print("--------step: aft fission----------")
     # module.dump()
     simplify(module)
     # 3rd/deepgengraph/python/deepgengraph/transform/common.py - def simplify()
     # 在执行一遍SimplifyPass
-    print("--------step: aft simplify----------")
+    # print("--------step: aft simplify----------")
     # module.dump()
     partition = Connected(module, func_name)
     # 3rd/deepgengraph/python/deepgengraph/partition/connected.py -- __init__()
@@ -94,29 +94,28 @@ def compile(model, input_names, inputs, output_names, system):
     # 3rd/deepgengraph/python/deepgengraph/partition/config.py -- optimize(）
     # 在这个pass进行优化以及Codegen
     print("--------step: aft optimize----------")
-    print(partition.module)
+    # print(partition.module)
     analyze_ir_and_gen_code(str(partition.module))
     # partition.module.dump()
     tok = time.time()
     tuning_s = tok - tik
     print(f"tuning time: {tuning_s} sec", flush=True)
-    # perf = partition.profile()
-    # py_str = partition.codegen(perf)
+    perf = partition.profile()
+    py_str = partition.codegen(perf)
 
     our = {}
     import tempfile
     import importlib
     import sys
-    # with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as f:
-    #   f.write(py_str)
-    #   path = f.name
-    # print(f"write code to {path}", flush=True)
-    # spec = importlib.util.spec_from_file_location('our', path)
-    # pymod = importlib.util.module_from_spec(spec)
-    # spec.loader.exec_module(pymod)
-    f=None
+    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as f:
+      f.write(py_str)
+      path = f.name
+    print(f"write code to {path}", flush=True)
+    spec = importlib.util.spec_from_file_location('our', path)
+    pymod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(pymod)
 
-    # f = getattr(pymod, func_name)
+    f = getattr(pymod, func_name)
   elif system == 'flashinfer':
     import flashinfer
     model_name = model.__class__.__name__

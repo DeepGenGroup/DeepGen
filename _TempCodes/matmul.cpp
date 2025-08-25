@@ -1241,7 +1241,7 @@ __global__ void  __launch_bounds__(512) matmul_2(float* A, float* B, float* C, c
       }
     }
   }
-}
+}}
 
 template <
   const int BM,
@@ -2391,32 +2391,32 @@ int main() {
   hipSetDevice(device_id);
 
   const int M = 1024;
-  const int N = 1056;
+  const int N = 1024;
   const int K = 1024;
 
-  const int BM = 64;
-  const int BN = 48;
-  const int BK = 32;
+  const int BM = 32;
+  const int BN = 32;
+  const int BK = 8;
   const int TM = 4;
-  const int TN = 6;
+  const int TN = 4;
 
-  const int GLOB_LOAD_WIDTH_A = 2;
-  const int GLOB_LOAD_WIDTH_B = 2;
+  const int GLOB_LOAD_WIDTH_A = 4;
+  const int GLOB_LOAD_WIDTH_B = 4;
 
-  const int BLOCK_LAYOUT_M = 2;   // BM / TM / WARP_LAYOUT_M
+  const int BLOCK_LAYOUT_M = 1;   // BM / TM / WARP_LAYOUT_M
   const int BLOCK_LAYOUT_N = 1;    // BN / TN / WARP_LAYOUT_N
   const int WARP_LAYOUT_M = 8;
   const int WARP_LAYOUT_N = 8;
 
-  const int WARP_SCATTER_WIDTH_A = 2;
+  const int WARP_SCATTER_WIDTH_A = 4;
   const int WARP_SCATTER_WIDTH_B = 2;
   const int THREAD_SCATTER_WIDTH_A = 2;
   const int THREAD_SCATTER_WIDTH_B = 2;
 
-  const int LOCAL_SPLIT_U = 2;   /*2*/
+  const int LOCAL_SPLIT_U = 1;   /*2*/
   const int BLOCK_MAPPING = 8;
   const int WARP_SIZE = 64;
-  const int GLOB_STORE_WIDTH = 2;
+  const int GLOB_STORE_WIDTH = 1;
 
   float *A = new float[M * K];
   float *B = new float[N * K];
@@ -2470,24 +2470,24 @@ int main() {
     //   LOCAL_SPLIT_U, BLOCK_MAPPING, WARP_SIZE, GLOB_STORE_WIDTH><<<grid_size, block_size>>>(DA, DB, DC, M, N, K);
 
     // 在origin的基础上修改，修改splitu存储方式，直接从shared加到reg上
-    matmul_1<BM, BN, BK, TM, TN, 
+    // matmul_1<BM, BN, BK, TM, TN, 
+    //   GLOB_LOAD_WIDTH_A, GLOB_LOAD_WIDTH_B,
+    //   BLOCK_LAYOUT_M, BLOCK_LAYOUT_N,
+    //   WARP_LAYOUT_M, WARP_LAYOUT_N, 
+    //   WARP_SCATTER_WIDTH_A, WARP_SCATTER_WIDTH_B, 
+    //   THREAD_SCATTER_WIDTH_A, THREAD_SCATTER_WIDTH_B,
+    //   LOCAL_SPLIT_U, BLOCK_MAPPING, WARP_SIZE, GLOB_STORE_WIDTH><<<grid_size, block_size>>>(DA, DB, DC, M, N, K);
+    
+    // 在matmul_1的基础上修改，讲所有glob load的方式改为顺序load
+    // 这个有限制，GLOB_LOAD_WIDTH_A/B必须为BM/BN和GLOB_LOAD_TATOL_WIDTH_A/B的约数
+    // GLOB_STORE_WIDTH必须为BN和GLOB_LOAD_TATOL_WIDTH_C的约数
+    matmul_2<BM, BN, BK, TM, TN, 
       GLOB_LOAD_WIDTH_A, GLOB_LOAD_WIDTH_B,
       BLOCK_LAYOUT_M, BLOCK_LAYOUT_N,
       WARP_LAYOUT_M, WARP_LAYOUT_N, 
       WARP_SCATTER_WIDTH_A, WARP_SCATTER_WIDTH_B, 
       THREAD_SCATTER_WIDTH_A, THREAD_SCATTER_WIDTH_B,
       LOCAL_SPLIT_U, BLOCK_MAPPING, WARP_SIZE, GLOB_STORE_WIDTH><<<grid_size, block_size>>>(DA, DB, DC, M, N, K);
-    
-    // 在matmul_1的基础上修改，讲所有glob load的方式改为顺序load
-    // 这个有限制，GLOB_LOAD_WIDTH_A/B必须为BM/BN和GLOB_LOAD_TATOL_WIDTH_A/B的约数
-    // GLOB_STORE_WIDTH必须为BN和GLOB_LOAD_TATOL_WIDTH_C的约数
-    // matmul_2<BM, BN, BK, TM, TN, 
-      // GLOB_LOAD_WIDTH_A, GLOB_LOAD_WIDTH_B,
-      // BLOCK_LAYOUT_M, BLOCK_LAYOUT_N,
-      // WARP_LAYOUT_M, WARP_LAYOUT_N, 
-      // WARP_SCATTER_WIDTH_A, WARP_SCATTER_WIDTH_B, 
-      // THREAD_SCATTER_WIDTH_A, THREAD_SCATTER_WIDTH_B,
-      // LOCAL_SPLIT_U, BLOCK_MAPPING, WARP_SIZE, GLOB_STORE_WIDTH><<<grid_size, block_size>>>(DA, DB, DC, M, N, K);
 
     // 在matmul_2的基础上修改，将L2 cache的方式修改为s形
     // matmul_3<BM, BN, BK, TM, TN, 

@@ -5,6 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "name": "pydebug: asuka",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${workspaceFolder}/Runtime/kcg/DeepGenGraph/run_kernel.py",
+            "console": "integratedTerminal",
+            "env": {"PYTHONPATH":"${workspaceFolder}/Runtime", "HIP_VISIBLE_DEVICES":"7"},
+            "cwd": "${workspaceFolder}/Runtime/kcg",
+            "python": "/home/bizefeng/anaconda3/envs/deepgengraph/bin/python",
+            "args": ["-s", "our"]
+            // "args": ["/home/xushilong/DeepGen/TuningConfigs/attn_llama2.json", "/home/xushilong/DeepGen/_cluster_run/temp.json", "0", "1", "0", "1.5"]
+        },
+        {
             "name": "pydebug: debugAttention",
             "type": "debugpy",
             "request": "launch",

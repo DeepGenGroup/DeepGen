@@ -28,7 +28,7 @@ def gflops_and_mib(seqlen, f, *args):
 
 @click.command()
 @click.option('--model', '-m', default='attn', help='Model name')
-@click.option('--system', '-s', default='our', help='System name')
+@click.option('--system', '-s', default='torch', help='System name')
 @click.option('--seqlen', default=4096, help='seqlen')
 @click.option('--show_result', is_flag=True, help='show result')
 @click.option('--check/--no-check', default=True, help='check result with torch')
@@ -72,29 +72,29 @@ def main(model, system, seqlen, show_result, check):
     system=system,
   )
 
-  if f is not None :
-    gflops, mib = gflops_and_mib(seqlen, f, *inputs)
-    print(f"{gflops=}", flush=True)
-    print(f"{mib=}", flush=True)
 
-    if check:
-      print(f"checking {system}...")
-      outs_ref = model(*inputs)
-      outs = f(*inputs)
-      torch.cuda.synchronize()
-      compare(outs, outs_ref, output_names)
-      if show_result:
-        display(outs, outs_ref, output_names)
+  gflops, mib = gflops_and_mib(seqlen, f, *inputs)
+  print(f"{gflops=}", flush=True)
+  print(f"{mib=}", flush=True)
+
+  if check:
+    print(f"checking {system}...")
+    outs_ref = model(*inputs)
+    outs = f(*inputs)
+    torch.cuda.synchronize()
+    compare(outs, outs_ref, output_names)
+    if show_result:
+      display(outs, outs_ref, output_names)
     
-  # perf(
-  #   label=system,
-  #   f=f,
-  #   args=inputs,
-  #   run=run,
-  #   warmup=warmup,
-  #   profile=True,
-  #   gflops=gflops,
-  # )
+  perf(
+    label=system,
+    f=f,
+    args=inputs,
+    run=run,
+    warmup=warmup,
+    profile=True,
+    gflops=gflops,
+  )
 
 
 if __name__ == '__main__':

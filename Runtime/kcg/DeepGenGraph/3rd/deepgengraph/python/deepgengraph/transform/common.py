@@ -121,8 +121,8 @@ def optimize(op, context=None):
   simplify(pm)
 
   top_pm.run(op)
-  print("opopopopopopop_squeeze_block")
-  print(op)
+  # print("opopopopopopop_squeeze_block")
+  # print(op)
 
 
 def module_to_py(module):

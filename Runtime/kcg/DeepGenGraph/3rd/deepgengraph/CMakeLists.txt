@@ -8,7 +8,7 @@ endif()
 set(CMAKE_CXX_STANDARD 17)
 
 project(deepgengraph LANGUAGES CXX C)
-set(MLIR_DIR /home/xushilong/llvm-project/build/lib/cmake/mlir)
+set(MLIR_DIR /home/bizefeng/rocmllvm18/llvm-project/build/lib/cmake/mlir)
 find_package(MLIR REQUIRED CONFIG)
 message(STATUS "MLIR_DIR=${MLIR_DIR}")
 message(STATUS "LLVM_DIR=${LLVM_DIR}")
