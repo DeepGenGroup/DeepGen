@@ -634,7 +634,7 @@ class SwinTransformer(nn.Module):
         self.apply(self._init_weights)
 
     def _init_weights(self, m):
-        if isinstance(m, f_linear):
+        if isinstance(m, nn.Linear) or isinstance(m, CustomLinear):
             trunc_normal_(m.weight, std=.02)
             if m.bias is not None:
                 nn.init.constant_(m.bias, 0)

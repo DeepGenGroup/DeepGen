@@ -201,7 +201,7 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 #     # op.Test_baseline(7)
 #     # op.Test_benchmark(kernel,dev)
 
-EXPECTED_SPEEDUP = 0
+EXPECTED_SPEEDUP = 1
 
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
 def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) -> TuneResult:

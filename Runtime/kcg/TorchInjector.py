@@ -98,31 +98,32 @@ class OpProxy :
         
     @staticmethod
     def __select_matmul(a : torch.Tensor, b : torch.Tensor , batch,m,n,k) :
-        default = torch._C._VariableFunctions.matmul(a, b)
+        default = torch.matmul(a, b)
         dev = a.get_device()
-        for tr in OpProxy.__registedKernels_mm :
-            bb,mm,nn,kk = tr.bestKernelBaseArg[0:-1]
-            dt = tr.bestKernelBaseArg[-1]
-            print(f'__select_matmul : tr [bbmmnnkk]={bb,mm,nn,kk}, required [bmnk]={batch,m,n,k}')
-            isBatchEqual = True
-            if len(batch) == 1:
-                if batch[0] == 1 and len(bb) == 0:
-                    isBatchEqual = True
-            else:
-                newbatch = []
-                for _b in batch :
-                    if _b != 1:
-                        newbatch.append(_b)
-                isBatchEqual = bool(bb == newbatch)
-            if isBatchEqual and [m,n,k] == [mm,nn,kk]: 
-                def _f() :
-                    shapeC = bb + [m,n]
-                    c = torch.empty(shapeC,dtype=ToTorchType(EnumKernelDType(dt)), device= dev_name(dev))
-                    f = OpInjector(dev).parseOp(tr.bestConfigPkl, matmul.MatmulOp)
-                    aT = a.transpose(-1,-2).contiguous()
-                    f(aT,b,c)
-                    return c
-                return _f()
+        if get_platform_type() == 'dcu' : 
+            for tr in OpProxy.__registedKernels_mm :
+                bb,mm,nn,kk = tr.bestKernelBaseArg[0:-1]
+                dt = tr.bestKernelBaseArg[-1]
+                # print(f'__select_matmul : tr [bbmmnnkk]={bb,mm,nn,kk}, required [bmnk]={batch,m,n,k}')
+                isBatchEqual = True
+                if len(batch) == 1:
+                    if batch[0] == 1 and len(bb) == 0:
+                        isBatchEqual = True
+                else:
+                    newbatch = []
+                    for _b in batch :
+                        if _b != 1:
+                            newbatch.append(_b)
+                    isBatchEqual = bool(bb == newbatch)
+                if isBatchEqual and [m,n,k] == [mm,nn,kk]: 
+                    def _f() :
+                        shapeC = bb + [m,n]
+                        c = torch.empty(shapeC,dtype=ToTorchType(EnumKernelDType(dt)), device= dev_name(dev))
+                        f = OpInjector(dev).parseOp(tr.bestConfigPkl, matmul.MatmulOp)
+                        aT = a.transpose(-1,-2).contiguous()
+                        f(aT,b,c)
+                        return c
+                    return _f()
         OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
         # print("select default matmul")
         return default
@@ -137,20 +138,21 @@ class OpProxy :
             scores = F.softmax(scores.float(), dim=-1).type_as(q)
             output = f_matmul(scores, v)  # (bs, n_local_heads, seqlen, head_dim)
             return output
-        for tr in OpProxy.__registedKernels_att :
-            if len(tr.bestKernelBaseArg[0:-1]) == 4 :
-                [_batch, _head_num, _seq_len, _head_dim] = tr.bestKernelBaseArg[0:-1]
-                dt = tr.bestKernelBaseArg[-1]
-                # print(f'__select_att : tr = {_batch, _head_num, _seq_len, _head_dim}, required ={batch, head_num, seq_len, head_dim}')
-                if [_batch, _head_num, _seq_len, _head_dim] == [batch, head_num, seq_len, head_dim] :
-                    def _f() :
-                        shapeO = [batch, head_num, seq_len, head_dim]
-                        o = torch.empty(shapeO,dtype=ToTorchType(EnumKernelDType(dt)), device=f'npu:{dev}')
-                        f = OpInjector(dev).parseOp(tr.bestConfigPkl, attention.AttentionOp)
-                        qT = q.transpose(-1,-2).contiguous()
-                        f(qT,k,v,o)
-                        return o
-                    return _f()
+        if get_platform_type() == 'dcu' : 
+            for tr in OpProxy.__registedKernels_att :
+                if len(tr.bestKernelBaseArg[0:-1]) == 4 :
+                    [_batch, _head_num, _seq_len, _head_dim] = tr.bestKernelBaseArg[0:-1]
+                    dt = tr.bestKernelBaseArg[-1]
+                    # print(f'__select_att : tr = {_batch, _head_num, _seq_len, _head_dim}, required ={batch, head_num, seq_len, head_dim}')
+                    if [_batch, _head_num, _seq_len, _head_dim] == [batch, head_num, seq_len, head_dim] :
+                        def _f() :
+                            shapeO = [batch, head_num, seq_len, head_dim]
+                            o = torch.empty(shapeO,dtype=ToTorchType(EnumKernelDType(dt)), device=f'npu:{dev}')
+                            f = OpInjector(dev).parseOp(tr.bestConfigPkl, attention.AttentionOp)
+                            qT = q.transpose(-1,-2).contiguous()
+                            f(qT,k,v,o)
+                            return o
+                        return _f()
         OpProxy.collector.addInfo(attention.AttentionOp,[batch, head_num, seq_len, head_dim], q.dtype)
         # print("select default attn")
         return default()

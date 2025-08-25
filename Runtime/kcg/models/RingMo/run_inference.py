@@ -66,18 +66,18 @@ def run(max_seq_len=2048, max_batch_size=16, vocab_size=32000):
     
     
 # 如何运行模型
-def run_model(model, args : ModelArgs, input_ids : torch.Tensor) :
+def run_model(model, args : ModelArgs, input_ids : torch.Tensor, devid) :
     # input_ids = torch.randint(0, args.vocab_size, (1, args.max_seq_len)).to(7)
-    input_tensor = torch.randn(1, 3, 192, 192).to(7)
+    # input_tensor = torch.randn(1, 3, 192, 192).to(devid)
     def _f() :
-        out = model(input_tensor)
+        out = model(input_ids)
         return out
     return _f
     
 
 def main():
     isBase = sys.argv[1] == 'base'
-    devid = 7
+    devid = 0
     
     PathManager.init(clearPkl=True, clearCache=True, clearTmp=True, clearDump=True)
     DeviceInfo.init_cuda([devid])
@@ -104,15 +104,15 @@ def main():
     # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
     collectInfoOnly = False
-    compile_model(devid, run_model(model,args,input_tensor),collectInfoOnly)
+    compile_model(devid, run_model(model,args,input_tensor,devid),collectInfoOnly)
     for (ty,args) in OpProxy.collector.getInfo() :
         print(f"---- {ty.__name__} : {args}")
     # if isBase :
     def f_base():
         if isBase:
-            print("========= eval base time =======",flush=True)
+            print("========= eval base =======",flush=True)
         else :
-            print("========= eval bench time =======",flush=True)
+            print("========= eval bench =======",flush=True)
         return model(input_tensor)
     # else:
     # def f_benchmark():

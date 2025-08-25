@@ -311,10 +311,10 @@ def registerPreCompiledKernel(opTy : Type[OpInterface] ,kernlName : str, speedup
             arch = "906"
             backendType = EnumBackendType.HIP
     if p == 'mlu' :
-        arch = "370"
+        arch = "-"
         backendType = EnumBackendType.MLU
     if p == 'npu' :
-        arch = "370"
+        arch = "-"
         backendType = EnumBackendType.NPU
         
     ba, kernelCfg,  packedKernl = op.Compile(devId,backendType,arch,info)    
