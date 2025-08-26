@@ -5,7 +5,7 @@ import random
 
 from deepgengraph_exp.cases.kernels import *
 
-from deepgengraph_exp.utils import perf, loss, compare, display
+from deepgengraph_exp.utils import perf, loss, compare, display, AttnInfo
 
 from compile import compile
 
@@ -26,12 +26,12 @@ def gflops_and_mib(seqlen, f, *args):
 
 
 
-@click.command()
-@click.option('--model', '-m', default='attn', help='Model name')
-@click.option('--system', '-s', default='torch', help='System name')
-@click.option('--seqlen', default=4096, help='seqlen')
-@click.option('--show_result', is_flag=True, help='show result')
-@click.option('--check/--no-check', default=True, help='check result with torch')
+# @click.command()
+# @click.option('--model', '-m', default='attn', help='Model name')
+# @click.option('--system', '-s', default='torch', help='System name')
+# @click.option('--seqlen', default=4096, help='seqlen')
+# @click.option('--show_result', is_flag=True, help='show result')
+# @click.option('--check/--no-check', default=True, help='check result with torch')
 def main(model, system, seqlen, show_result, check, extra_args = []):
   print(f"{model=} {system=} {seqlen=}")
   assert model in KERNEL_ZOO, f"model {model} not found in KERNEL_ZOO {KERNEL_ZOO.keys()}"
@@ -43,7 +43,9 @@ def main(model, system, seqlen, show_result, check, extra_args = []):
 
   cls = KERNEL_ZOO[model]
   if cls is Attn and len(extra_args) > 0 :
-    model = cls(*extra_args)
+    [batch_size, head_num, seq_len, hd] = extra_args 
+    model = Attn(head_num,head_num,hd)
+    seqlen = seq_len
   else:
     model = cls()
   model = model.eval().cuda()
@@ -98,6 +100,12 @@ def main(model, system, seqlen, show_result, check, extra_args = []):
     #   gflops=gflops,
     # )
 
+def optimize_graph(bathch, head_num, seq_len, hd) :
+  AttnInfo.Batch = bathch
+  AttnInfo.HeadNum = head_num
+  AttnInfo.SeqLen = seq_len
+  AttnInfo.Hd = hd
+  return main('attn', 'our', seq_len, True, False, extra_args = [bathch, head_num, seq_len, hd])
 
 if __name__ == '__main__':
   main()

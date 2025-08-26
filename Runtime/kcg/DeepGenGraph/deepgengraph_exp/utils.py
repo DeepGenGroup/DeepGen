@@ -5,6 +5,14 @@ import math
 import numpy as np
 import io
 
+class AttnInfo :
+  Batch = 0
+  HeadNum = 0
+  SeqLen = 0
+  Hd = 0
+  def __init__(self):
+    pass
+
 def torch_module_to_onnx(module, input_names, inputs, output_names, simplify=True):
   import onnx
   import onnxsim

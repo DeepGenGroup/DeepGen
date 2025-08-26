@@ -84,7 +84,12 @@ if __name__ == "__main__":
     # 手动注册已经调好的kernl
     # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
-    compile_model(devid, run_model(model, args, input_ids))
+    compile_model(devid, run_model(model, args, input_ids), collectInfoOnly=True, invokeDeepgenGraph=True)
+    print("collected info : ")
+    for (ty, args) in OpProxy.collector.getInfo() :
+        print(f"{ty}, {args}")
+    import run_kernel
+    # compile_model(devid, run_model(model, args, input_ids), collectInfoOnly=False)
     
     # if isBase :
     def f_base():

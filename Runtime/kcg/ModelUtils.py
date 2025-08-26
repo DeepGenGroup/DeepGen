@@ -235,7 +235,7 @@ def get_baseline_model(original_model : nn.Module) -> nn.Module :
     return wrapped_model
 
 
-def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) :
+def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False, invokeDeepgenGraph = False) :
     output = f_run_model()
     print("=== e2e ends : ", output.shape) # 输出形状应为 (1, max_seq_len, vocab_size)
     mmTemplateJson = f'{PathManager.project_dir()}/TuningConfigs/GEMM_cfg_32.json'
@@ -254,7 +254,11 @@ def compile_model(devId : int, f_run_model : Callable, collectInfoOnly = False) 
             import kcg.tuning.attn_FP32_test as tune_att
             print("collected attn args = ",args)
             [batch, head_num, seq_len, headdim  ]= args[0:-1]
+            if invokeDeepgenGraph and get_platform_type() == 'dcu':
+                import kcg.DeepGenGraph.run_kernel as rk
+                rk.optimize_graph(batch, head_num, seq_len, headdim)
             ts = tune_att.getTuneSpace([batch, head_num, seq_len, headdim], attnJson, [])
+            
         else:
             assert False, f"invalid ty : {Ty.__name__}"
         if not collectInfoOnly:

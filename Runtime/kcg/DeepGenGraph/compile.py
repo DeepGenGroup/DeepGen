@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import onnx
-from deepgengraph_exp.utils import torch_module_to_onnx
+from deepgengraph_exp.utils import torch_module_to_onnx, AttnInfo
 
 def compile(model, input_names, inputs, output_names, system):
   if system == 'torch':
@@ -145,10 +145,15 @@ def attn_call(q,v,k) :
 
     def eval_time() :
       import math
-      qq = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
-      kk = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
-      vv = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
-      p = torch.matmul(qq.permute((0,2,1,3)),kk.permute((0,2,3,1))) / math.sqrt(128) + torch.tril(torch.full((4096,4096), float('-inf')) , diagonal = 1).to(qq.device)
+      batch = AttnInfo.Batch
+      seqLen = AttnInfo.SeqLen
+      head_num = AttnInfo.HeadNum
+      hd = AttnInfo.Hd
+      
+      qq = torch.rand(( batch,seqLen,head_num,hd),dtype=torch.float32 ,device='cuda')
+      kk = torch.rand(( batch,seqLen,head_num,hd),dtype=torch.float32 ,device='cuda')
+      vv = torch.rand(( batch,seqLen,head_num,hd),dtype=torch.float32 ,device='cuda')
+      p = torch.matmul(qq.permute((0,2,1,3)),kk.permute((0,2,3,1))) / math.sqrt(128) + torch.tril(torch.full((seqLen,seqLen), float('-inf')) , diagonal = 1).to(qq.device)
       p = torch.nn.functional.softmax(p,dim=-1)
       r0 = torch.matmul(p,vv.permute((0,2,1,3)))
       import numpy as np
@@ -199,9 +204,13 @@ def attn_call(q,v,k) :
         return t0
       
     # partition.module.dump()
-
-    t0 = eval_time()
-    
+    try:
+      t0 = eval_time()
+    except Exception :
+      pass
+    except RuntimeError :
+      pass
+    print('---- attention optimize finished ----')
     tok = time.time()
     tuning_s = tok - tik
     print(f"tuning time: {tuning_s} sec", flush=True)
