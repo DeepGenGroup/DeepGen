@@ -3,7 +3,7 @@ import torch
 import numpy as np
 import random
 
-from deepgengraph_exp.cases.kernels import KERNEL_ZOO
+from deepgengraph_exp.cases.kernels import *
 
 from deepgengraph_exp.utils import perf, loss, compare, display
 
@@ -32,7 +32,7 @@ def gflops_and_mib(seqlen, f, *args):
 @click.option('--seqlen', default=4096, help='seqlen')
 @click.option('--show_result', is_flag=True, help='show result')
 @click.option('--check/--no-check', default=True, help='check result with torch')
-def main(model, system, seqlen, show_result, check):
+def main(model, system, seqlen, show_result, check, extra_args = []):
   print(f"{model=} {system=} {seqlen=}")
   assert model in KERNEL_ZOO, f"model {model} not found in KERNEL_ZOO {KERNEL_ZOO.keys()}"
 
@@ -42,7 +42,10 @@ def main(model, system, seqlen, show_result, check):
   np.random.seed(seed)
 
   cls = KERNEL_ZOO[model]
-  model = cls()
+  if cls is Attn and len(extra_args) > 0 :
+    model = cls(*extra_args)
+  else:
+    model = cls()
   model = model.eval().cuda()
   specs = model.prepare(q_len=seqlen, kv_len=seqlen)
   input_names = list(specs['input'].keys())
@@ -71,30 +74,29 @@ def main(model, system, seqlen, show_result, check):
     output_names=output_names,
     system=system,
   )
+  if f is not None:
+    gflops, mib = gflops_and_mib(seqlen, f, *inputs)
+    print(f"{gflops=}", flush=True)
+    print(f"{mib=}", flush=True)
 
-
-  gflops, mib = gflops_and_mib(seqlen, f, *inputs)
-  print(f"{gflops=}", flush=True)
-  print(f"{mib=}", flush=True)
-
-  if check:
-    print(f"checking {system}...")
-    outs_ref = model(*inputs)
-    outs = f(*inputs)
-    torch.cuda.synchronize()
-    compare(outs, outs_ref, output_names)
-    if show_result:
-      display(outs, outs_ref, output_names)
-    
-  perf(
-    label=system,
-    f=f,
-    args=inputs,
-    run=run,
-    warmup=warmup,
-    profile=True,
-    gflops=gflops,
-  )
+    if check:
+      print(f"checking {system}...")
+      outs_ref = model(*inputs)
+      outs = f(*inputs)
+      torch.cuda.synchronize()
+      compare(outs, outs_ref, output_names)
+      if show_result:
+        display(outs, outs_ref, output_names)
+      
+    # perf(
+    #   label=system,
+    #   f=f,
+    #   args=inputs,
+    #   run=run,
+    #   warmup=warmup,
+    #   profile=True,
+    #   gflops=gflops,
+    # )
 
 
 if __name__ == '__main__':

@@ -18,6 +18,9 @@ class PartitionConfig:
   output_ops: list[list[int]]    # all op has only one output
   backends: Union[str, list[str]]
   kernels: list[Kernel] = field(init=False)
+  
+  kernel_ir_str  = []
+  kernel_torch_code  = []
 
   def __post_init__(self):
     self.check_at_most_one_output()
@@ -99,6 +102,7 @@ class PartitionConfig:
     # 依次为每个 kernel 跑一套 MLIR pass 流水线。如果某个 kernel 在 pipeline 中抛异常，就把它记到 failed_kernels
     for i, kernel in enumerate(self.kernels):
       print(f"optimize {kernel.kernel_name}", flush=True)
+      self.kernel_ir_str.append(str(kernel.kernel))
       try:
         optimize(kernel.kernel, context=self.module.context)
       except Exception as e:

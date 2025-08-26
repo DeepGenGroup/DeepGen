@@ -14,6 +14,7 @@ from deepgengraph.utils import get_sm_num
 class Connected(PartitionConfig):
 
   def __init__(self, module: ir.module, func_name: str):
+    self.opid_name_dict = {}
     partitions, output_ops = self._find_all_connected_subset(module, func_name)
     super().__init__(
       module=module,
@@ -37,8 +38,8 @@ class Connected(PartitionConfig):
 
     fn.get_callable_region().front().walk(id_update)
     for op, idx in op2id.items():
-      print(f"{idx=} {op.get_name()}")
-
+      print(f"----- idx = {idx} {op.get_name()}")
+      self.opid_name_dict[idx] = op.get_name()
 
     # 构建节点之间的邻接关系，获取邻居节点 ID 的函数。它根据 IR 图中的数据依赖关系，找出指定算子节点直接相连的所有邻接算子 ID。
     # 凡是该算子的输出流向的下游算子，以及提供输入给该算子的上游算子，都被视为邻居节点。

@@ -93,29 +93,142 @@ def compile(model, input_names, inputs, output_names, system):
     partition.optimize()
     # 3rd/deepgengraph/python/deepgengraph/partition/config.py -- optimize(）
     # 在这个pass进行优化以及Codegen
-    print("--------step: aft optimize----------")
+    print("--------step: aft optimize----------",flush=True)
     # print(partition.module)
-    analyze_ir_and_gen_code(str(partition.module))
+    print("------- transform ir to torch code start --------------",flush=True) 
+    parts =  partition.partitions
+    outops = partition.output_ops
+    all_ops = []
+    for k in partition.opid_name_dict.keys() :
+      all_ops.append(k)
+    
+    def get_available_plan_combine():
+      # 条件：组合的kernel应 满足output，并且包含所有op
+      combine = []
+      plan_size = len(parts)
+      expected_out = all_ops[-1]
+      for i in range(0,plan_size) :
+        for j in range(i, plan_size) :
+          ...
+          # 检查（i,j）组合的合法性
+          # if len(outops[i]) > 1 :
+          #   continue
+          # if len(outops[j]) > 1:
+          #   continue
+          
+          # isRetInI = False
+          # isRetInJ = False
+          # if expected_out in outops[i] :
+          #   isRetInI = True
+          # if expected_out in outops[j]:
+          #   isRetInJ = True
+          # if isRetInI or isRetInJ :
+          #   pass
+          # else:
+          #   continue
+    
+    for i, kernl_str in enumerate(partition.kernel_ir_str) :      
+      print('input ir : ', kernl_str,flush=True)
+      code = analyze_ir_and_gen_code(kernl_str)
+      partition.kernel_torch_code.append(code)
+    
+    callFuncCodeStr = '''
+def attn_call(q,v,k) :
+    return Attn_p0(q,v,k,Attn_p1(q,k))
+'''
+    code_plan = partition.kernel_torch_code[0] + "\n" + partition.kernel_torch_code[1] + callFuncCodeStr + "\n" + partition.kernel_torch_code[2]
+    
+    print(code_plan)
+    exec(code_plan,globals())
+    print("------- transform ir to torch code done! --------------",flush=True) 
+    # input ir :  deepgengraph.kernel @Attn_p0(%arg0: tensor<1x4096x32x128xf16> loc(unknown), %arg1: tensor<1x4096x32x128xf16> loc(unknown), %arg2: tensor<1x4096x32x128xf16> loc(unknown), %arg3: tensor<1x32x4096x1xf32> loc(unknown)) -> tensor<1x4096x32x128xf16> {
+
+    def eval_time() :
+      import math
+      qq = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
+      kk = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
+      vv = torch.rand((1,4096,32,128),dtype=torch.float32 ,device='cuda')
+      p = torch.matmul(qq.permute((0,2,1,3)),kk.permute((0,2,3,1))) / math.sqrt(128) + torch.tril(torch.full((4096,4096), float('-inf')) , diagonal = 1).to(qq.device)
+      p = torch.nn.functional.softmax(p,dim=-1)
+      r0 = torch.matmul(p,vv.permute((0,2,1,3)))
+      import numpy as np
+      def get_time_0() :
+        times = []
+        for i in range(5) :
+          st = torch.cuda.Event(enable_timing=True)
+          et = torch.cuda.Event(enable_timing=True)
+          st.record()
+          ret0 = attn_call(qq,vv,kk)
+          et.record()
+          torch.cuda.synchronize()
+          eps = st.elapsed_time(et)
+          if torch.allclose(ret0.permute((0,2,1,3)),r0,atol=1e-2,rtol=1e-2,equal_nan=True) :
+            print("verify attn_call ok!",flush=True)
+            times.append(eps)
+          else:
+            print("verify attn_call fail!",flush=True)
+            
+        return times
+
+      def get_time_1() :
+        times = []
+        for i in range(5):
+          st = torch.cuda.Event(enable_timing=True)
+          et = torch.cuda.Event(enable_timing=True)
+          st.record()
+          ret0 = Attn_p2(qq,vv,kk)
+          et.record()
+          torch.cuda.synchronize()
+          eps = st.elapsed_time(et)
+          if torch.allclose(ret0.permute((0,2,1,3)),r0,atol=1e-2,rtol=1e-2, equal_nan=True) :
+            print("verify Attn_p2 ok!",flush=True)
+            times.append(eps)
+          else:
+            print("verify Attn_p2 fail!",flush=True)
+        return times
+      
+      arr0 = get_time_0()
+      arr1 = get_time_1()
+      t0 = np.median(arr0) if len(arr0) > 0 else -1
+      t1 = np.median(arr1) if len(arr1) > 0 else -1
+      if t0 > t1 :
+        print('graph opt : take plan 1',flush=True)
+        return t1
+      else:
+        print('graph opt : take plan 0',flush=True)
+        return t0
+      
     # partition.module.dump()
+
+    t0 = eval_time()
+    
     tok = time.time()
     tuning_s = tok - tik
     print(f"tuning time: {tuning_s} sec", flush=True)
-    perf = partition.profile()
-    py_str = partition.codegen(perf)
+    try:
+      perf = partition.profile()
+      py_str = partition.codegen(perf)
 
-    our = {}
-    import tempfile
-    import importlib
-    import sys
-    with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as f:
-      f.write(py_str)
-      path = f.name
-    print(f"write code to {path}", flush=True)
-    spec = importlib.util.spec_from_file_location('our', path)
-    pymod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(pymod)
+      our = {}
+      import tempfile
+      import importlib
+      import sys
+      with tempfile.NamedTemporaryFile(mode="w", delete=False, suffix=".py") as f:
+        f.write(py_str)
+        path = f.name
+      print(f"write code to {path}", flush=True)
+      spec = importlib.util.spec_from_file_location('our', path)
+      pymod = importlib.util.module_from_spec(spec)
+      spec.loader.exec_module(pymod)
 
-    f = getattr(pymod, func_name)
+      f = getattr(pymod, func_name)
+    except Exception as e:
+      f = None
+    except RuntimeError as e:
+      f = None
+    except AttributeError as e:
+      f = None
+      
   elif system == 'flashinfer':
     import flashinfer
     model_name = model.__class__.__name__
@@ -188,11 +301,10 @@ class VarInfo :
     self.m_name = VarInfo.get_name()
     
 
-g_varMap : Dict[str,VarInfo] = {}
+# g_varMap : Dict[str,VarInfo] = {}
 
 def parse_func_def(ir : str, varMap : Dict[str,VarInfo]) :
   #   func.func @Attn(%arg0: tensor<1x4096x32x128xf16> loc(unknown), %arg1: tensor<1x4096x32x128xf16> loc(unknown), %arg2: tensor<1x4096x32x128xf16> loc(unknown)) -> tensor<1x4096x32x128xf16> {
-  global g_varMap
   funcName = ir[ir.find('@')+1 : ir.find('(')]
   argst = ir.find('(')
   arget = ir.find('->')
@@ -207,18 +319,17 @@ def parse_func_def(ir : str, varMap : Dict[str,VarInfo]) :
     argType = arg[arg.find('<')+1 : arg.find('>')]
     argshape = [int(i) for i in argType.split('x')[0:-1]] 
     info = VarInfo(argshape)
-    g_varMap[argName] = info  # {%0 : {varinfo{name = "var_1", [5,5], val = 0}}}
-    code += (g_varMap[argName].m_name + ',')
+    varMap[argName] = info  # {%0 : {varinfo{name = "var_1", [5,5], val = 0}}}
+    code += (varMap[argName].m_name + ',')
   code = code[0:-1]
   code += ") : "
   return code
   
     
-def get_varname(argnameInIR : str) -> str :
-  global g_varMap 
-  if argnameInIR not in g_varMap.keys() :
-    g_varMap[argnameInIR] = VarInfo([])
-  return g_varMap[argnameInIR].m_name
+def get_varname(argnameInIR : str, varMap : Dict[str,VarInfo]) -> str :
+  if argnameInIR not in varMap.keys() :
+    varMap[argnameInIR] = VarInfo([])
+  return varMap[argnameInIR].m_name
 
 
 def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
@@ -242,7 +353,7 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
       isTensor = True; v = afters[afters.find('dense<') + len('dense<') : -1]
     else:
       v = afters
-    code = f"{get_varname(lval)} = {v}"
+    code = f"{get_varname(lval,varMap)} = {v}"
     return code
   
   def __parse_deepgengraph_trilu(ir : str) :
@@ -253,7 +364,8 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     diagonal = afters[afters.find('diagonal=') + len('diagonal=') : afters.find(',is_upper')]
     if valstr == '0xFC00' :
       valstr = "'-inf'"
-    code = f"{get_varname(lval)} = torch.tril(torch.full(({shapestr}), float({valstr})) , diagonal = {diagonal}).to(var_1.device)"
+    argname = get_varname("%arg0",varMap)
+    code = f"{get_varname(lval,varMap)} = torch.tril(torch.full(({shapestr}), float({valstr})) , diagonal = {diagonal}).to({argname}.device)"
     return code
   
   def __parse_deepgengraph_permute(ir : str) :
@@ -261,14 +373,14 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.permute")
     src = afters[0:afters.find(',')]
     dims = afters[afters.find('dims=[') + len('dims=[') : afters.find(']')]
-    code = f"{get_varname(lval)} = {get_varname(src)}.permute({dims})"
+    code = f"{get_varname(lval,varMap)} = {get_varname(src,varMap)}.permute({dims})"
     return code
   def __parse_deepgengraph_dot(ir : str) :
     #     %4 = deepgengraph.dot %1, %3 : (tensor<1x32x4096x128xf16>, tensor<1x32x128x4096xf16>) -> tensor<1x32x4096x4096xf16> loc(#loc)
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.dot")
     a = afters[0:afters.find(',')]
     b = afters[afters.find(',')+1 : ]
-    code = f"{get_varname(lval)} = torch.matmul({get_varname(a)},{get_varname(b)})"
+    code = f"{get_varname(lval,varMap)} = torch.matmul({get_varname(a,varMap)},{get_varname(b,varMap)})"
     return code
 
   def __parse_deepgengraph_div(ir : str) :
@@ -276,7 +388,7 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.div")
     a = afters[0:afters.find(',')]
     b = afters[afters.find(',')+1 : ]
-    code = f"{get_varname(lval)} = {get_varname(a)} / {get_varname(b)}"
+    code = f"{get_varname(lval, varMap)} = {get_varname(a, varMap)} / {get_varname(b, varMap)}"
     return code
 
   def __parse_deepgengraph_add(ir : str) :
@@ -284,22 +396,22 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.add")
     a = afters[0:afters.find(',')]
     b = afters[afters.find(',')+1 : ]
-    code = f"{get_varname(lval)} = {get_varname(a)} + {get_varname(b)}"
+    code = f"{get_varname(lval, varMap)} = {get_varname(a, varMap)} + {get_varname(b, varMap)}"
     return code
   
   def __parse_deepgengraph_convert(ir : str) :
     #     %7 = deepgengraph.convert %6, type = f32 : (tensor<1x32x4096x4096xf16>) -> tensor<1x32x4096x4096xf32> loc(#loc)
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.convert")
     rhs = afters[0:afters.find(',')]
-    get_varname(lval)
-    g_varMap[lval].m_name = g_varMap[rhs].m_name
+    get_varname(lval, varMap)
+    varMap[lval].m_name = varMap[rhs].m_name
     return ""
   
   def __parse_deepgengraph_exp(ir : str) :
     #     %4 = deepgengraph.dot %1, %3 : (tensor<1x32x4096x128xf16>, tensor<1x32x128x4096xf16>) -> tensor<1x32x4096x4096xf16> loc(#loc)
     [lval, afters, sig] = __split_opname_and_after(ir,"deepgengraph.exp")
     i = afters
-    code = f"{get_varname(lval)} = torch.exp({get_varname(i)})"
+    code = f"{get_varname(lval, varMap)} = torch.exp({get_varname(i, varMap)})"
     return code
   
   def __parse_deepgengraph_reduce(ir:str) :
@@ -314,7 +426,7 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     else:
       keepdim = "False"
     if op == 'ADD':
-      code = f"{get_varname(lval)} = torch.sum({get_varname(src)}, dim = {dim}, keepdim={keepdim})"
+      code = f"{get_varname(lval, varMap)} = torch.sum({get_varname(src, varMap)}, dim = {dim}, keepdim={keepdim})"
       return code
     else :
       assert False, f'unsupport reduceop {op}'
@@ -359,22 +471,21 @@ def parse_op(ir : str, varMap : Dict[str,VarInfo]) -> str :
     assert False, f"invalid ir!"
   return ""
   
-def parse_return_op(ir : str) :
+def parse_return_op(ir : str, varMap) :
   ret = ir.strip().split(' ')[1]
-  code = f"return {get_varname(ret)}"
+  code = f"return {get_varname(ret,varMap)}"
   return code
 
-def parse_ir_line(ir : str, out_codes : List) :
+def parse_ir_line(ir : str, out_codes : List, varMap : Dict) :
   LINE_KIND_FUNC_DEF = 0
   LINE_KIND_FUNC_RETURN = 1
   LINE_KIND_OP = 2
-  varMap = {}
   
-  if ir.find('func.func') != -1 :
+  if ir.find('deepgengraph.kernel') != -1 :
     c = parse_func_def(ir,varMap)
     out_codes.append(c)
   elif ir.find('return') != -1 :
-    c = parse_return_op(ir)
+    c = parse_return_op(ir,varMap)
     out_codes.append('\t' + c)
   else:
     code = parse_op(ir,varMap)
@@ -384,13 +495,12 @@ def parse_ir_line(ir : str, out_codes : List) :
 
 def analyze_ir_and_gen_code(ir : str) :
     lines = ir.splitlines()
-
-
     irlines = []
     out_codes = []
     start = False
+    varMap = {}
     for line in lines :
-      if not start and line.find('func.func') != -1 :
+      if not start and line.find('deepgengraph.kernel') != -1 :
         start = True
       if start :
         irlines.append(line)
@@ -398,11 +508,12 @@ def analyze_ir_and_gen_code(ir : str) :
         start = False; break
     
     for line in irlines :
-      parse_ir_line(line, out_codes)
+      parse_ir_line(line, out_codes,varMap)
     print("---- analyze ok!")
     
     codestr = ""
     for c in out_codes :
       codestr += (c + "\n")
-    print(codestr)
+    print(codestr, flush=True)
+    return codestr
     
