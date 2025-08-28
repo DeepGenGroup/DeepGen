@@ -449,7 +449,7 @@ class DeviceInfo :
         for id in devids:
             expr += str(id) + ','
         os.environ[envname] = expr[0:-1]
-        print(f"==== set {envname}={os.environ[envname]}  =====",flush=True)
+        print(f"==== set visible device to {os.environ[envname]}  =====",flush=True)
 
     
     @staticmethod
