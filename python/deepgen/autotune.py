@@ -185,7 +185,7 @@ def buildSapce(kernel: str, inputs, gpu_info):
     # input_shape: [bs, hn, sl, hd]
     batch_size, head_num, head_dim, seq_len = inputs[0].shape  # Q shape: [batch_size, head_num, head_dim, seq_len]
     shape = [batch_size, head_num, seq_len, head_dim]
-    path = f"/home/xiebaokang/projects/mlir/DeepGen/python/deepgen/cfg_jsons/attn.json"
+    path = f"/home/xiebaokang/projects/DeepGen/python/deepgen/cfg_jsons/attn.json"
     cfg_dict = readConfigJson(path)
     cfg_dict["Hd"] = [head_dim]
     cfg_dict["WARP_SIZE"] = [gpu_info.warp_size]

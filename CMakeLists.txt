@@ -7,7 +7,7 @@ set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
 set(CMAKE_CXX_COMPILER /usr/bin/g++)
 set(CMAKE_C_COMPILER /usr/bin/gcc)
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "/home/xushilong/llvm-install")
+set(LLVM_INSTALL_DIR "/home/xiebaokang/softwares/install/llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 # set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
 # After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available

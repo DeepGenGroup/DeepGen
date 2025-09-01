@@ -141,10 +141,11 @@ class Runtime:
       kernel_dir = self.compile_mm(cfg["shape"], cfg["config"])
     elif kernel == "attention":
       # if self.target == "rocm":
-      #   hipcc = HIPCompiler()
-      #   kernel_dir = hipcc.build(Kernel.Attention, cfg["shape"], cfg["config"]["attention"])
+      # hipcc = HIPCompiler()
+      # kernel_dir = hipcc.build(Kernel.Attention, cfg["shape"], cfg["config"]["attention"])
       # else:
       kernel_dir = self.compile_attn(cfg["shape"], cfg["config"])
+      # print(kernel_dir)
     host_src = makeHostSrc(kernel, len(cfg["type"]), cfg["grid"], cfg["block"], cfg["smem"], kernel_dir, self.target)
     # print(host_src)
     mod = compileModuleFromSrc("launch", host_src, self.target)

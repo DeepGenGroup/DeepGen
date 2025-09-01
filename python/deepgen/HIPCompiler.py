@@ -51,7 +51,7 @@ void attention(float* Q, float* K, float* V, float* O) {{
   float* smMax = (float *)(smV + ({args["Hd"]} * {args["SliceO"]}));
   float* smSum = (float *)(smMax + ({args["Br"]}));
   float* smFactor = (float *)(smSum + ({args["Br"]}));
-  #pragma unroll
+  
   for (int i=0; i<{args["Br"]}; i+={args["THREAD_NUM"]}) {{
     if (i + threadIdx.x < {args["Br"]}) {{
       smSum[i + threadIdx.x] = 0.0f;
@@ -71,38 +71,38 @@ void attention(float* Q, float* K, float* V, float* O) {{
     float rowSum[{args["BrTileP"]}] = {{0.0f}};
     float rowMax[{args["BrTileP"]}] = {{-FLT_MAX}};
     for (int k=0; k<{args["Hd"]}; k+={args["SliceP"]}) {{
-      #pragma unroll
+      
       for (int i=0; i<{args["GLOB_LOAD_NUM_Q"]}; i++) {{
         int x = i * {args["GLOB_LOAD_ROW_WIDTH_Q"]} + threadIdx.x * {args["GlobLoadWidthQ"]};
         VecCpy<{args["GlobLoadWidthQ"]}>(&smQ[x], &Q[(x/{args["Br"]} + k) * {args["seq_len"]} + x%{args["Br"]}]);
       }}
-      #pragma unroll
+      
       for (int i=0; i<{args["GLOB_LOAD_NUM_K"]}; i++) {{
         int x = i * {args["GLOB_LOAD_ROW_WIDTH_K"]} + threadIdx.x * {args["GlobLoadWidthK"]};
         VecCpy<{args["GlobLoadWidthK"]}>(&smK[x], &K[(x/{args["Bc"]} + k) * {args["seq_len"]} + bx + x%{args["Bc"]}]);
       }}
       __syncthreads();
-      #pragma unroll
+      
       for (int bk=0; bk<{args["SliceP"]}; bk++) {{
-        #pragma unroll
+        
         for (int i=0; i<{args["BLOCK_REPEAT_Y_P"]}; i++) {{
-          #pragma unroll
+          
           for (int j=0; j<{args["WARP_REPEAT_Y_P"]}; j++) {{
             int idx = (i * {args["BlockLayoutYP"]} + warp_y) * {args["WarpLayoutYP"]} * {args["BlockScatterWidthYP"]} + (j * {args["WarpLayoutYP"]} + lane_y) * {args["WarpScatterWidthYP"]};
             VecCpy<{args["WarpScatterWidthYP"]}>(&regQ[i * {args["BlockScatterWidthYP"]} + j * {args["WarpScatterWidthYP"]}], &smQ[bk * {args["Br"]} + idx]);
           }}
         }}
-        #pragma unroll
+        
         for (int i=0; i<{args["BLOCK_REPEAT_X_P"]}; i++) {{
-          #pragma unroll
+          
           for (int j=0; j<{args["WARP_REPEAT_X_P"]}; j++) {{
             int idx = (i * {args["BlockLayoutXP"]} + warp_x) * {args["WarpLayoutXP"]} * {args["BlockScatterWidthXP"]} + (j * {args["WarpLayoutXP"]} + lane_x) * {args["WarpScatterWidthXP"]};
             VecCpy<{args["WarpScatterWidthXP"]}>(&regK[i * {args["BlockScatterWidthXP"]} + j * {args["WarpScatterWidthXP"]}], &smK[bk * {args["Bc"]} + idx]);
           }}
         }}
-        #pragma unroll
+        
         for (int cy=0; cy<{args["BrTileP"]}; cy++) {{
-          #pragma unroll
+          
           for (int cx=0; cx<{args["BcTileP"]}; cx++) {{
             tileP[cy * {args["BcTileP"]} + cx] += regQ[cy] * regK[cx] * {args["Scale"]};
           }}
@@ -110,18 +110,18 @@ void attention(float* Q, float* K, float* V, float* O) {{
       }}
       __syncthreads();
     }}
-    #pragma unroll
+    
     for (int i=0; i<{args["BrTileP"]}; i++) {{
-      #pragma unroll
+      
       for (int j=0; j<{args["BcTileP"]}; j++) {{
         float oldMax = rowMax[i];
         rowMax[i] = fmaxf(oldMax, tileP[i * {args["BcTileP"]} + j]);
         rowSum[i] = rowSum[i] * __expf(oldMax - rowMax[i]) + __expf(tileP[i * {args["BcTileP"]} + j] - rowMax[i]);
       }}
     }}
-    #pragma unroll
+    
     for (int i=0; i<{args["BrTileP"]}; i++) {{
-      #pragma unroll
+      
       for (int pos=1; pos<{args["BLOCK_X"]}; pos*=2) {{
         float oldMax = __shfl_down(rowMax[i], pos, {args["BLOCK_X"]});
         float oldSum = __shfl_down(rowSum[i], pos, {args["BLOCK_X"]});
@@ -131,11 +131,11 @@ void attention(float* Q, float* K, float* V, float* O) {{
       }}
     }}
     if (threadIdx.x % {args["BLOCK_X"]} == 0) {{
-      #pragma unroll
+      
       for (int i=0; i<{args["BLOCK_REPEAT_Y_P"]}; i++) {{
-        #pragma unroll
+        
         for (int j=0; j<{args["WARP_REPEAT_Y_P"]}; j++) {{
-          #pragma unroll
+          
           for (int k=0; k<{args["WarpScatterWidthYP"]}; k++) {{
             int idx = (i * {args["BlockLayoutYP"]} + warp_y) * {args["WarpLayoutYP"]} * {args["BlockScatterWidthYP"]} + (j * {args["WarpLayoutYP"]} + lane_y) * {args["WarpScatterWidthYP"]} + k;
             int ii = i * {args["BlockScatterWidthYP"]} + j * {args["WarpScatterWidthYP"]} + k;
@@ -151,26 +151,26 @@ void attention(float* Q, float* K, float* V, float* O) {{
         }}
       }}
     }}
-    #pragma unroll
+    
     for (int i=0; i<{args["BrTileP"]}; i++) {{
       rowMax[i] = __shfl(rowMax[i], 0, {args["BLOCK_X"]});
     }}
-    #pragma unroll
+    
     for (int i=0; i<{args["BrTileP"]}; i++) {{
-      #pragma unroll
+      
       for (int j=0; j<{args["BcTileP"]}; j++) {{
         tileP[i * {args["BcTileP"]} + j] = __expf(tileP[i * {args["BcTileP"]} + j] - rowMax[i]);
       }}
     }}
-    #pragma unroll
+    
     for (int i0=0; i0<{args["BLOCK_REPEAT_Y_P"]}; i0++) {{
-      #pragma unroll
+      
       for (int i1=0; i1<{args["BLOCK_REPEAT_X_P"]}; i1++) {{
-        #pragma unroll
+        
         for (int j0=0; j0<{args["WARP_REPEAT_Y_P"]}; j0++) {{
-          #pragma unroll
+          
           for (int j1=0; j1<{args["WARP_REPEAT_X_P"]}; j1++) {{
-            #pragma unroll 
+             
             for (int k=0; k<{args["WarpScatterWidthYP"]}; k++) {{
               VecCpy<{args["WarpScatterWidthXP"]}>(&smP[((i0 * {args["BlockLayoutYP"]} + warp_y) * {args["WarpLayoutYP"]} * {args["BlockScatterWidthYP"]} + (j0 * {args["WarpLayoutYP"]} + lane_y) * {args["WarpScatterWidthYP"]} + k) * {args["Bc"]} + 
                                               (i1 * {args["BlockLayoutXP"]} + warp_x) * {args["WarpLayoutXP"]} * {args["BlockScatterWidthXP"]} + (j1 * {args["WarpLayoutXP"]} + lane_x) * {args["WarpScatterWidthXP"]}], 
@@ -183,52 +183,52 @@ void attention(float* Q, float* K, float* V, float* O) {{
     }}
     __syncthreads();
     float rowFactor[{args["BrTileO"]}];
-    #pragma unroll
+    
     for (int i=0; i<{args["BLOCK_REPEAT_Y_O"]}; i++) {{
-      #pragma unroll
+      
       for (int j=0; j<{args["WARP_REPEAT_Y_O"]}; j++) {{
         int idx = (i * {args["BlockLayoutYO"]} + warp_y_) * {args["WarpLayoutYO"]} * {args["BlockScatterWidthYO"]} + (j * {args["WarpLayoutYO"]} + lane_y_) * {args["WarpScatterWidthYO"]};
         VecCpy<{args["WarpScatterWidthYO"]}>(&rowFactor[i * {args["BlockScatterWidthYO"]} + j * {args["WarpScatterWidthYO"]}], &smFactor[idx]);
       }}
     }}
-    #pragma unroll
+    
     for (int i=0; i<{args["BrTileO"]}; i++) {{
-      #pragma unroll
+      
       for (int j=0; j<{args["HdTile"]}; j++) {{
         tileO[i * {args["HdTile"]} + j] *= rowFactor[i];
       }}
     }}
     for (int k=0; k<{args["Bc"]}; k+={args["SliceO"]}) {{
-      #pragma unroll
+      
       for (int i=0; i<{args["GLOB_LOAD_NUM_V"]}; i++) {{
         int x = i * {args["GLOB_LOAD_ROW_WIDTH_V"]} + threadIdx.x * {args["GlobLoadWidthV"]};
         VecCpy<{args["GlobLoadWidthV"]}>(&smV[x], &V[(x/{args["Hd"]} + bx + k) * {args["Hd"]} + x%{args["Hd"]}]);
       }}
       __syncthreads();
-      #pragma unroll
+      
       for (int bk=0; bk<{args["SliceO"]}; bk++) {{
-        #pragma unroll
+        
         for (int i=0; i<{args["BLOCK_REPEAT_Y_O"]}; i++) {{
-          #pragma unroll
+          
           for (int j=0; j<{args["WARP_REPEAT_Y_O"]}; j++) {{
-            #pragma unroll
+            
             for (int kk=0; kk<{args["WarpScatterWidthYO"]}; kk++) {{
               int idx = (i * {args["BlockLayoutYO"]} + warp_y_) * {args["WarpLayoutYO"]} * {args["BlockScatterWidthYO"]} + (j * {args["WarpLayoutYO"]} + lane_y_) * {args["WarpScatterWidthYO"]} + kk;
               VecCpy<1>(&regP[i * {args["BlockScatterWidthYO"]} + j * {args["WarpScatterWidthYO"]} + kk], &smP[idx * {args["Bc"]} + k + bk]);
             }}
           }}
         }}
-        #pragma unroll
+        
         for (int i=0; i<{args["BLOCK_REPEAT_X_O"]}; i++) {{
-          #pragma unroll
+          
           for (int j=0; j<{args["WARP_REPEAT_X_O"]}; j++) {{
             int idx = (i * {args["BlockLayoutXO"]} + warp_x_) * {args["WarpLayoutXO"]} * {args["BlockScatterWidthXO"]} + (j * {args["WarpLayoutXO"]} + lane_x_) * {args["WarpScatterWidthXO"]};
             VecCpy<{args["WarpScatterWidthXO"]}>(&regV[i * {args["BlockScatterWidthXO"]} + j * {args["WarpScatterWidthXO"]}], &smV[bk * {args["Hd"]} + idx]);
           }}
         }}
-        #pragma unroll
+        
         for (int cy=0; cy<{args["BrTileO"]}; cy++) {{
-          #pragma unroll
+          
           for (int cx=0; cx<{args["HdTile"]}; cx++) {{
             tileO[cy * {args["HdTile"]} + cx] += regP[cy] * regV[cx];
           }}
@@ -238,30 +238,30 @@ void attention(float* Q, float* K, float* V, float* O) {{
     }}
   }}
   float rowSum_[{args["BrTileO"]}];
-  #pragma unroll
+  
   for (int i=0; i<{args["BLOCK_REPEAT_Y_O"]}; i++) {{
-    #pragma unroll
+    
     for (int j=0; j<{args["WARP_REPEAT_Y_O"]}; j++) {{
       int idx = (i * {args["BlockLayoutYO"]} + warp_y_) * {args["WarpLayoutYO"]} * {args["BlockScatterWidthYO"]} + (j * {args["WarpLayoutYO"]} + lane_y_) * {args["WarpScatterWidthYO"]};
       VecCpy<{args["WarpScatterWidthYO"]}>(&rowSum_[i * {args["BlockScatterWidthYO"]} + j * {args["WarpScatterWidthYO"]}], &smSum[idx]);
     }}
   }}
-  #pragma unroll
+  
   for (int i=0; i<{args["BrTileO"]}; i++) {{
-    #pragma unroll
+    
     for (int j=0; j<{args["HdTile"]}; j++) {{
       tileO[i * {args["HdTile"]} + j] /= rowSum_[i];
     }}
   }}
-  #pragma unroll
+  
   for (int i0=0; i0<{args["BLOCK_REPEAT_Y_O"]}; i0++) {{
-    #pragma unroll
+    
     for (int i1=0; i1<{args["BLOCK_REPEAT_X_O"]}; i1++) {{
-      #pragma unroll
+      
       for (int j0=0; j0<{args["WARP_REPEAT_Y_O"]}; j0++) {{
-        #pragma unroll
+        
         for (int j1=0; j1<{args["WARP_REPEAT_X_O"]}; j1++) {{
-          #pragma unroll 
+           
           for (int kk=0; kk<{args["WarpScatterWidthYO"]}; kk++) {{
             VecCpy<{args["WarpScatterWidthXO"]}>(&O[((i0 * {args["BlockLayoutYO"]} + warp_y_) * {args["WarpLayoutYO"]} * {args["BlockScatterWidthYO"]} + (j0 * {args["WarpLayoutYO"]} + lane_y_) * {args["WarpScatterWidthYO"]} + kk) * {args["Hd"]} + 
                                            (i1 * {args["BlockLayoutXO"]} + warp_x_) * {args["WarpLayoutXO"]} * {args["BlockScatterWidthXO"]} + (j1 * {args["WarpLayoutXO"]} + lane_x_) * {args["WarpScatterWidthXO"]}], 
