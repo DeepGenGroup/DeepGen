@@ -129,6 +129,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
     auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
     // split & reorder & parallel 上一步做完必然会有fory和forx一一对应，大小相等
     std::vector<mlir::affine::AffineParallelOp> blockIdxs;  // collect all block parallel ops
+    LOG_DEBUG("===== start =====\n", mod);
     for (int i=0; i<yloops.size(); i++) {
       // split tile for
       auto funcName = getStrAttr(yloops[i], FORINCFUNC);
@@ -136,8 +137,10 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
       std::vector<int64_t> tilex{tileConfig.at(funcName).at("BLOCK_SIZE_X"), tileConfig.at(funcName).at("THREAD_SIZE_X")};
       auto bytyfory = Rewriter::split(yloops[i], tiley, {"blocky", "thready", "ttiley"});
       auto bxtxforx = Rewriter::split(xloops[i], tilex, {"blockx", "threadx", "ttilex"});
+      if (i == yloops.size()-1) LOG_DEBUG("===== split =====\n", mod);
       // reorder tile for
       Rewriter::reorder({bytyfory[0], bxtxforx[0], bytyfory[1], bxtxforx[1], bytyfory[2], bxtxforx[2]});
+      if (i == yloops.size()-1) LOG_DEBUG("===== reorder =====\n", mod);
       // parallel tile for
       std::vector<mlir::affine::AffineForOp> blockForOps;
       for (auto paraDim : paraDims) {
@@ -148,7 +151,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
       auto threadIdx = Rewriter::parallel({bytyfory[1], bxtxforx[1]}, THREADIDX);
       blockIdxs.push_back(blockIdx);
     }
-    LOG_DEBUG("===== split & reorder & parallel block/thread tile =====\n", mod);
+    LOG_DEBUG("===== parallel block/thread tile =====\n", mod);
 
     // addLoopsToParallel 将batch添加进入parallel
     auto batchloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"batch"});

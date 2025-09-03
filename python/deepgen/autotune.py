@@ -163,9 +163,9 @@ def buildSapce(kernel: str, inputs, gpu_info):
   configs = []
   if kernel == "matmul":
     tmp_dict = {
-      "shape": [128, 1024, 1024, 128], 
+      "shape": [1024, 1024, 1024], 
       "type": ["fp32", "fp32", "fp32"], 
-      "grid": [64, 128, 1], 
+      "grid": [64, 1, 1], 
       "block": [256, 1, 1],
       "smem": 16384,
       "config": {
@@ -175,7 +175,7 @@ def buildSapce(kernel: str, inputs, gpu_info):
           "GLOB_LOAD_WIDTH_A": 4, "GLOB_LOAD_WIDTH_B": 4, "GLOB_STORE_WIDTH": 4,
           "BLOCK_LAYOUT_Y": 4, "BLOCK_LAYOUT_X": 2, "WARP_LAYOUT_Y": 4, "WARP_LAYOUT_X": 8,
           "BLOCK_SCATTER_WIDTH_M": 8, "WARP_SCATTER_WIDTH_M": 8, "BLOCK_SCATTER_WIDTH_N": 4, "WARP_SCATTER_WIDTH_N": 4,
-          "WARP_SIZE": 32, "LOAD_CONTINUOUS": 1, "STORE_CONTINUOUS": 1, "SHARED_PREFETCH": 0, "REG_PREFETCH": 0, 
+          "WARP_SIZE": gpu_info.warp_size, "LOAD_CONTINUOUS": 1, "STORE_CONTINUOUS": 1, "SHARED_PREFETCH": 0, "REG_PREFETCH": 0, 
           "BLOCK_MAPPING": 4, "UNROLL_NUM": 16
         }
       }
