@@ -73,6 +73,8 @@ std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> ReplaceAllocToGetglobalPass
 
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createCombineMemrefPass();
 
+std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createExpToTaylorPass();
+
 std::unique_ptr<mlir::OperationPass<mlir::ModuleOp>> createFlattenMemrefPass();
 }
 

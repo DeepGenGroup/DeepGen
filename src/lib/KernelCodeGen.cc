@@ -226,6 +226,7 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
   mlir::MLIRContext* context = &(this->context);
   mlir::PassManager pm(context);
   pm.addPass(createParallelToGPUPass());
+  pm.addPass(createExpToTaylorPass());
   pm.addPass(createCombineMemrefPass());
   pm.addPass(ReplaceAllocToGetglobalPass());
   pm.addPass(createAmendAllocaOpAddrSpacePass(this->target));
@@ -245,6 +246,7 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   // == lowering to other dialect ==
   mlir::PassManager pm1(context);
   // affine to scf/vector
+  // pm1.addPass(createExpToTaylorPass());
   pm1.addPass(mlir::createLowerAffinePass());
   pm1.addPass(mlir::createConvertVectorToGPUPass());
   pm1.addNestedPass<func::FuncOp>(mlir::createLoopInvariantCodeMotionPass());
@@ -253,9 +255,11 @@ bool KernelCodeGenerator::lowering_(mlir::ModuleOp& mod) {
   pm1.addPass(mlir::createSymbolDCEPass());             // 死代码消除/化简
   // scf to cf
   pm1.addPass(mlir::createSCFToControlFlowPass());
-  if (mlir::failed(pm1.run(mod)))
+  if (mlir::failed(pm1.run(mod))){
     return false;
-  
+  }
+  LOG_DEBUG("========== after lowering_ pm1 =======\n",mod);
+
   if(this->target == Target::CUDA || this->target == Target::ROCm){
     // == lowering to llvm  ==
     mlir::PassManager pm2(context);
@@ -305,6 +309,7 @@ std::string KernelCodeGenerator::readMLIRAndLowering(const std::string& filePath
   mlir::ModuleOp module = *mod;
   if(!isLLVM){
     this->transform(module);
+    LOG_DEBUG("====== after transform ======\n", module);
     this->lowering_(module);
   }
   LOG_DEBUG("===== llvm: =======\n", module);

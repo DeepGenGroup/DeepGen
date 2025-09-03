@@ -349,26 +349,64 @@ def test_expOp() :
     devid = 7
     op = testOp.ExpOp()
     
-    func_name = "my_exp"
+    func_name = "exp_"
     dtypes = [torch.float32]
     backend = EnumBackendType.HIP
     
     kc = KernelConfigs(binpath, func_name, dtypes, backend)
-    kc.m_gridDims = [2,1,1]
-    kc.m_blockDims = [64,1,1]
+    kc.m_gridDims = [4,1,1]
+    kc.m_blockDims = [128,1,1]
     kernel = op.GetCompiledKernel(kc,devid)
     # test 8x16
     DeviceInfo.init_cuda([devid])
     
-    tensorSHape = (32,4)
-    a = torch.ones(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}') * -1
-    # for i in range(0,tensorSHape[0]) :
-    #     a[i,0] = i+10
-    # b = torch.empty(tensorSHape,dtype=torch.float32,device=f'cuda:{devid}')
-    print("original a = ",a)
-    kernel.run(a)
-    print("result a = ",a)
-    # print("b = ",b)
+    inputshape = (128,128)
+    # torch.set_printoptions(profile="full")
+    a = torch.rand(inputshape,dtype=torch.float32,device=f'cuda:{devid}') 
+    b = torch.empty(inputshape,dtype=torch.float32,device=f'cuda:{devid}') 
+
+    kernel.run(a,b)
+    print("result  = ",b)
+    base = torch.exp(a)
+    print("base = ",base)
+    if torch.allclose(b,base,atol=1e-5, rtol=1e-5) :
+        print("success!")
+    else:
+        print("failed!")
+    
+
+def test_softmaxOp() :
+    if len(sys.argv) < 2 :
+        print("usage : kernelBinPath")
+        sys.exit()
+    binpath = sys.argv[1]
+    devid = 7
+    op = testOp.SoftmaxOp()
+    
+    func_name = "softmax"
+    dtypes = [torch.float32]
+    backend = EnumBackendType.HIP
+    
+    kc = KernelConfigs(binpath, func_name, dtypes, backend)
+    kc.m_gridDims = [4,1,1]
+    kc.m_blockDims = [128,1,1]
+    kernel = op.GetCompiledKernel(kc,devid)
+    # test 8x16
+    DeviceInfo.init_cuda([devid])
+    
+    inputshape = (128,128)
+    # torch.set_printoptions(profile="full")
+    a = torch.rand(inputshape, dtype=torch.float32, device=f'cuda:{devid}') 
+    b = torch.empty(inputshape, dtype=torch.float32, device=f'cuda:{devid}') 
+
+    kernel.run(a, b)
+    print("result  = ", b)
+    base = torch.nn.functional.softmax(a,dim=1)
+    print("base = ", base)
+    if torch.allclose(b, base, atol=1e-5, rtol=1e-5) :
+        print("success!")
+    else:
+        print("failed!")
     
 def test_reduceOp() :
     if len(sys.argv) < 2 :
@@ -406,7 +444,8 @@ if __name__ == "__main__" :
     # test_broadcastOp()
     # test_reduceOp()
     # test_attention()
-    test_debug_attention()
+    # test_debug_attention()
     # test_expOp()
+    test_softmaxOp()
     # test_infOp()
     

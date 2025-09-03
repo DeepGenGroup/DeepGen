@@ -140,6 +140,100 @@ struct ParallelToGPUPass : public PassWrapper<ParallelToGPUPass, OperationPass<M
   }
 };
 
+// 将 math::ExpOp 转换为其 10 阶泰勒展开
+struct ExpToTaylorConversion : public OpRewritePattern<math::ExpOp> {
+  using OpRewritePattern<math::ExpOp>::OpRewritePattern;
+
+  LogicalResult matchAndRewrite(math::ExpOp expOp,
+                                PatternRewriter &rewriter) const final {
+    // 设置泰勒展开的阶数
+    constexpr int N = 10;
+    auto x = expOp.getOperand();
+    auto opLoc = expOp.getLoc();
+    mlir::FloatType f32Type = rewriter.getF32Type();
+
+    // 初始化泰勒展开的各项
+    // exp(x) = 1 + x/1! + x^2/2! + ...
+    llvm::APFloat oneVal(1.0f);
+    llvm::APFloat zeroVal(0.0f);
+    
+    // 初始化结果为第一项 (1)
+    mlir::Value res_init = rewriter.create<arith::ConstantFloatOp>(opLoc, oneVal, f32Type);
+
+    // 初始化分子 (x^n) 和分母 (n!)
+    // 循环从 n=1 开始，所以分子初始化为 x^1, 分母初始化为 1!
+    mlir::Value fenzi_init = x;
+    mlir::Value fenmu_init = rewriter.create<arith::ConstantFloatOp>(opLoc, oneVal, f32Type);
+
+    // 创建 affine.for 循环
+    mlir::Value lowerBound = rewriter.create<arith::ConstantIndexOp>(opLoc, 1);
+    mlir::Value upperBound = rewriter.create<arith::ConstantIndexOp>(opLoc, N + 1);
+
+    // 循环体，用于计算并累加每一项
+    // auto map = mlir::AffineMap::get(0,0,rewriter.getAffineDimExpr(0),rewriter.getContext());
+  // static void build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState, int64_t lowerBound, int64_t upperBound, int64_t step = 1, ValueRange iterArgs = std::nullopt, function_ref<void(OpBuilder &, Location, Value, ValueRange)> bodyBuilder = nullptr);
+  // static void build(::mlir::OpBuilder &odsBuilder, ::mlir::OperationState &odsState, ValueRange lbOperands, AffineMap lbMap, ValueRange ubOperands, AffineMap ubMap, int64_t step = 1, ValueRange iterArgs = std::nullopt, function_ref<void(OpBuilder &, Location, Value, ValueRange)> bodyBuilder = nullptr);
+    auto forop = rewriter.create<affine::AffineForOp>(
+        opLoc, 2, N+1, 1, mlir::ValueRange(std::initializer_list{res_init, fenzi_init, fenmu_init}),  // 1, x, 1
+        [&](OpBuilder &nestedBuilder, Location nestedLoc, Value loopIv, ValueRange iterArgs)->void 
+        {
+          // 2. 从迭代参数中获取当前循环中的值
+          mlir::Value res = iterArgs[0];
+          mlir::Value fenzi = iterArgs[1];
+          mlir::Value fenmu = iterArgs[2];
+
+          // 3. 将 'index' 类型转换为 'i32' 再转换为 'f32'
+          auto loopIvAsInt = nestedBuilder.create<arith::IndexCastOp>(
+              nestedLoc, nestedBuilder.getI32Type(), loopIv
+          );
+          auto loopIvAsFloat = nestedBuilder.create<arith::UIToFPOp>(
+              nestedLoc, f32Type, loopIvAsInt
+          );
+          
+          // 4. 进行泰勒展开的计算
+          auto currentTerm = nestedBuilder.create<arith::DivFOp>(nestedLoc, fenzi, fenmu);
+          auto new_res = nestedBuilder.create<arith::AddFOp>(nestedLoc, res, currentTerm);
+
+          // 更新下一轮循环的分子和分母
+          auto new_fenzi = nestedBuilder.create<arith::MulFOp>(nestedLoc, fenzi, x);
+          // 在这里，分母的更新是 (n-1)! * n = n!。因为我们从1开始循环，所以每次乘loopIv
+          auto new_fenmu = nestedBuilder.create<arith::MulFOp>(nestedLoc, fenmu, loopIvAsFloat);
+
+          // 5. 使用 affine.yield 返回更新后的值
+          nestedBuilder.create<affine::AffineYieldOp>(
+              nestedLoc, mlir::ValueRange(std::initializer_list{new_res.getResult(), new_fenzi.getResult(), new_fenmu.getResult()})
+          );
+        }
+    );
+
+    // 将原有的 math.exp 操作替换为最终的泰勒展开结果
+    rewriter.replaceOp(expOp, forop.getResult(0));
+    
+    return success();
+  }
+};
+
+// Pass定义
+struct ExpToTaylorPass : public PassWrapper<ExpToTaylorPass, OperationPass<ModuleOp>> {
+  MLIR_DEFINE_EXPLICIT_INTERNAL_INLINE_TYPE_ID(ExpToTaylorPass)
+
+  void runOnOperation() override {
+    RewritePatternSet patterns(&getContext());
+    ConversionTarget target(getContext());
+
+    target.addIllegalOp<math::ExpOp>();
+    target.markUnknownOpDynamicallyLegal([](Operation *op) {
+      return true;
+    });
+
+    patterns.add<ExpToTaylorConversion>(&getContext());
+
+    if (failed(applyPartialConversion(getOperation(), target, std::move(patterns)))) {
+      return signalPassFailure();
+    }
+  }
+};
+
 
 // ===================================================================
 //                 gpu index to nvvm/rocdl index 
@@ -1761,6 +1855,11 @@ std::unique_ptr<OperationPass<ModuleOp>> createGlobalShmSetZeroPass() {
 std::unique_ptr<OperationPass<ModuleOp>> createCombineMemrefPass() {
   return std::make_unique<CombineMemrefPass>();
 }
+
+std::unique_ptr<OperationPass<ModuleOp>> createExpToTaylorPass() {
+  return std::make_unique<ExpToTaylorPass>();
+}
+
 // ================================================================
 
 // ***弃用***

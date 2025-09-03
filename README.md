@@ -1,4 +1,6 @@
 # Deepgen 项目介绍
+## 0.交付
+commitid=dbefc4a9
 
 ## 1.项目背景&目录结构
 
