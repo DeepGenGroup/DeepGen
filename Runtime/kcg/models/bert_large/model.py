@@ -96,12 +96,12 @@ class Attention(nn.Module):
         else:
             f_mm = OpProxy.f_matmul
             f_attention = OpProxy.f_attention
-        # f_lin = nn.Linear
-        f_lin = CustomLinear
-        self.wq = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
-        self.wk = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
-        self.wv = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
-        self.wo = f_lin(head_num * self.head_dim, dim, bias=False, f_mm=f_mm)
+        f_lin = nn.Linear
+        # f_lin = CustomLinear
+        self.wq = f_lin(dim, head_num * self.head_dim, bias=False)
+        self.wk = f_lin(dim, head_num * self.head_dim, bias=False)
+        self.wv = f_lin(dim, head_num * self.head_dim, bias=False)
+        self.wo = f_lin(head_num * self.head_dim, dim, bias=False)
         self.f_matmul = f_mm
         self.f_attention = f_attention
         
@@ -123,11 +123,12 @@ class Attention(nn.Module):
                 scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
             scores = F.softmax(scores.float(), dim=-1).type_as(query)
             output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
-
-            # output = query
             return output        
+        # if mask is None :
+        # if False :
         output = self.f_attention(query,keys,values,batch_size,self.head_num, seq_len, self.head_dim, mask)
-        # output = _f()
+        # else:
+        #     output = _f()
         output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
         return self.wo(output)
 

@@ -1,167 +1,299 @@
-# Deepgen 项目介绍
-## 0.交付
-commitid=dbefc4a9
+# Deepgen User Help Guide
+## 1.项目介绍
+Deepgen是一个基于MLIR/LLVM的跨平台算子调优器。支持多平台算子调优   
+验收 commitid=dbefc4a9
 
-## 1.项目背景&目录结构
+### 1.1 支持平台
+HygonDCU Z100/K100, Nvidia A100 & others
 
-### 1.1 功能
+### 1.2 支持的算子
+Nvidia：Attention、GEMM（需要满足特定形状   
+DCU/AMD ： GEMM（需要满足特定形状   
 
-Deepgen 是一个GPU算子生成+调优工具，支持多种算子的生成和调优。可以跨多个平台执行
+## 2.如何安装和部署
+### 2.1 编译&安装 MLIR/LLVM 以及其他第三方依赖
+```shell
+# 下载指定的MLIR/LLVM 源码
+git clone https://github.com/DeepGenGroup/rocm-llvm-project.git -b deepgen-dev
 
-- 目前支持的算子：GEMM, batched GEMM
-- 平台 ：NVIDIA GPU, AMDGPU, HygonDCU(Z100)
+# 安装ninja编译器
+pip install ninja
+# 安装 pybind11
+pip install pybind11
 
-Deepgen 的自动调优支持本机运行，也支持集群运行，充分利用不同计算机资源。经过实测，在cpu负载重的工况下，torch的baseline性能会受影响，因此为了测试的严谨性，建议使用跨计算机执行，将编译和bencmark分配到不同主机上
-
-### 1.2 目录结构
-
-运行时目录：   
-**_cache** : 缓存目录，存放程序运行时的编译器缓存文件（kernel loader&launcher的so及stubcode、benchmarkTorchEps记录   
-**_dump** : 临时目录，存放MLIR生成kernel过程里·生成的bc和o文件   
-**_cluster_run** : 集群运行模式下，存放从master接收到的进程启动参数，以及存放benchmark的运行结果   
-**_override** : 临时存放master生成的compiler/tester进程参数文件，用于跨host执行   
-**_pkls** : 运行时存放生成的kernel信息序列化后的pkl文件。perftester会根据自己的devid周期性检测对应文件夹下的pkl，反序列化之并做perftest   
-**_tmp** : 其他缓存目录   
-
-代码目录：   
-**_TempCodes** : 其他code，不是项目本体代码    
-**.vscode/c_cpp_properties.json** : intellisense 使用的头文件目录、宏定义    
-**.vscode/launch.json** : debug配置    
-**.vscode/settings.json** : 文件后缀名关联以及颜色主题    
-**bin** : DeepGen编译后的库/可执行文件存放位置    
-**build** : 构建目录    
-**ClusterTaskConfigs** : 集群运行模式的配置文件示例    
-**cmake** : MLIR使用的cmake    
-**doc** : 项目文档    
-**include** : MLIR后端的头文件    
-**Runtime** : python runtime后端    
-    |-**Runtime/kcg/loaderCCode** : 存放loader的C源码    
-    |-**Runtime/kcg/Operators** : 存放Operator相关代码。后期拓展算子时在此添加算子相关代码    
-    |-**Runtime/kcg/tools** : 工具脚本，不参与Runtime的实际运行    
-**src** : MLIR后端源代码目录    
-**src/lib** : MLIR后端源码    
-**src/CMakeLists.txt** : MLIR后端CMakeLists    
-**src/main.cc :** MLIR后端源码，定义了exe以及python module的接口    
-**third_party** : cuda和hip的第三方头文件、bitcode、其他所需程序等    
-**TuningCombs** : 存放生成好的调优空间文件    
-**TuningConfigs** : 调优参数配置文件    
-**ClearTemp**.sh : 清理临时目录    
-**CMakeLists.txt** : 根CMakeLists文件。用户变量在这里赋值    
-**Compile.sh** : 编译MLIR后端的脚本    
-**config.h.in** : 用户变量模板文件    
-
-脚本：    
-**scripts/Benchmark.sh** ：单机模式启动Deepgen    
-**scripts/ClearTmpKernels.py** ：删除/tmp目录下的kernel文件    
-**scripts/GetCudaInfo.py** ：获取cuda的计算力和ptxas信息，用于填入CMakeLists的对应变量    
-**scripts/StopBenchmark.sh** ：杀死所有DeepGen运行的进程（cluster模式下存在问题，无法杀死，只能手动kill ）    
-**scripts/StartBatchTestWithCluster.sh** : 以集群模式启动Deepgen    
-
-## 2.安装&构建&运行
-
-### 2.1 安装第三方依赖
-
-项目使用到的第三方依赖有：
-
-- MLIR/LLVM(rocm) : https://gitee.com/alanturin/rocm-llvm-project , commit=9fe9db, branch=amd-staging
-- pytorch(建议使用conda虚拟环境)
-- CUDA/ROCM 基础环境
-  对于HygonDCU以及其他有配套工具要求的平台，请安装供应商提供的pytorch或CUDA/ROCM基础环境
-
-For Hygon DCU Z100:
-- 采用 dtk 24.04.1 , LLVM中设置 amd的ABI版本为 code-object-v4
-
-MLIR/LLVM compile & setup ：
-
-```sh
-cmake -G Ninja ../llvm   -DLLVM_ENABLE_PROJECTS="mlir;clang" \
+# 编译&安装 mlir/llvm
+cd rocm-llvm-project
+mkdir build
+cd build
+cmake -G Ninja ../llvm \
+   -DLLVM_ENABLE_PROJECTS=mlir \
    -DLLVM_BUILD_EXAMPLES=ON \
    -DLLVM_TARGETS_TO_BUILD="Native;NVPTX;AMDGPU" \
    -DCMAKE_BUILD_TYPE=Release \
-   -DLLVM_ENABLE_ASSERTIONS=ON -DCMAKE_INSTALL_PREFIX=~/llvm-install
-ninja -j16 & ninja install
+   -DLLVM_ENABLE_ASSERTIONS=ON \
+   -DCMAKE_INSTALL_PREFIX=/path/to/llvm/install
+
+ninja -j16
+ninja install
+
 ```
 
-### 2.2 构建
+### 2.2 编译Deepgen
+1. 打开 build_tools/build_deepgen.sh, 修改相关变量
+```shell
+#! /bin/bash
+project_dir="$HOME/DeepGen"   # 当前DeepGen所在path
+cd $project_dir
+is_as_pymodule='ON'   # 使用'ON'即可
+buildType=Release  # 可选择 Debug Release MinSizeRel 。填Release即可
+mkdir build
+mkdir _dump
+cd build  
+cmake .. \
+    -DCMAKE_CXX_COMPILER=/usr/bin/g++ \             # g++路径
+    -DCMAKE_C_COMPILER=/usr/bin/gcc \               # gcc路径
+    -DCOMPILE_AS_PYMODULE=$is_as_pymodule \
+    -DCMAKE_BUILD_TYPE=$buildType \
+    -DENABLE_GRAPH_OPT=OFF
+make -j16
 
-使用Compile.sh脚本编译。其中 `is_as_pymodule`表示将MLIR后端编译为库（ON）或调试用exe文件（OFF）
-根路径下的 CMakeLists 说明：
+```
 
+2. 打开CMakeLists.txt，修改设置 
 ```cmake
 # project config
 ###################################################################
 cmake_minimum_required(VERSION 3.15.0)
-project(KernelCodeGen LANGUAGES CXX C)    # delete CUDA
+project(KernelCodeGen LANGUAGES CXX C)    
 set(CMAKE_BUILD_WITH_INSTALL_NAME_DIR ON)
-set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")    # 默认使用c++17
-
+set(CMAKE_CXX_STANDARD 17 CACHE STRING "C++ standard to conform to")
+set(CMAKE_CXX_COMPILER /usr/bin/g++)
+set(CMAKE_C_COMPILER /usr/bin/gcc)
 ############################ User config #####################
-set(LLVM_INSTALL_DIR "~/llvm-install")         # llvm安装目录
-set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn")   # 调试用输出amdgcn的路径
-set(USER_LLD_PATH "/opt/dtk/llvm/bin/ld.lld")   # ld.lld 连接器的路径
-set(USER_PTXAS_PATH "/usr/local/cuda/bin//ptxas")   # ptxas的路径
-set(CUDA_CAP        70)     # CUDA计算能力编号，通过 scripts/GetCudaInfo 获得
-set(PTXAS_VERSION   83)     # PTXAS版本 ，通过 scripts/GetCudaInfo 获得
-set(CUDA_INCLUDE_DIR "/usr/local/cuda/include")     # cuda头文件路径
-set(PYTHON_CONDA_ENV_DIR "~/anaconda3/envs/triton_rocm")   # python虚拟环境路径
-set(PYTHON_VERSION "3.8")           # python版本号
+set(LLVM_INSTALL_DIR "/path/to/llvm/install")               # 设置为用户自己的 mlir/llvm 安装路径
+set(DEBUG_AMDGCN_OUTPUT_PATH "~/DeepGen/test.amdgcn") 
+# set(USER_LLD_PATH "${CMAKE_SOURCE_DIR}/third_party/hip/bin/ld.lld") 
+# After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available
+set(USER_LLD_PATH "${LLVM_INSTALL_DIR}/bin/ld.lld") 
+set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin//ptxas")    # ptxas 路径，通过 shell命令 which ptxas 可查看 
+set(CUDA_CAP        80)
+set(PTXAS_VERSION   82)
+set(CUDA_INCLUDE_DIR "/home/xushilong/anaconda3/include")      # cuda安装目录下的include目录
+option(ENABLE_GRAPH_OPT "enable graph optimizer" OFF)           # 设置为OFF
+option(USE_STABLEHLO_EMBEDDED "Use embedded stableHLO(ON) or external stableHLO(OFF)" ON)
 
-option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)  # 是否将DeegGen编译为so/exe（exe为debug用，发布版本中取消）
-# close some warnings     编译时暂时取消部分warning。待发布时需完善代码
-add_compile_options(
-  -Wno-unused-function
-  -Wno-unused-variable
-  -Wno-unused-result
-  -Wno-sign-compare
-  -Wno-unused-but-set-variable
-  -Wno-return-local-addr
-  -Wno-parentheses
-  -Wno-cast-qual
-  -Wno-unused-but-set-parameter
-  -Wno-deprecated-declarations
-  -Wno-unused-value
-  )
-
-##########################################################################
-  
 ```
 
-### 2.3 参数配置&运行
+3. 修改thirdPartyPath.json ，设置cuda_install_dir 为 cuda 安装的目录(如 /usr/local/cuda)
+4. 运行 build_tools/build_deepgen.sh 等待 Deepgen 编译完成
 
-1. exe模式【仅用于debug】
-   参数配置：debug用，只能用固定参数配置，在 src/main.cc 的 `main()`函数中修改。只用于测试MLIR后端的代码生成过程，不进行kernel的执行
-   运行：
-
+### 2.3 其他运行所需要的第三方依赖
 ```sh
-${project_folder}/bin/kcg_compiler > log.txt 2>&1
+pip install tqdm
+pip install torch
+
 ```
 
-调试：f5进入调式模式。配置文件在 .vscode/launch.json 注意配置选择
+## 3.环境变量设置以及其他运行前的准备
+设置PYTHONPATH :
+```sh
+cd DeepGen/Runtime
+export PYTHONPATH=$PYTHONPATH:`pwd`
 
-<p align = 'center'>
-<img src="./doc/image.png" width=50%>
-</p>
+```
 
-2. lib模式
+## 4.端到端模型算子识别+调优 —— 一个完整示例
+下面以 bert_large 为例，演示如何使用 deepgen 对模型进行算子识别+优化   
+模型路径 Runtime/kcg/models/bert_large
+model.py 是 BERT模型定义文件   
+run.py 为运行脚本。其中定义了算子识别与调优过程   
 
-启动脚本为 ${project_dir}/scripts/Benchmark.sh
-其调用 Runtime/kcg/deepGenMain.py ,开启进程池处理编译和测试任务。可以将该进程设置为会话分离的（nohup），即ssh链接断开后也不会停止，用于长时间跑测试
-需要查看总体运行时间，执行 ：
+0. 前提
+使用deepgen做端到端调优的前提是：模型结构已知（有torch代码）
+1. 修改模型源码
+我们在 model.py 中做出如下修改 ：
+- 开头引入deepgen的类，定义matmul的baseline函数和attention的baseline函数
+```py
+from kcg.TorchInjector import *
+from kcg.ModelUtils import *
+g_FmmBaseline = torch.matmul
+# g_FmmBaseline = triton_matmul.bmm
 
+def g_FattnBaseline(q, k, v, batch_size, head_num, seq_len, head_dim, mask = None) :
+    scores = g_FmmBaseline(q, k.transpose(2, 3)) / math.sqrt(head_dim) # q*k
+    if mask is not None:
+        scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+    scores = F.softmax(scores.float(), dim=-1).type_as(q)
+    output = g_FmmBaseline(scores, v)  # (bs, n_local_heads, seqlen, head_dim)
+    return output
+
+```
+
+- 在model.py 中修改torch.matmul算子为 OpProxy.f_matmul, 替换 nn.Linear为 CustomLinear  
+
+```py
+
+class FeedForward(nn.Module):
+    def __init__(self, dim, ffn_hidden_dim, isBaseline):
+        super(FeedForward, self).__init__()
+        if isBaseline:
+            f_mm = g_FmmBaseline
+        else:
+            f_mm = OpProxy.f_matmul
+        self.start_linear = CustomLinear(dim, ffn_hidden_dim, bias=False,f_mm=f_mm)
+        self.gelu = nn.GELU()
+        self.end_linear = CustomLinear(ffn_hidden_dim, dim, bias=False,f_mm=f_mm)
+    
+    def forward(self, x):
+        start = self.start_linear(x)
+        gelu = self.gelu(start)
+        end = self.end_linear(gelu)
+        return end
+
+
+class Attention(nn.Module):
+    def __init__(self, dim, head_num, isBaseline):
+        super(Attention, self).__init__()
+        self.head_num = head_num
+        self.head_dim = dim // head_num
+        if isBaseline :
+            f_mm = g_FmmBaseline
+            f_attention = g_FattnBaseline
+        else:
+            f_mm = OpProxy.f_matmul
+            f_attention = OpProxy.f_attention
+        # f_lin = nn.Linear
+        f_lin = CustomLinear
+        self.wq = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wk = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wv = f_lin(dim, head_num * self.head_dim, bias=False, f_mm=f_mm)
+        self.wo = f_lin(head_num * self.head_dim, dim, bias=False, f_mm=f_mm)
+        self.f_matmul = f_mm
+        self.f_attention = f_attention
+        
+    def forward(self, x, mask):
+        batch_size, seq_len, _ = x.shape  # [batch_size, seq_len, hidden_dim]
+        xq, xk, xv = self.wq(x), self.wk(x), self.wv(x)
+
+        xq = xq.view(batch_size, seq_len, self.head_num, self.head_dim) # [batch_size, seq_len, head_num, head_dim]
+        xk = xk.view(batch_size, seq_len, self.head_num, self.head_dim)
+        xv = xv.view(batch_size, seq_len, self.head_num, self.head_dim)
+
+        query = xq.transpose(1, 2) # [batch_size, head_num, seq_len, head_dim]
+        keys = xk.transpose(1, 2)
+        values = xv.transpose(1, 2)
+        
+        def _f() :
+            scores = self.f_matmul(query, keys.transpose(2, 3)) / math.sqrt(self.head_dim) # q*k
+            if mask is not None:
+                scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
+            scores = F.softmax(scores.float(), dim=-1).type_as(query)
+            output = self.f_matmul(scores, values)  # (bs, n_local_heads, seqlen, head_dim)
+            return output        
+        # if mask is None :
+        if False :
+            output = self.f_attention(query,keys,values,batch_size,self.head_num, seq_len, self.head_dim, mask)
+        else:
+            output = _f()
+        output = output.transpose(1, 2).contiguous().view(batch_size, seq_len, -1)
+        return self.wo(output)
+
+```
+
+
+2. 算子扫描
+完成模型修改后，运行 run.py。将collectInfoOnly 设置为 True执行算子扫描：
+```py
+    collectInfoOnly = True
+    compile_model(devid, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
+    
+```
+输出如下：
+```log
+init_cuda devid= [0]
+==== set visible device to 0  =====
+=== e2e ends :  torch.Size([1, 1024, 1024])
+collected mm args =  [[1], 1024, 1024, 1024, torch.float32]
+collected mm args =  [[1, 16], 1024, 1024, 64, torch.float32]
+collected mm args =  [[1, 16], 1024, 64, 1024, torch.float32]
+collected mm args =  [[1], 1024, 4096, 1024, torch.float32]
+collected mm args =  [[1], 1024, 1024, 4096, torch.float32]
+
+```
+可以看到，model中涉及到的所有matmul算子的 MNK以及batch参数  `[[batch], M,N,K, torch.dtype]`
+ 
+3. 算子调优
+针对上述matmul算子，分别执行调优。在 Runtime/kcg/SimpleLocalTester.py 中   
+设置硬件信息（架构信息，nvgpu的sm号，amdgpu或dcu的gfx号），设置算子类型为 kcg_mm.MatmulOp 
+```py
+def main():
+    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc = getInputs()
+    # cfgFile = "/home/xushilong/DeepGen/TuningConfigs/GEMM_cfg_32.json"
+    opty = kcg_mm.MatmulOp
+    # opty = kcg_att.AttentionOp
+    devId = 7
+
+    if is_hip():
+        backend = EnumBackendType.HIP
+        arch = "906"
+    else:
+        backend = EnumBackendType.CUDA
+        arch = "80"
+    
+```
+根据机器性能，配置进程池数目。数量越多，单次编译的kernel会更多，但是CPU负载会更大
+```py
+    print("=== checktflops, checkAcc",checktflops, checkAcc)
+    ts = get_tuning_space(opty, cfgFile)
+    bc = BenchmarkConfig()
+    bc.keepTopNum = 10   # topK 结果保留
+    bc.max_kernel_per_iter = 80  # 用于kernel编译的进程池大小
+    bc.result_json_path = result_json_path  
+    bc.maxCount = maxCount
+    st = time.time()
+    print(f"=====  start at : {st}")
+    
+```
+
+根据MNK和batch，构建相关配置文件。相关文件已在 TuningConfigs/modelTest 中，和形状参数一一对应：
+```log
+mm_1._1024_1024_1024.json
+mm_1._1024_1024_4096.json
+mm_1._1024_4096_1024.json
+mm_1.16._1024_64_1024.json
+mm_1.16._1024_1024_64.json
+
+```   
+注意，Nvgpu和amdgpu的warp大小不同。需在配置文件内修改（nvidia应为32， amd或dcu=64）：   
+```json
+    "WARP_SIZE": [
+        64  
+    ],
+```
+
+配置文件可自行增删参数的取值规模。需注意，MNK和batch需要固定不变. 以 collected mm args =  [[1, 16], 1024, 64, 1024, torch.float32] 为例：   
+```json
+    // ...
+    "M_SIZE": [
+        1024
+    ],
+    "N_SIZE": [
+        64
+    ],
+    "K_SIZE": [
+        1024
+    ],
+    "BATCH_SIZE": [
+        1,
+        16
+    ],
+    // ...
+```
+
+**注意：为保证结果准确 请将gpu锁定频率。**
+对于大部分GPU设备，其存在自动调节时钟频率的功能，在负载情况不同时时钟频率也不同。这可能使最终性能的测定不准确，因此需要锁定频率后再测试：
+对于nvidia：   
 ```shell
-ps -eo pid,etime,cmd | grep testGetKernels
-```
-
-## 3. 使用说明
-
-### 3.1 运行机制
-
-1. DeepGen首先读取用户的调优参数文件，生成并剪枝调优空间，存储到json文件。如果检测到调优空间json已存在，则跳过这步
-2. 随后DeepGen根据参数空间json开始编译和benchmark。编译的进程池大小由用户决定。benchmark过程由守护进程（ perfmonitor ）和 工作进程（perftester）构成。perftester 执行测试，并将结果存入 `perfPAth` 为前缀指定的json中。
-   perfmonitor 检测到 perftester 意外退出时，会重启perftester进程. perftester会根据用户输入的 `perfPAth` 路径重新读取历史最佳纪录，继续统计并benchmark，直到正常结束
-3. 注意：对于大部分GPU设备，其存在自动调节时钟频率的功能，在负载情况不同时时钟频率也不同。这可能使最终性能的测定不准确，因此需要锁定频率后再测试：对于nvidia：
-
-   ```shell
    # 以设置7号卡的频率举例 (-i 7即可)
    sudo nvidia-smi -pm 1 -i 7  # 设置persistence mode, 防止驱动卸载后设置失效
    nvidia-smi -q -d CLOCK # 查看当前时钟状态
@@ -170,8 +302,7 @@ ps -eo pid,etime,cmd | grep testGetKernels
    nvidia-smi -q -d CLOCK # 再次查看当前时钟状态
    ```
 
-   对于amdgpu：
-
+对于amdgpu：   
    ```shell
    cat /sys/class/drm/card0/device/pp_dpm_sclk  # 查看核心频率级别
    cat /sys/class/drm/card0/device/pp_dpm_mclk  # 查看显存频率级别
@@ -183,156 +314,73 @@ ps -eo pid,etime,cmd | grep testGetKernels
    echo "auto" | sudo tee /sys/class/drm/card0/device/power_dpm_force_performance_level
 
    ```
-4. 特殊支持：考虑到服务器之间的负载情况不同，GPU较为空闲的服务器上的CPU占用率可能很高。当本地运行DeepGen的编译+benchmark时，CPU高占用往往会限制编译速度，增加测试耗时
-   为解决该问题，DeepGen支持***集群运行模式***。可选定两台或多台服务器，分别用于kernel编译和benchmark。注意，集群内的host上必须部署有能够编译所需的kernel的工具链（nvcc、cuda、rocm环境等）。集群运行模式的具体使用方法，详见 3.4
-
-### 3.2 脚本参数说明
-
-Benchmark.sh
-
-```shell
-#! /bin/bash
-startParamfile=$1
-temp=$(dirname "$0")
-cd ${temp}/..
-mydir=`pwd`
-echo $mydir ; cd ${mydir} 
-# sh Compile.sh
-source ~/anaconda3/etc/profile.d/conda.sh ; conda activate py310  # 注意，此处 py310 为deepGen运行所需的conda虚拟环境名字。根据主机不同填入对应的环境名
-export PYTHONPATH=${mydir}/Runtime
-cd ${mydir}/Runtime/kcg
-echo nvcc_path=`which nvcc`
-# 启动指令1 ：使用Benchmark脚本参数启动，会话进程分离，用于长期执行
-nohup python deepGenMain.py $startParamfile > ${startParamfile}_out.log 2>&1 & 
 
 
+构建配置文件完成后，确保gpu锁频后，可根据配置文件执行命令：
+```sh
+cd Runtime/kcg
+python SimpleLocalTester.py ../../TuningConfigs/modelTest/mm_1._1024_1024_1024.json  res_mm_1._1024_1024_1024.json 0 0 0 0 > log_1._1024_1024_1024.log 2>&1 
+python SimpleLocalTester.py ../../TuningConfigs/modelTest/mm_1._1024_1024_4096.json  res_mm_1._1024_1024_4096.json 0 0 0 0 > log_1._1024_1024_4096.log 2>&1 
+python SimpleLocalTester.py ../../TuningConfigs/modelTest/mm_1._1024_4096_1024.json  res_mm_1._1024_4096_1024.json 0 0 0 0 > log_1._1024_4096_1024.log 2>&1 
+python SimpleLocalTester.py ../../TuningConfigs/modelTest/mm_1.16._1024_64_1024.json  res_mm_1.16._1024_64_1024.json 0 0 0 0 > log_1.16._1024_64_1024.log 2>&1 
+python SimpleLocalTester.py ../../TuningConfigs/modelTest/mm_1.16._1024_1024_64.json  res_mm_1.16._1024_1024_64.json 0 0 0 0 > log_1.16._1024_1024_64.log 2>&1 
 
 ```
+调优结果将存放在各自 `res_mm_*.json`文件中
+调优时间根据参数空间大小、机器性能会有差别。一般在数小时到数十个小时不等
 
-deepGenMain.py ：参数含义见代码注释
-
-### 3.3 工具脚本说明
-
-Runtime/kcg/tools/SavePerflogAsTuningSpace.py ： 将Runtime生产的 `${perfPAth}_cardX.json` (记录最佳topK的config)转化为调优空间，以便后期再单独测试（避免大批量运行时torch性能变差的问题）
-
-### 3.4 集群运行模式
-
-考虑到最小化总体耗时，deepgen的kernel编译和benchmark是同步进行的。用户可自定义最大编译进程数，提高kernel编译速度，但会加重cpu负担。
-经过实测，发现在cpu负载重的工况下，pytorch的benchmark的准确性有所降低（torch的性能会降低），因此建议使用***cluster运行模式***将kernel编译和benchmark分配到不同主机执行
-
-#### 3.4.1 概念说明
-- *compiler, perf_tester, workgroup*   
-cluster模式下，主机具有不同角色，可以为 `compiler` 或 `perf_tester`. `compiler` 即编译机，表示该主机用于编译kernel； `perf_tester` 即测试机，表示该主机使用自身gpu设备测试 `compiler` 生成的kernel。一个compiler和一个perf_tester 组成一个`workgroup`。
-
-- *tuning_config, tuning_space 与workgroup的执行模式*   
-kernel的编译和调优依赖于调优参数文件 `tuning_config`，单个`tuning_config`可以产出一个调优空间 `tuning_space`,进而生成若干同类kernel。从tuning_config 生成调优空间，再产出kernel的过程称为一个编译任务。一个`compiler`下可以有多个编译任务，这些编译任务是由该compiler串行执行的。这些编译任务都由workgroup内的 `perf_tester` 测试。测试在workgroup内也是串行的
-
-- *master & workgroup之间的关系, 限制条件*   
-cluster集群通过管理者master启动。master可以为compiler或perf_tester, 也可以不进行实际的编译或测试。master下的workgroup可以有多个，这些workgroup之间是并行的关系   
-不同workgroup之间，`compiler` 必须是不同的，`perf_tester`也必须不同
-
-- *什么是相同的compiler & perf_tester*   
-如果两个compiler的 `ip_addr`,`cwd` 相同，那么这两个compiler相同
-如果两个perf_tester的 `ip_addr`,`cwd`,`devids`相同，那么这两个 perf_tester 相同
-
-
-#### 3.4.2 示例
-- 示例1：以配置文件 ClusterTaskConfigs/task_config.json 为例子进行说明：   
-
+4. 结果注册&模型运行
+调优完成后，结果格式如下：
 ```json
 {
-    "workgroups" : [
+  "testResult": [
+    {
+      "name": "kcg_MM_bM1024N1024K1024isAT1W64_BM32BN32BK8TM4TN4BLY1BLX1WLY8WLX8GLWA4GLWB4BSWM2BSWN2WSWM1WSWN2LSU1Map4GSW0UN8RP0SP0LC1RC0",
+      "speedup": 1.2757928203038418,
+      "time": 0.3799990117549896,
+      "time_base": 0.4848000109195709
+    },
+    {
+      "name": "kcg_MM_bM1024N1024K1024isAT1W64_BM32BN32BK8TM4TN4BLY1BLX1WLY8WLX8GLWA4GLWB4BSWM2BSWN4WSWM1WSWN2LSU1Map4GSW0UN8RP1SP0LC1RC0",
+      "speedup": 1.275789518428972,
+      "time": 0.3799999952316284,
+      "time_base": 0.4848000109195709
+    },
+    {
+      "name": "kcg_MM_bM1024N1024K1024isAT1W64_BM32BN32BK8TM4TN4BLY1BLX1WLY8WLX8GLWA4GLWB4BSWM2BSWN4WSWM1WSWN2LSU1Map4GSW0UN8RP0SP0LC1RC0",
+      "speedup": 1.2752525408917632,
+      "time": 0.38016000390052795,
+      "time_base": 0.4848000109195709
+    },
+    // ...
+  ]
+}
+```
+上述展示了 top3的最佳结果。注册时，一般只用注册 top1的name字段即可。 在 precompiled.json 中注册：
+```json
+{
+    "kernels" : [
         {
-            "compiler" : {
-                "ip_addr" : "10.18.95.15",  # compiler的主机ip
-                "ssh_port" : 22,    # ssh端口号
-                "cwd" : "/home/xushilong/DeepGen",    # 工作目录
-                "tuning_config_relative_paths" : [    # 编译任务列表（tuning_config文件）
-                    "TuningConfigs/GEMM_configs_2.json",
-                    "TuningConfigs/GEMM_configs_3.json"
-                ],
-                "tuning_space_relative_paths" : [    # tuning_config文件对应的调优空间名字
-                    "TuningCombs/ts_GEMM_configs_2.json",
-                    "TuningCombs/ts_GEMM_configs_3.json"
-                ],
-                "perflog_prefix_list" : [     # tuning_config文件对应的benchmark结果文件前缀
-                    "testLog_GEMM_configs_2",
-                    "testLog_GEMM_configs_3"
-                ],
-                "max_process_count" : 100,   # 最大编译进程数
-                "tuning_space_generate_strategy" : 1,   # 调优空间生成策略
-                "backendType" : "CUDA",   # 后端类型，为CUDA或HIP
-                "arch" : "80"    # 架构信息，填入sm80 或 gfx906 后的数字
-            },
-            "perf_tester" : {
-                "ip_addr" : "10.18.96.58",
-                "ssh_port" : 2133,
-                "cwd" : "/home/xushilong/DeepGen",
-                "user_name" : "xushilong",
-                "password" : "xushilong",
-                "devids" : [7],   # 使用哪几张卡测试 compiler的kernel
-                "benchmark_count" : 10,  # 单个kernel测试次数
-                "warmup_count" : 1,  # 单个kernel运行warmup次数
-                "keep_top" : 100    # benchmark结果文件保留性能前几的config
-            }
-        }
+            "type" : "matmul",
+            "kernelName" : "kcg_MM_bM1024N1024K1024isAT1W64_BM32BN32BK8TM4TN4BLY1BLX1WLY8WLX8GLWA4GLWB4BSWM2BSWN2WSWM1WSWN2LSU1Map4GSW0UN8RP0SP0LC1RC0",
+            "pklpath" : ""
+        },
+        // ...
     ]
 }
 ```
 
-上述文件中，含一个workgroup   
-compiler ：定义了用于编译的主机信息、任务配置
-perf_tester : 定义了用于benchmark的主机信息，benchmark具体配置
-上述文件定义 compiler 和 perf_tester 为两台主机，compiler 所要编译的参数文件为 TuningConfigs/GEMM_configs_2.json, TuningConfigs/GEMM_configs_3.json，即两个编译任务   
-perftester使用devid=7的单张卡测试 compiler 所管理的两个任务
+我们根据dcu-z100上的运行结果提前注册好了一些kernel在precompiled.json 中   
 
-- 示例2： ClusterTaskConfigs/task_config_sample2.json   
-定义了两个并行的 workgroup {wg0,wg1}：   
-wg0使用 10.18.95.15 的 DeepGenRun 目录作为工作目录，进行任务 GEMM_configs_2.json 的编译；   
-wg1使用 10.18.95.15 的 DeepGen 目录作为工作目录，进行任务 GEMM_configs_3.json 的编译；   
-wg0、wg1都使用 10.18.96.58 作为 测试机， dev7测试 GEMM_configs_2的kernel， dev6测试GEMM_configs_3的kernel   
-wg0 wg1并行执行，即 10.18.95.15 的 DeepGen DeepGenRun 并行编译； 10.18.96.58 的 dev6，dev7 并行测试
-
-
-#### 3.4.3 启动
-scripts/StartBatchTestWithCluster.sh， 指定任务文件后即可运行此脚本。benchmark结束后，结果文件会从 perftester 拷贝到 workgroup内的对应compiler主机上。master只负责启动，不负责持续监控cluster的运行   
-
-## 4.项目协同文档
-
-周报记录  https://www.notion.so/dbe373c194d844748f693751460dad4a
-
-## 5.常见问题
-
-1. 编译DeepGen时提示 Python.h 未找到<br> 
-解决：请正确设置CMakeLists.txt 中的Python路径和Python版本号 <br>
-2. 编译报错： `error: use of enum ‘FusionMode’ without previous declaration`<br>
-解决：在对应位置加入 affine 名字空间即可<br>
-3. Runtime报错：Cannot found nvcc. PLease set PATH env first! <br>
-解决：请在运行benchmark前，添加 nvcc所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`*<br>
-4. GetCudaInfo 报：No such file or directory: 'ptxas'<br>
-解决：请在运行benchmark前，添加 ptxas 所在目录到PATH ：例如 `export PATH=$PATH:/usr/local/cuda/bin`<br>
-5. 中止Benchmark后想继续运行，如何操作？<br>
-解决：在testGetKernels.py 中设置参数 `startFrom` 为从哪里继续执行的id，其他设置保持不变即可。该id目前可以通过在中断Benchmark前，实时查看_pkl中kernel的编号得到，也可以查看log日志*<br>
-6. Runtime执行后，未生成kernel（_pkl目录下没有文件生成）<br>
-  解决：请检查CMakelist.txt中的以下变量是否正确：<br>
-  `USER_LLD_PATH`（ROCM）<br>
-  `USER_PTXAS_PATH`（CUDA）<br>
-  `CUDA_CAP`<br>
-  `PTXAS_VERSION`<br>
-
-7. Hygon多dtk环境下，master使用 scripts/StartBatchTestWithCluster.sh 无法启动tester端进程的问题（报lib错误）<br>
-原因： 多dtk环境下，系统默认dtk可能和conda环境内安装的工具链的dtk版本不同，导致lib错误<br>
-解决方法1：在master完成配置文件推送后，手动杀死tester和compiler端进程 ，之后在tester和compiler端分别手动启动：
-```sh
-# Tester端：
-./scripts/Benchmark.sh /home/xushilong/DeepGen/_cluster_run/param_test_0.json
-# Compiler端:
-./scripts/Benchmark.sh /home/xushilong/DeepGen/_cluster_run/param_compile_0.json
+使用该注册文件运行model ：
+```py
+# Runtime/kcg/models/bert_large/run.py
+    
+    # 手动注册已经调好的kernl
+    registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)  # 7表示gpu卡号
+    # 没有调好的kernel，首次执行：
+    collectInfoOnly = False
+    # compile_model(devid, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
+    
 ```
-解决方法2：尝试修复dtk的默认版本指向<br>
-
-8. scripts/StopBenchmark.sh 无法杀死进程<br>
-解决方法：加入clusterRunMode后，StopBenchmark.sh暂无法对由ssh启动的进程进行有效中止。只能强制杀死用户所有进程：
-```sh
-pkill -u $USER
-```
+进行上述修改，运行 run.py 执行模型（会根据注册的name先做一遍算子编译，之后运行model）

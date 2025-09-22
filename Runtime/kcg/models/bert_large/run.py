@@ -58,10 +58,10 @@ if __name__ == "__main__":
     input_ids = torch.randint(1, args.vocab_size, size=(batch, max_seq_len)).to(devid)
     
     # 手动注册已经调好的kernl
-    # registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',7)
+    registerPreCompiledKernelByJson('/home/xushilong/DeepGen/precompiled.json',devid)
     # 没有调好的kernel，首次执行：
     collectInfoOnly = False
-    compile_model(devid, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
+    # compile_model(devid, run_model(model_bench,args,input_ids), collectInfoOnly=collectInfoOnly)
     
     def f_benchmark():
         print("========= eval bench time =======",flush=True)

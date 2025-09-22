@@ -104,11 +104,18 @@ class OpProxy :
             for tr in OpProxy.__registedKernels_mm :
                 bb,mm,nn,kk = tr.bestKernelBaseArg[0:-1]
                 dt = tr.bestKernelBaseArg[-1]
-                # print(f'__select_matmul : tr [bbmmnnkk]={bb,mm,nn,kk}, required [bmnk]={batch,m,n,k}')
+                print(f'__select_matmul : tr [bbmmnnkk]={bb,mm,nn,kk}, required [bmnk]={batch,m,n,k}')
                 isBatchEqual = True
                 if len(batch) == 1:
-                    if batch[0] == 1 and len(bb) == 0:
-                        isBatchEqual = True
+                    if batch[0] == 1:
+                        if len(bb) == 0 :
+                            isBatchEqual=True
+                        else:
+                            if bb != batch :
+                                isBatchEqual = False
+                    else:
+                        if bb != batch :
+                            isBatchEqual = False
                 else:
                     newbatch = []
                     for _b in batch :
@@ -121,7 +128,9 @@ class OpProxy :
                         c = torch.empty(shapeC,dtype=ToTorchType(EnumKernelDType(dt)), device= dev_name(dev))
                         f = OpInjector(dev).parseOp(tr.bestConfigPkl, matmul.MatmulOp)
                         aT = a.transpose(-1,-2).contiguous()
+                        print(f'==== c={c.shape}')
                         f(aT,b,c)
+                        print('[d] --- c.shape=',c.shape,f';a={a.shape}',f';b={b.shape}',flush=True)
                         return c
                     return _f()
         OpProxy.collector.addInfo(matmul.MatmulOp,[batch,m,n,k], a.dtype)
@@ -137,6 +146,7 @@ class OpProxy :
                 scores = scores + mask  # (bs, n_local_heads, seqlen, cache_len + seqlen)
             scores = F.softmax(scores.float(), dim=-1).type_as(q)
             output = f_matmul(scores, v)  # (bs, n_local_heads, seqlen, head_dim)
+            print('[d] output.shape', output.shape,';q = ',q.shape,';k=',k.shape,';v=',v.shape,';scores.shape=',scores.shape,flush=True)
             return output
         if get_platform_type() == 'dcu' : 
             for tr in OpProxy.__registedKernels_att :
