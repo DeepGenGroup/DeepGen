@@ -229,7 +229,9 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
   mlir::MLIRContext* context = &(this->context);
   mlir::PassManager pm(context);
   pm.addPass(createParallelToGPUPass());
-  pm.addPass(createExpToTaylorPass());
+  // Keep native exp for numerical stability in attention softmax.
+  // Taylor approximation can introduce NaN for some shapes/configs.
+  // pm.addPass(createExpToTaylorPass());
   pm.addPass(createCombineMemrefPass());
   pm.addPass(ReplaceAllocToGetglobalPass());
   pm.addPass(createAmendAllocaOpAddrSpacePass(this->target));

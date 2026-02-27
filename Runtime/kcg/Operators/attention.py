@@ -1,4 +1,5 @@
 import importlib
+import math
 import torch
 import torch.nn.functional as F
 from kcg.Kernel import *
@@ -423,6 +424,17 @@ class AttentionOp(OpInterface) :
         self.CompileKernel = None
         self.SetPlatform = None
         self.fastCompile = True
+        self._debug_dumped = False
+
+    def _dump_tensor_stats(self, name: str, t: torch.Tensor):
+        with torch.no_grad():
+            nan_cnt = int(torch.isnan(t).sum().item())
+            inf_cnt = int(torch.isinf(t).sum().item())
+            finite_ratio = float(torch.isfinite(t).float().mean().item())
+            t_safe = torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
+            t_min = float(t_safe.min().item())
+            t_max = float(t_safe.max().item())
+        print(f"[attn-debug] {name}: shape={tuple(t.shape)} min={t_min} max={t_max} finite_ratio={finite_ratio} nan={nan_cnt} inf={inf_cnt}", flush=True)
 
     def GetBaselineInputTensor(self, devId : int) -> List[torch.Tensor] : 
         if self.InputTensors_Baseline is None :
@@ -448,7 +460,8 @@ class AttentionOp(OpInterface) :
             assert len(shapeList)==4
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            qq = q.transpose(-1,-2).contiguous() 
+            scale = 1.0 / math.sqrt(float(n))
+            qq = (q * scale).transpose(-1,-2).contiguous() 
             kk = k
             d = torch.empty((b0, b1,m,n), dtype=ety, device= dev_name(devId) )
             self.InputTensors_Benchmark = [qq,kk,v,d]
@@ -573,13 +586,26 @@ class AttentionOp(OpInterface) :
     
     def Test_baseline(self, devId : int) -> Tuple[torch.Tensor,float]:
         [q,k,v] = self.GetBaselineInputTensor(devId)
+        scale = 1.0 / math.sqrt(float(q.shape[-1]))
+        # One warmup iteration to reduce first-run variance.
+        q_scaled_warmup = torch.mul(q, scale)
+        p_warmup = torch.matmul(q_scaled_warmup, k)
+        p_warmup_max = torch.max(p_warmup, dim=-1, keepdim=True).values
+        p_warmup_shifted = torch.sub(p_warmup, p_warmup_max)
+        p_warmup_exp = torch.exp(p_warmup_shifted)
+        p_warmup_sum = torch.sum(p_warmup_exp, dim=-1, keepdim=True)
+        s_warmup = torch.div(p_warmup_exp, p_warmup_sum)
+        _ = torch.matmul(s_warmup, v)
         ev_start = torch_ns.Event(enable_timing=True)
         ev_end = torch_ns.Event(enable_timing=True)
-        d = q.shape[1] * q.shape[3]
         ev_start.record()
-        p = torch.matmul(q, k) 
-        # p = p / math.sqrt(d)
-        s = F.softmax(p, dim=-1)
+        q_scaled = torch.mul(q, scale)
+        p = torch.matmul(q_scaled, k) 
+        p_max = torch.max(p, dim=-1, keepdim=True).values
+        p_shifted = torch.sub(p, p_max)
+        p_exp = torch.exp(p_shifted)
+        p_sum = torch.sum(p_exp, dim=-1, keepdim=True)
+        s = torch.div(p_exp, p_sum)
         self.OutputTensor_Baseline = torch.matmul(s,v)
         ev_end.record()
         torch_ns.synchronize()
@@ -588,13 +614,23 @@ class AttentionOp(OpInterface) :
     
     def Test_benchmark(self, packedKernel : CompiledKernel, benchmarkCount : int, devId : int) -> Tuple[torch.Tensor,float] : 
         [a,b,c,d] = self.GetBenchmarkInputTensor(devId)
+        if not self._debug_dumped:
+            self._dump_tensor_stats("Q_in", a)
+            self._dump_tensor_stats("K_in", b)
+            self._dump_tensor_stats("V_in", c)
+            self._dump_tensor_stats("O_out_before", d)
+        # One warmup iteration to reduce first-run variance.
+        packedKernel.run(a,b,c,d)
+        torch_ns.synchronize()
         st = torch_ns.Event(enable_timing=True)
         et = torch_ns.Event(enable_timing=True)
         st.record()
         packedKernel.run(a,b,c,d)
         et.record()
         torch_ns.synchronize()
-        # print(d)
+        if not self._debug_dumped:
+            self._dump_tensor_stats("O_out_after", d)
+            self._debug_dumped = True
         elapsed_time = st.elapsed_time(et)
         return (d,elapsed_time)
     

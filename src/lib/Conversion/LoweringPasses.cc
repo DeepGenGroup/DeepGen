@@ -849,7 +849,12 @@ struct LLVMFuncOpAddGPUAttrPass : public PassWrapper<LLVMFuncOpAddGPUAttrPass, O
     auto module = dyn_cast<ModuleOp>(getOperation());
     OpBuilder builder(module);
     module.walk<WalkOrder::PreOrder>([&](LLVM::LLVMFuncOp funcOp) {
-      auto blockdims = mlir::dyn_cast<DenseI32ArrayAttr>(funcOp->getAttr(AttrBlockDim)); 
+      auto blockdims = mlir::dyn_cast_or_null<DenseI32ArrayAttr>(funcOp->getAttr(AttrBlockDim));
+      if (!blockdims) {
+        llvm::errs() << "[LLVMFuncOpAddGPUAttrPass] missing attr " << AttrBlockDim
+                     << " on function: " << funcOp.getName() << "\n";
+        return;
+      }
       int32_t flatSize = 1;
       auto len = blockdims.asArrayRef().size();
       for (int32_t size : blockdims.asArrayRef()) {
@@ -1473,8 +1478,13 @@ struct ROCDLIdOpModifyPass : public PassWrapper<ROCDLIdOpModifyPass, OperationPa
         llvm::errs() << "there is other operations which is not funcOp in the module!\n";
         assert(false);
       }
-      auto blockDims = mlir::dyn_cast<DenseI32ArrayAttr>(funcOp->getAttr("func.grid.dim"));
-      auto threadDims = mlir::dyn_cast<DenseI32ArrayAttr>(funcOp->getAttr("func.block.dim"));
+      auto blockDims = mlir::dyn_cast_or_null<DenseI32ArrayAttr>(funcOp->getAttr("func.grid.dim"));
+      auto threadDims = mlir::dyn_cast_or_null<DenseI32ArrayAttr>(funcOp->getAttr("func.block.dim"));
+      if (!blockDims || !threadDims) {
+        llvm::errs() << "[ROCDLIdOpModifyPass] missing func.grid.dim/func.block.dim on function: "
+                     << funcOp.getName() << "\n";
+        continue;
+      }
 
 
       funcOp.walk([&](Operation *op) {

@@ -648,28 +648,54 @@ mlir::affine::AffineForOp blockReduce(mlir::OpBuilder &builder,
                                      const std::vector<mlir::Value>& regBufs, 
                                      const std::vector<mlir::Value>& smBufs, 
                                      reduceFunc calculateFunc) {
-  // 进行block的reduce操作，具体的计算需要自己输入
-  mlir::AffineExpr expr = builder.getAffineDimExpr(0) % width;
-  auto zero = mlir::IntegerSet::get(1, 0, llvm::ArrayRef<mlir::AffineExpr>({expr}), llvm::ArrayRef<bool>({true}));
-  auto ifOp = builder.create<mlir::affine::AffineIfOp>(builder.getUnknownLoc(), zero, mlir::ValueRange{tid}, false);
-  auto loopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value iv, mlir::ValueRange iterArgs) {
-    std::vector<mlir::Value> lds, oldLds;
-    for (int i=0; i<regBufs.size(); i++) {
-      auto oldLd = b.create<mlir::affine::AffineLoadOp>(loc, smBufs[i], iv);
-      auto ld = b.create<mlir::affine::AffineLoadOp>(loc, regBufs[i], iv);
-      oldLds.push_back(oldLd.getResult());
-      lds.push_back(ld.getResult());
+  // Each warp-leader already holds the fully-reduced max/sum for its own rows
+  // after the preceding warpReduce.  The block-level step only needs to merge
+  // each leader's current-tile partial with the OLD global state carried in
+  // smBufs from the previous tile, then publish the result so every thread
+  // (and downstream cache_write remapping) can see it.
+  //
+  // All leaders write to smBufs[iv] directly.  After the downstream
+  // cache_write remapping each leader's store covers a unique set of row
+  // positions, so there is no actual data-race at runtime.
+  assert(regBufs.size() >= 2 && "blockReduce expects reg max/sum");
+  assert(smBufs.size() >= 2 && "blockReduce expects shared max/sum");
+
+  mlir::Location loc = builder.getUnknownLoc();
+  auto loopBody = [&](mlir::OpBuilder &b, mlir::Location l, mlir::Value iv, mlir::ValueRange iterArgs) {
+    // 1. Every thread snapshots the old global max (needed later for factor).
+    auto oldMax = b.create<mlir::affine::AffineLoadOp>(l, smBufs[0], iv);
+    auto oldSum = b.create<mlir::affine::AffineLoadOp>(l, smBufs[1], iv);
+
+    // 2. Leaders merge their current-tile partial with the old global state
+    //    and write the new global max/sum/factor back to smBufs.
+    mlir::AffineExpr leaderExpr = b.getAffineDimExpr(0) % width;
+    auto isLeaderSet = mlir::IntegerSet::get(1, 0,
+      llvm::ArrayRef<mlir::AffineExpr>({leaderExpr}),
+      llvm::ArrayRef<bool>({true}));
+    auto leaderIf = b.create<mlir::affine::AffineIfOp>(l, isLeaderSet, mlir::ValueRange{tid}, false);
+    b.setInsertionPointToStart(leaderIf.getThenBlock());
+
+    auto curMax = b.create<mlir::affine::AffineLoadOp>(l, regBufs[0], iv);
+    auto curSum = b.create<mlir::affine::AffineLoadOp>(l, regBufs[1], iv);
+    std::vector<mlir::Value> cur{curMax.getResult(), curSum.getResult()};
+    std::vector<mlir::Value> old{oldMax.getResult(), oldSum.getResult()};
+    auto merged = calculateFunc(b, cur, old);
+
+    b.create<mlir::affine::AffineStoreOp>(l, merged[0], smBufs[0], iv);
+    b.create<mlir::affine::AffineStoreOp>(l, merged[1], smBufs[1], iv);
+    if (smBufs.size() > 2) {
+      b.create<mlir::affine::AffineStoreOp>(l, merged[2], smBufs[2], iv);
     }
-    auto calResults = calculateFunc(b, lds, oldLds);
-    for (int i=0; i<calResults.size(); i++) {
-      b.create<mlir::affine::AffineStoreOp>(loc, calResults[i], smBufs[i], iv);
-    }
-    b.create<mlir::affine::AffineStoreOp>(loc, calResults[0], regBufs[0], iv);
-    b.create<mlir::affine::AffineYieldOp>(b.getUnknownLoc());
+    b.create<mlir::affine::AffineStoreOp>(l, merged[0], regBufs[0], iv);
+    b.create<mlir::affine::AffineStoreOp>(l, merged[1], regBufs[1], iv);
+
+    b.setInsertionPointAfter(leaderIf);
+
+    // 3. Barrier so every thread sees the updated smBufs.
+    b.create<mlir::gpu::BarrierOp>(l);
+    b.create<mlir::affine::AffineYieldOp>(l);
   };
-  builder.setInsertionPointToStart(ifOp.getThenBlock());
-  auto loop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange({}), loopBody);
-  builder.setInsertionPointAfter(ifOp);
+  auto loop = builder.create<mlir::affine::AffineForOp>(loc, 0, ydim, 1, mlir::ValueRange({}), loopBody);
   return loop;
 }
 

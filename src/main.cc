@@ -1,4 +1,5 @@
 #define PY_SSIZE_T_CLEAN
+#include <algorithm>
 #include <iostream>
 #include <string>
 #include <vector>
@@ -58,7 +59,8 @@ std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
 
 std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
   // attn compile func
-  // shape: {batch, head_num, seq_len, head_dim}
+  // shape supports both {batch, head_num, seq_len, head_dim}
+  // and {batch, seq_len, head_num, head_dim}.
   auto attn = config.at(__GlobalKernelName);
   // auto attn = config.at("attention");
   TileConfig tileConfig = {
@@ -70,9 +72,15 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
                 {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
   };
   // create new shapes
-  int len = shape.size(), bl = shape.size()-2;
-  int64_t sl = shape[len-2], hd = shape[len-1];
-  std::vector<int64_t> b(shape.begin(), shape.begin()+bl);
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  // Infer (head_num, seq_len) from the two pre-hd dimensions.
+  // Typical attention always has seq_len >= head_num.
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
   std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
   std::vector<int64_t> sh1{sl, sl}, sh2{sl, sl};
   std::vector<int64_t> sha1{sl, sl}, shb1{sl, hd}, shc1{sl, hd};
