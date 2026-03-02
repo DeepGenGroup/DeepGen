@@ -96,6 +96,13 @@ struct FlashAttnOptimizer : Optimizer {
   std::array<int64_t, 8> getSmCfgDatas(const std::string& bufType);
   mlir::AffineMap getSmQKVToRegQKVMap(mlir::OpBuilder& builder, const std::string& bufType);
   mlir::AffineMap getSmPToRegPMap(mlir::OpBuilder& builder);
+  mlir::affine::AffineForOp generateShufflePToRegP(
+      mlir::OpBuilder& builder, mlir::Value tileP, mlir::Value regP,
+      mlir::Value tid, mlir::Value k2_midder_iv, mlir::Value k2_inner_iv,
+      mlir::affine::AffineForOp k2_inner);
+
+  mlir::AffineMap getTempToSmQPrologueMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getSmQPrologueToRegQMap(mlir::OpBuilder& builder);
 
   mlir::AffineMap getSmToRegUpdateTtileOMap(mlir::OpBuilder& builder);
   mlir::AffineMap getRegUpdateTtileOMap(mlir::OpBuilder& builder);
@@ -123,6 +130,8 @@ struct FlashAttnOptimizer : Optimizer {
   bool isTranQ, isTranK, isTranV;
 
   // config args
+  bool useShuffleP = false;
+  bool useSplitKPV = false;
   int64_t threadNum, blockPY, blockPX, blockOY, blockOX;
   int64_t blockRepeatQ, blockRepeatK, warpRepeatQ, warpRepeatK;
   int64_t blockRepeatP, blockRepeatV, warpRepeatP, warpRepeatV;
@@ -145,6 +154,108 @@ struct FlashAttnOptimizer : Optimizer {
                    mlir::Value tileO, 
                    std::string bufDesc);
 
+  void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
+};
+
+// ====================================== GemmStats (split attention kernel 1) ================================
+struct GemmStatsOptimizer : Optimizer {
+  GemmStatsOptimizer() {
+    this->name = std::move(std::string("GemmStats"));
+  }
+  virtual bool applicable(mlir::func::FuncOp& funcOp, const std::map<std::string, int64_t>& config) override;
+  virtual void applyOptimzer(mlir::func::FuncOp& funcOp) override;
+
+  std::array<int64_t, 7> getCfgDatas(const std::string& bufType);
+  std::array<mlir::AffineExpr, 2> getGlobToSmExprs(const llvm::SmallVector<mlir::AffineExpr>& dims,
+                                                    const std::array<int64_t, 7>& args);
+  mlir::AffineMap getGlobQKToTempQKMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getTempToSmMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getTempToSmQPrologueMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getSmQPrologueToRegQMap(mlir::OpBuilder& builder);
+  std::array<int64_t, 8> getSmCfgDatas(const std::string& bufType);
+  mlir::AffineMap getSmQKVToRegQKVMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getCalculateMap(mlir::OpBuilder& builder, std::string calculatetype);
+  mlir::AffineMap getRegSumAndMaxMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getBlockLevelSmMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getBlockLevelRegMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getEmDenomWriteMap(mlir::OpBuilder& builder);
+
+  std::map<std::string, int64_t> cfg;
+  mlir::Value midBuf, sumBuf, maxBuf;
+  mlir::affine::AffineForOp initBufFor;
+  std::vector<mlir::affine::AffineForOp> xBlockFors, xTileForOps, yTileForOps, kForOps;
+  mlir::affine::AffineParallelOp blockIdx, threadIdx;
+  mlir::Value byIdx, Q, K, EmOut, DenomOut;
+
+  mlir::MemRefType typeQ, typeK, typeEmOut, typeDenomOut, typeMid;
+  int64_t batchSize, headNum, seqLen, headDim;
+  bool isTranQ, isTranK;
+
+  int64_t threadNum, blockPY, blockPX;
+  int64_t blockRepeatQ, blockRepeatK, warpRepeatQ, warpRepeatK;
+  int64_t globLoadTotalWidthQ, globLoadTotalWidthK;
+  int64_t globLoadRowWidthQ, globLoadRowWidthK;
+  int64_t globLoadAllWidthQ, globLoadAllWidthK;
+
+  void computeTuneArgs();
+  void parseFuncArgs(mlir::func::FuncOp funcOp);
+
+  std::vector<mlir::affine::AffineForOp> reduceAndBraodcast(mlir::Operation* localtionOp,
+                                                     const std::vector<mlir::Value>& regBufs,
+                                                     const std::vector<mlir::Value>& smBufs);
+  void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
+};
+
+
+// ====================================== FlashAttnSplitK2 (split attention kernel 2) ================================
+struct FlashAttnSplitK2Optimizer : Optimizer {
+  FlashAttnSplitK2Optimizer() {
+    this->name = std::move(std::string("FlashAttnSplitK2"));
+  }
+  virtual bool applicable(mlir::func::FuncOp& funcOp, const std::map<std::string, int64_t>& config) override;
+  virtual void applyOptimzer(mlir::func::FuncOp& funcOp) override;
+
+  std::array<int64_t, 7> getCfgDatas(const std::string& bufType);
+  std::array<mlir::AffineExpr, 2> getGlobToSmExprs(const llvm::SmallVector<mlir::AffineExpr>& dims,
+                                                    const std::array<int64_t, 7>& args);
+  mlir::AffineMap getGlobQKToTempQKMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getGlobVToTempVMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getTempToSmMap(mlir::OpBuilder& builder, const std::string& bufType);
+  std::array<int64_t, 8> getSmCfgDatas(const std::string& bufType);
+  mlir::AffineMap getSmQKVToRegQKVMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getSmPToRegPMap(mlir::OpBuilder& builder);
+  mlir::affine::AffineForOp generateShufflePToRegP(
+      mlir::OpBuilder& builder, mlir::Value tileP, mlir::Value regP,
+      mlir::Value tid, mlir::Value k2_midder_iv, mlir::Value k2_inner_iv,
+      mlir::affine::AffineForOp k2_inner);
+  mlir::AffineMap getTempToSmQPrologueMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getSmQPrologueToRegQMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getCalculateMap(mlir::OpBuilder& builder, std::string calculatetype);
+  mlir::AffineMap getTilePToSmPMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getTileOToGlobOMap(mlir::OpBuilder& builder);
+
+  std::map<std::string, int64_t> cfg;
+  mlir::Value midBuf;
+  std::vector<mlir::affine::AffineForOp> xBlockFors, xTileForOps, yTileForOps, kForOps;
+  mlir::affine::AffineParallelOp blockIdx, threadIdx;
+  mlir::Value byIdx, Q, K, V, Em, Denom, O;
+
+  mlir::MemRefType typeQ, typeK, typeV, typeO, typeEm, typeDenom, typeMid;
+  int64_t batchSize, headNum, seqLen, headDim;
+  bool isTranQ, isTranK, isTranV;
+
+  bool useShuffleP = false;
+  bool useSplitKPV = false;
+  int64_t threadNum, blockPY, blockPX, blockOY, blockOX;
+  int64_t blockRepeatQ, blockRepeatK, warpRepeatQ, warpRepeatK;
+  int64_t blockRepeatP, blockRepeatV, warpRepeatP, warpRepeatV;
+  int64_t globLoadTotalWidthQ, globLoadTotalWidthK, globLoadTotalWidthV;
+  int64_t globLoadRowWidthQ, globLoadRowWidthK, globLoadRowWidthV;
+  int64_t globLoadAllWidthQ, globLoadAllWidthK, globLoadAllWidthV;
+
+  void computeTuneArgs();
+  void parseFuncArgs(mlir::func::FuncOp funcOp);
+  std::pair<std::array<mlir::Value, 4>, std::array<mlir::Value, 7>> createBasicBuffers();
   void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
 };
 

@@ -381,7 +381,9 @@ std::tuple<std::vector<mlir::Value>, mlir::AffineMap, mlir::Value> /*operands, m
     dimCount = map.getNumDims();
     newExpr = builder.getAffineDimExpr(map.getNumDims()-1).floorDiv(step) % 2;
   } else {
-    dimCount = map.getNumDims() - 1;
+    int lastDim = map.getNumDims() - 1;
+    map = replaceExprInMap(builder, map, builder.getAffineConstantExpr(0), lastDim);
+    dimCount = map.getNumDims();
     newExpr = builder.getAffineConstantExpr(0);
     newOperands.pop_back();
   }

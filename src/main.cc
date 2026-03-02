@@ -21,14 +21,36 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   // compile func
   mlir::ModuleOp module = generator.createModule();
   auto noSupKernels = generator.createKernels(module, kds);  // create kernels
+  llvm::errs() << "[pipeline] createKernels done\n";
   auto result = generator.fusing(module, fkds);  // fusing
+  llvm::errs() << "[pipeline] fusing done\n";
   result = generator.mapping(module, tileCfg);  // mpping
-  generator.optimize(module, tuneCfg);  // optimize
-  // generator.lowering(module);  // lowering
-  generator.transform(module);
-  generator.lowering_(module);  // lowering
-  auto path = generator.translate(module);  // translate
-  // std::cout << "[lib] ===========4" << std::endl;
+  llvm::errs() << "[pipeline] mapping done\n";
+  llvm::errs() << "[pipeline] about to optimize\n";
+  if (!generator.optimize(module, tuneCfg)) {
+    llvm::errs() << "[pipeline] optimize FAILED\n";
+    return "";
+  }
+  llvm::errs() << "[pipeline] optimize done\n";
+  if (mlir::failed(module.verify())) {
+    llvm::errs() << "[pipeline] ERROR: IR already broken after optimize!\n";
+    return "";
+  }
+  llvm::errs() << "[pipeline] verify OK after optimize\n";
+  llvm::errs() << "[pipeline] about to transform\n";
+  if (!generator.transform(module)) {
+    llvm::errs() << "[pipeline] transform FAILED\n";
+    return "";
+  }
+  llvm::errs() << "[pipeline] transform done\n";
+  llvm::errs() << "[pipeline] about to lowering\n";
+  if (!generator.lowering_(module)) {
+    llvm::errs() << "[pipeline] lowering FAILED\n";
+    return "";
+  }
+  llvm::errs() << "[pipeline] lowering done\n";
+  auto path = generator.translate(module);
+  llvm::errs() << "[pipeline] translate done\n";
   return path;
 }
 
@@ -57,7 +79,7 @@ std::string matmul(std::vector<int64_t> shape, const TuneConfig& config) {
   return compile_kernel(config, tileConfig, kds);
 }
 
-std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
+std::string attention(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
   // attn compile func
   // shape supports both {batch, head_num, seq_len, head_dim}
   // and {batch, seq_len, head_num, head_dim}.
@@ -91,27 +113,299 @@ std::string attention(std::vector<int64_t> shape, const TuneConfig& config) {
   }
   // kernel info
   KernelData kd1 = {
-    "matmul1", "Matmul", {sha, shb, shc}, {"float32", "float32", "float32"}, {true, false}, 1
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
   };
   KernelData kd2 = {
-    "softmax1", "Softmax", {sh1, sh2}, {"float32", "float32"}, {false}, 1
+    "softmax1", "Softmax", {sh1, sh2}, {dtype, dtype}, {false}, 1
   };
   KernelData kd3 = {
-    "matmul2", "Matmul", {sha1, shb1, shc1}, {"float32", "float32", "float32"}, {false, false}, 1
+    "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
   };
   // kernel fusing
   FuseKernelData fkd = {
     __GlobalKernelName, "FlashAttn", {"matmul1", "softmax1", "matmul2"},
     {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]}, {kd1.shapes[2]},
-    {"float32", "float32", "float32", "float32"}, {"float32"},
+    {dtype, dtype, dtype, dtype}, {dtype},
     {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {{"matmul2", {2}}}},
     {{{"matmul1", {2}}, {"softmax1", {0, 1}} , {"matmul2", {0}}}},
     {kd1.isTrans[0], kd1.isTrans[1], kd3.isTrans[1]}, {"y"}, 1
   };
   std::vector<KernelData> kds{kd1, kd2, kd3};
   std::vector<FuseKernelData> fkds{fkd};
-  // compile kernel
-  return compile_kernel(config, tileConfig, kds, fkds);
+  // v1: scale scores AFTER mm1 (standard attention)
+  TuneConfig configV1 = config;
+  configV1[__GlobalKernelName]["SCALE_SCORES"] = 1;
+  return compile_kernel(configV1, tileConfig, kds, fkds);
+}
+
+std::string attention_v2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Same 3-operator fuse structure as attention(), but:
+  //   - Python passes UNSCALED Q (just transposed)
+  //   - Optimizer fuses scale into Q-load pipeline (SCALE_Q flag)
+  //   - No extra global memory round-trip for ElemScale
+
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh1{sl, sl}, sh2{sl, sl};
+  std::vector<int64_t> sha1{sl, sl}, shb1{sl, hd}, shc1{sl, hd};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh1.insert(sh1.begin(), b[i]); sh2.insert(sh2.begin(), b[i]);
+    sha1.insert(sha1.begin(), b[i]); shb1.insert(shb1.begin(), b[i]); shc1.insert(shc1.begin(), b[i]);
+  }
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "softmax1", "Softmax", {sh1, sh2}, {dtype, dtype}, {false}, 1
+  };
+  KernelData kd3 = {
+    "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
+  };
+  FuseKernelData fkd = {
+    __GlobalKernelName, "FlashAttn", {"matmul1", "softmax1", "matmul2"},
+    {kd1.shapes[0], kd1.shapes[1], kd3.shapes[1], kd3.shapes[2]}, {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {{"matmul2", {2}}}},
+    {{{"matmul1", {2}}, {"softmax1", {0, 1}} , {"matmul2", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1], kd3.isTrans[1]}, {"y"}, 1
+  };
+  std::vector<KernelData> kds{kd1, kd2, kd3};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  // Add SCALE_Q flag so optimizer fuses scale into Q-load pipeline
+  TuneConfig configV2 = config;
+  configV2[__GlobalKernelName]["SCALE_Q"] = 1;
+  return compile_kernel(configV2, tileConfig, kds, fkds);
+}
+
+std::string attention_split_k1(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Split attention kernel 1: GEMM(Q@K^T) + online reduce → em, denom
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmaxstats1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "softmaxstats1", "SoftmaxStats", {shc, sh_em, sh_denom}, {dtype, dtype, dtype}, {false}, 2
+  };
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "GemmStats", {"matmul1", "softmaxstats1"},
+    {kd1.shapes[0], kd1.shapes[1], sh_em, sh_denom},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"softmaxstats1", {1}}}, {{"softmaxstats1", {2}}}},
+    {{{"matmul1", {2}}, {"softmaxstats1", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1]}, {"y"}, 2
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK1 = config;
+  configK1[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK1[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK1, tileConfig, kds, fkds);
+}
+
+std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Split attention kernel 2: GEMM(Q@K^T) + causal mask + broadcast normalize(em,denom) + GEMM(P@V) → O
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  std::vector<int64_t> sha1{sl, sl}, shb1{sl, hd}, shc1{sl, hd};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+    sha1.insert(sha1.begin(), b[i]); shb1.insert(shb1.begin(), b[i]); shc1.insert(shc1.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
+  };
+
+  // No middle operator — just 2 matmuls fused via midBuf (scores).
+  // em/denom are extra func args with empty index maps.
+  // The optimizer adds normalize (exp/em/denom) on tileP.
+  FuseKernelData fkd = {
+    __GlobalKernelName, "FlashAttnSplitK2", {"matmul1", "matmul2"},
+    {kd1.shapes[0], kd1.shapes[1], kd2.shapes[1], sh_em, sh_denom, kd2.shapes[2]},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {}, {}, {{"matmul2", {2}}}},
+    {{{"matmul1", {2}}, {"matmul2", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1], kd2.isTrans[1]}, {"y"}, 1
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK2 = config;
+  configK2[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK2, tileConfig, kds, fkds);
+}
+
+std::string gemma2_split_k1(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Gemma2 split kernel 1: GEMM(Q@K^T) + softcap(tanh) + causal mask + online reduce → em, denom
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmaxstats1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "softmaxstats1", "SoftmaxStats", {shc, sh_em, sh_denom}, {dtype, dtype, dtype}, {false}, 2
+  };
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "GemmStats", {"matmul1", "softmaxstats1"},
+    {kd1.shapes[0], kd1.shapes[1], sh_em, sh_denom},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"softmaxstats1", {1}}}, {{"softmaxstats1", {2}}}},
+    {{{"matmul1", {2}}, {"softmaxstats1", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1]}, {"y"}, 2
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK1 = config;
+  configK1[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK1[__GlobalKernelName]["SOFTCAP_TANH"] = 1;
+  configK1[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK1, tileConfig, kds, fkds);
+}
+
+std::string gemma2_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Gemma2 split kernel 2: GEMM(Q@K^T) + softcap(tanh) + causal mask + broadcast normalize(em,denom) + GEMM(P@V) → O
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  std::vector<int64_t> sha1{sl, sl}, shb1{sl, hd}, shc1{sl, hd};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+    sha1.insert(sha1.begin(), b[i]); shb1.insert(shb1.begin(), b[i]); shc1.insert(shc1.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
+  };
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "FlashAttnSplitK2", {"matmul1", "matmul2"},
+    {kd1.shapes[0], kd1.shapes[1], kd2.shapes[1], sh_em, sh_denom, kd2.shapes[2]},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {}, {}, {{"matmul2", {2}}}},
+    {{{"matmul1", {2}}, {"matmul2", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1], kd2.isTrans[1]}, {"y"}, 1
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK2 = config;
+  configK2[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK2[__GlobalKernelName]["SOFTCAP_TANH"] = 1;
+  configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK2, tileConfig, kds, fkds);
 }
 
 // bind python module
@@ -177,7 +471,8 @@ static PyObject* py_compile_attn(PyObject* self, PyObject* args) {
   // bind compile_attn func
   PyObject* py_shape;
   PyObject* py_config;
-  if (!PyArg_ParseTuple(args, "OO", &py_shape, &py_config)) {
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
     return NULL;
   }
   std::vector<int64_t> shape;
@@ -188,7 +483,7 @@ static PyObject* py_compile_attn(PyObject* self, PyObject* args) {
   if (!py_dict_to_config(py_config, config)) {
     return NULL;
   }
-  std::string result = attention(shape, config);
+  std::string result = attention(shape, config, std::string(dtype_str));
   return PyUnicode_FromString(result.c_str());
 }
 
@@ -251,11 +546,95 @@ static PyObject* set_kernel_name(PyObject* self, PyObject* args) {
   }
   return Py_None;
 }
+static PyObject* py_compile_attn_v2(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) {
+    return NULL;
+  }
+  if (!py_dict_to_config(py_config, config)) {
+    return NULL;
+  }
+  std::string result = attention_v2(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_attn_split_k1(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = attention_split_k1(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_attn_split_k2(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = attention_split_k2(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_gemma2_split_k1(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = gemma2_split_k1(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_gemma2_split_k2(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = gemma2_split_k2(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
 static PyMethodDef DeepgenMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
+    {"compile_attn_v2", py_compile_attn_v2, METH_VARARGS, "Compile optimized attention (scale before mm1, div after mm2)"},
     {"compile_mm", py_compile_mm, METH_VARARGS, "Compile matmul with given shape and config"},
-    {"set_platform", set_platform, METH_VARARGS, "Compile attention with given shape and config"},
-    {"set_kernel_name", set_kernel_name, METH_VARARGS, "Compile attention with given shape and config"},
+    {"set_platform", set_platform, METH_VARARGS, "Set target platform and architecture"},
+    {"set_kernel_name", set_kernel_name, METH_VARARGS, "Set global kernel name"},
+    {"compile_attn_split_k1", py_compile_attn_split_k1, METH_VARARGS, "Compile split attention kernel 1 (GEMM + reduce -> em, denom)"},
+    {"compile_attn_split_k2", py_compile_attn_split_k2, METH_VARARGS, "Compile split attention kernel 2 (GEMM + broadcast norm + GEMM -> O)"},
+    {"compile_gemma2_split_k1", py_compile_gemma2_split_k1, METH_VARARGS, "Compile Gemma2 split kernel 1 (GEMM + softcap + mask + reduce -> em, denom)"},
+    {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + broadcast norm + GEMM -> O)"},
     {NULL, NULL, 0, NULL}
 };
 

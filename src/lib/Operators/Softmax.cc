@@ -19,48 +19,48 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
     llvm::errs() << ver.value() << "\n";
     return ;
   }
-  // get base args
   auto [batchs, shape] = splitShape(outputShape[0], 2);
   auto type = tools::getDType(builder, outputDType[0]);
-  // create funcOp
   mlir::func::FuncOp funcOp = createFunc(builder, inputShape, outputShape, inputDType, outputDType, isTranspose, kernelName);
   mlir::ValueRange operands = funcOp.getArguments();
-  // create bacth nest forOp
   auto batchIvs = createBatchNestForOp(builder, batchs);
 
-  // reduce for
+  // Softmax expressed as 2 x-loops inside 1 y-loop:
+  //   x1: online softmax reduce (max + sum in single pass, numerically stable)
+  //   x2: normalize (div by sum)
+  // Each computation step inside x1 is clearly separated for readability.
+  // Pipeline limitation: same y-loop cannot have >1 x-loop with independent iter vars
+  // going through bufferizeLoopCarryVar. The online algorithm naturally combines max+sum
+  // into one iter-var set, avoiding this constraint.
   auto yLoopBody = [&](mlir::OpBuilder &b, mlir::Location loc, mlir::Value row, mlir::ValueRange iterArgs) {
-    // max = -FLT_MAX, sum = 0.0f
-    auto max = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, -std::numeric_limits<float>::infinity()));
-    auto sum = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, 0.0f));
-    // compute max and sum
+    auto negInf = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, -std::numeric_limits<float>::infinity()));
+    auto zero = b.create<mlir::arith::ConstantOp>(loc, b.getFloatAttr(type, 0.0f));
+
+    // x1: online softmax reduce — computes row max and row sum in a single pass
     auto x1LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterMD) {
       auto index = getShapeOrIndex(batchIvs, {row, col}, isTranspose[0]);
       auto ld = bb.create<mlir::affine::AffineLoadOp>(l, operands[0], mlir::ValueRange(index));
-      // newMax = max(elem, iterMD[0])
+      // stage-max: update running max
       auto newMax = bb.create<mlir::arith::MaxNumFOp>(l, iterMD[0], ld);
-      // factor = exp(oldMax - newMax)
+      // stage-sum: correct old sum for new max, add new element
       auto sub1 = bb.create<mlir::arith::SubFOp>(l, iterMD[0], newMax);
       auto exp1 = bb.create<mlir::math::ExpOp>(l, sub1);
-      // f * factor
-      auto mul = bb.create<mlir::arith::MulFOp>(l, exp1, iterMD[1]);
-      // exp(elem - newMax)
+      auto scaledOldSum = bb.create<mlir::arith::MulFOp>(l, exp1, iterMD[1]);
       auto sub2 = bb.create<mlir::arith::SubFOp>(l, ld, newMax);
       auto exp2 = bb.create<mlir::math::ExpOp>(l, sub2);
-      // d * factor + exp(elem - newMax)
-      auto newSum = bb.create<mlir::arith::AddFOp>(l, mul, exp2);
+      auto newSum = bb.create<mlir::arith::AddFOp>(l, scaledOldSum, exp2);
       bb.create<mlir::affine::AffineYieldOp>(l, mlir::ValueRange({newMax, newSum}));
     };
-    auto x1loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape[1], 1, mlir::ValueRange({max, sum}), x1LoopBody);
+    auto x1loop = b.create<mlir::affine::AffineForOp>(loc, 0, shape[1], 1,
+      mlir::ValueRange({negInf, zero}), x1LoopBody);
     x1loop->setAttr(FORDESC, builder.getStringAttr("x"));
-    llvm::SmallVector<mlir::Attribute> strAttrs{builder.getStringAttr("Max"), builder.getStringAttr("Sum")};
-    x1loop->setAttr(ITERVARDESC, builder.getArrayAttr(strAttrs));
+    llvm::SmallVector<mlir::Attribute> iterDescs{builder.getStringAttr("Max"), builder.getStringAttr("Sum")};
+    x1loop->setAttr(ITERVARDESC, builder.getArrayAttr(iterDescs));
 
-    // div forOp
-    auto x2LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterArgs) {
+    // x2: normalize — exp(elem - max) / sum
+    auto x2LoopBody = [&](mlir::OpBuilder &bb, mlir::Location l, mlir::Value col, mlir::ValueRange iterArgs1) {
       auto ldIndex = getShapeOrIndex(batchIvs, {row, col}, isTranspose[0]);
       auto ld = bb.create<mlir::affine::AffineLoadOp>(l, operands[0], mlir::ValueRange(ldIndex));
-      // exp(elem - m) / d
       auto sub = bb.create<mlir::arith::SubFOp>(l, ld, x1loop.getResult(0));
       auto exp = bb.create<mlir::math::ExpOp>(l, sub);
       auto div = bb.create<mlir::arith::DivFOp>(l, exp, x1loop.getResult(1));
@@ -68,11 +68,14 @@ void Softmax::buildNaiveExpress(mlir::ModuleOp module,
       bb.create<mlir::affine::AffineStoreOp>(l, div, operands[1], mlir::ValueRange(stIndex));
       bb.create<mlir::affine::AffineYieldOp>(l);
     };
-    auto x2loop = b.create<mlir::affine::AffineForOp>(b.getUnknownLoc(), 0, shape[1], 1, mlir::ValueRange({}), x2LoopBody);
+    auto x2loop = b.create<mlir::affine::AffineForOp>(loc, 0, shape[1], 1,
+      mlir::ValueRange({}), x2LoopBody);
     x2loop->setAttr(FORDESC, builder.getStringAttr("x"));
+
     b.create<mlir::affine::AffineYieldOp>(loc);
   };
-  auto yloop = builder.create<mlir::affine::AffineForOp>(builder.getUnknownLoc(), 0, shape[0], 1, mlir::ValueRange({}), yLoopBody);
+  auto yloop = builder.create<mlir::affine::AffineForOp>(
+    builder.getUnknownLoc(), 0, shape[0], 1, mlir::ValueRange({}), yLoopBody);
   yloop->setAttr(FORDESC, builder.getStringAttr("y"));
 }
 
@@ -90,7 +93,6 @@ std::optional<std::string> Softmax::verify(const std::vector<std::vector<int64_t
     std::string err{"The dimensions of shape and dtype are not equal."};
     return err;
   }
-  // transpose
   if (isTranspose[0]) {
     if (inputShape[0][inputShape[0].size()-1] != outputShape[0][outputShape[0].size()-2] ||
         inputShape[0][inputShape[0].size()-2] != outputShape[0][outputShape[0].size()-1]) {
@@ -126,5 +128,3 @@ mlir::func::FuncOp Softmax::createFunc(mlir::OpBuilder& builder,
 
 }  // Operators
 }  // KernelCodeGen
-
-

@@ -92,21 +92,35 @@ class CreateAttnConfig:
     # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv))
     return result
   
+  def _can_shuffle_p(self, old_cfg):
+    """Check if warp-shuffle P optimization is applicable for this config."""
+    ptr, ptc, otr, otc = old_cfg[2]
+    bly_p, blx_p, wly_p, wlx_p, bswq, bswk, wswq, wswk = old_cfg[4]
+    bly_o, blx_o, wly_o, wlx_o, bswp, bswv, wswp, wswv = old_cfg[5]
+    return (blx_p == 1 and ptr == otr and
+            bly_p == bly_o and blx_p == blx_o and
+            wly_p == wly_o and wlx_p == wlx_o and
+            bswq == bswp and wswq == wswp)
+
   def storeSizeAndOther(self, old_cfgs):
     result = []
     for old_cfg in old_cfgs:
       for spp in self.cfg["SHARED_PREFETCH_P"]:
-        smem_size = old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3] + \
-                    old_cfg[1][0] * old_cfg[1][1] + old_cfg[1][2] * old_cfg[1][4] + 3 * old_cfg[1][0]
+        br, bc, hd, s1, s2 = old_cfg[1]
+        smem_size = br * s1 + bc * s1 + br * bc + hd * s2 + 3 * br
+        if s1 != hd:
+          smem_size += hd * br
         if spp == 1:
-          smem_size += old_cfg[1][0] * old_cfg[1][3] + old_cfg[1][1] * old_cfg[1][3]
+          smem_size += bc * s1
         if smem_size * self.type_width <= self.max_sm_size:  # shared memory size
           for rpp in self.cfg["REG_PREFETCH_P"]:
             for rpo in self.cfg["REG_PREFETCH_O"]:
               for unroll in self.cfg["UNROLL_NUM"]:
-                result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo), smem_size * self.type_width))  # 只能连续访存
+                for shp in self.cfg.get("SHUFFLE_P", [0]):
+                  for skp in self.cfg.get("SPLITK_PV", [0]):
+                    result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo, shp, skp), smem_size * self.type_width))
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
-    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll ,warp_size, load_continuous_p, lc_o, sm_prefetch_p, reg_pf_p, reg, pf_o))
+    # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll, warp_size, lc_p, lc_o, spp, rpp, rpo, shp, skp))
     return result
 
   # def storeSizeAndOther_(self, old_cfgs):
@@ -284,10 +298,12 @@ class CreateConfig:
             for sm_prefatch in self.cfg["SHARED_PREFETCH_P"]:
               for reg_prefatch_p in self.cfg["REG_PREFETCH_P"]:
                 for reg_prefatch_o in self.cfg["REG_PREFETCH_O"]:
-                  item = oldResult.copy()
-                  item.extend([unroll, self.cfg["WARP_SIZE"][0], ldcp, ldco, sm_prefatch, reg_prefatch_p, reg_prefatch_o])
-                  results.append(item)
-    # [..., unroll, warp_size, load_continuous_p, load_continuous_o, shared_prefetch_p, reg_prefetch_p, reg_prefetch_o]
+                  for shp in self.cfg.get("SHUFFLE_P", [0]):
+                    for skp in self.cfg.get("SPLITK_PV", [0]):
+                      item = oldResult.copy()
+                      item.extend([unroll, self.cfg["WARP_SIZE"][0], ldcp, ldco, sm_prefatch, reg_prefatch_p, reg_prefatch_o, shp, skp])
+                      results.append(item)
+    # [..., unroll, warp_size, lc_p, lc_o, spp, rpp, rpo, shp, skp]
     return results
 
   def h(self, oldResults):
@@ -299,8 +315,10 @@ class CreateConfig:
       thread_num = int(oldResult[0][0] * oldResult[0][1])
       if thread_num <= 256:
         LDS_SZIE = oldResult[1] * oldResult[4] + oldResult[2] * oldResult[4] + oldResult[1] * oldResult[2] + oldResult[3] * oldResult[5] + 3 * oldResult[1]
+        if oldResult[4] != oldResult[3]:
+          LDS_SZIE += oldResult[3] * oldResult[1]
         if oldResult[33] == 1:
-          LDS_SZIE += oldResult[1] * oldResult[4] + oldResult[2] * oldResult[4]
+          LDS_SZIE += oldResult[2] * oldResult[4]
         if LDS_SZIE <= 96 * 1024 / 4:
           item = oldResult[1:].copy()
           item.append((thread_num, LDS_SZIE * 4))
@@ -324,25 +342,27 @@ class CreateConfig:
 # spec.loader.exec_module(mod)
 # compile_kernel_FA = mod.compile_attn
 
-def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128]) -> List:
+def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128], type_width : int = 4) -> List:
   # cfgfilepath = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
   cfg_dict = readConfigJson(cfgfilepath)
-  print(f'get_cfgs shape = {shape}',flush=True)
+  print(f'get_cfgs shape = {shape}, type_width = {type_width}',flush=True)
   cfg_dict['Hd'] = [shape[3]]
   print(f"attn Hd = {cfg_dict['Hd']}",flush=True)
-  cc = CreateAttnConfig(cfg_dict, shape)
+  cc = CreateAttnConfig(cfg_dict, shape, type_width=type_width)
   cfgs = cc.main()
   return cfgs
 
-def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorType : 
+def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : torch.dtype = torch.float32) -> TsGeneratorType : 
   # shape = [1, 32, 2048, 128]
   # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
   kw = ConfigKeywords
+  enum_dtype = ToEnumIntDType(torch_dtype)
+  type_width = sizeof(enum_dtype)
   if len(cfgs) <= 0:
-    cfgs = get_cfgs(cfgfile,shape)
+    cfgs = get_cfgs(cfgfile, shape, type_width)
   for cfg in cfgs:
     (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly_p, blx_p, wly_p, wlx_p, bswq_p, bswk_p, wswq_p, wswk_p), 
-    (bly_o, blx_o, wly_o, wlx_o, bswp_o, bswv_o, wswp_o, wswv_o), (unroll ,warp_size, load_continuous_p, load_continuous_o, sm_prefetch_p, reg_prefetch_p, reg_prefetch_o), smem_size) = cfg
+    (bly_o, blx_o, wly_o, wlx_o, bswp_o, bswv_o, wswp_o, wswv_o), (unroll, warp_size, load_continuous_p, load_continuous_o, sm_prefetch_p, reg_prefetch_p, reg_prefetch_o, shuffle_p, splitk_pv), smem_size) = cfg
     valDict = {
         "Br": br, "Bc": bc, "Hd": hd, "Slice1": s1, "Slice2": s2, 
         "PTr": ptr, "PTc": ptc, "OTr": otr, "OTc": otc,
@@ -359,6 +379,8 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorT
         "LOAD_CONTINUOUS_P": load_continuous_p, "LOAD_CONTINUOUS_O": load_continuous_o, 
         # prefecth
         "SHARED_PREFETCH_P": sm_prefetch_p, "REG_PREFETCH_P": reg_prefetch_p, "REG_PREFETCH_O": reg_prefetch_o,
+        # smP bypass
+        "SHUFFLE_P": shuffle_p, "SPLITK_PV": splitk_pv,
         # baseArgs
         kw.KEY_BLOCK_DIM_X : th_num, kw.KEY_BLOCK_DIM_Y : 1, kw.KEY_BLOCK_DIM_Z : 1,
         kw.KEY_SHM_BYTES :  smem_size ,
@@ -366,17 +388,17 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List) -> TsGeneratorT
         kw.KEY_GRID_DIM_Y : shape[1],
         kw.KEY_GRID_DIM_Z : shape[0]
       }
-    temp = AttentionTuningArgs(ToEnumIntDType(torch.float32))
+    temp = AttentionTuningArgs(enum_dtype)
     temp.assignWithDict(valDict)
     temp.basearg.argDict['shape'] = shape
-    temp.basearg.argDict['dtype'] = EnumKernelDType.float32
+    temp.basearg.argDict['dtype'] = enum_dtype
     kernelName = temp.generateKernelName()
     config = {kernelName : valDict}
     
     ret = CompileNeededInfo()
     ret.kernelName = kernelName
     ret.baseArgs = shape
-    ret.torchDataType = torch.float32
+    ret.torchDataType = torch_dtype
     ret.tsArgs = [shape,config]
     ret.blockDims = [ valDict[kw.KEY_BLOCK_DIM_X], valDict[kw.KEY_BLOCK_DIM_Y], valDict[kw.KEY_BLOCK_DIM_Z] ]  # tx
     ret.gridDims = [ valDict[ kw.KEY_GRID_DIM_X], valDict[ kw.KEY_GRID_DIM_Y], valDict[ kw.KEY_GRID_DIM_Z] ]

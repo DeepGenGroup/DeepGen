@@ -1,5 +1,6 @@
 import time
 import glob
+import uuid
 import multiprocessing
 from kcg.Kernel import *
 from kcg.Operators import attention, matmul
@@ -47,14 +48,14 @@ def init_cuda(_devId : List) :
         torch_ns.init()
         torch_ns.empty_cache()
 
-def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int) :
+def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int, task_id : str = "") :
     # print("enter __compile_task_func",flush=True)
     try:
         op = OpTy()
         # print("[D] info.baseArgs = ", info.baseArgs)
         # print("[D] info dtype =",info.torchDataType)
         ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info)
-        pklName = f"{PathManager.pikle_dir()}/{deviceId}/kfg_{index}.pkl"
+        pklName = f"{PathManager.pikle_dir()}/{deviceId}/{task_id}/kfg_{index}.pkl"
         # print(f"__compile_task_func : ba = {ba}")
         serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
     except RuntimeError :
@@ -63,7 +64,7 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
         ...
 
 
-def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 5) -> bool:
+def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 5, task_id : str = "") -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     g_index = 0
     maxProcsLimit = 50
@@ -76,7 +77,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
         # for needInfo in tsGenerator :
             print(f"needInfo.tsArgs = {needInfo.tsArgs}") 
             # create compile process
-            p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index))
+            p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index, task_id))
             procs.append(p)
             p.start()
             g_index += 1
@@ -122,14 +123,14 @@ def __runBenchmark(op : OpInterface, cfg : KernelConfigs, baseArg : List, warmup
         print("kernl test Error!")
     return (acc,cfg.kernelFuncName)
    
-def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tuneResult : TuneResult):
+def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkConfig, maxSppedups : List[Dict], tuneResult : TuneResult, task_id : str = ""):
     init_cuda([devId])
     save_to = benchConfig.result_json_path
     if len(save_to) > 0 and os.path.exists(save_to) :
         with open(save_to,'r') as f:
             obj = json.load(f)
             maxSppedups = obj['testResult']
-    name_format = f"{PathManager.pikle_dir()}/{devId}/*.pkl"
+    name_format = f"{PathManager.pikle_dir()}/{devId}/{task_id}/*.pkl"
     pkls = glob.glob(name_format)
     if len(pkls) > 0 :
         for pkl in pkls :
@@ -204,18 +205,18 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str) -> TsGeneratorType
 EXPECTED_SPEEDUP = 1
 
 # 交替进行compile & benchmark，每次 {kernelLimit} 个 krnl
-def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int) -> TuneResult:
+def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGeneratorType , cc : BenchmarkConfig, backend : EnumBackendType , arch : str ,devId : int, task_id : str = "") -> TuneResult:
     maxSpeedups = []
     currIter = 0
     res = TuneResult()
-    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter) :
+    while not compile_kernel(opty,ts,devId,backend,arch, cc.max_kernel_per_iter, task_id) :
         print(f"=========== benchmark {currIter} ====== ")
         currIter+=1
-        do_benchmark(opty,devId,cc,maxSpeedups,res)
+        do_benchmark(opty,devId,cc,maxSpeedups,res, task_id)
         if currIter >= 3 :
             break
         
-    do_benchmark(opty,devId,cc,maxSpeedups,res)
+    do_benchmark(opty,devId,cc,maxSpeedups,res, task_id)
     if res.bestSpeedup > EXPECTED_SPEEDUP :
         pklPath = res.saveToPkl()
         print(f"==== good tuneRes has been saved to {pklPath}")
@@ -243,8 +244,10 @@ def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, t
         arch = "-"
     else:
         assert False
-    PathManager.init(clearPkl=True, clearCache=True)
-    os.mkdir(f"{PathManager().pikle_dir()}/{devId}")
+    task_id = uuid.uuid4().hex[:8]
+    print(f"[Info] task_id = {task_id}")
+    PathManager.init(clearPkl=False, clearCache=True)
+    os.makedirs(f"{PathManager().pikle_dir()}/{devId}/{task_id}", exist_ok=True)
     resultPath = str(PathManager.project_dir()) + "/testResult.json"
     if os.path.exists(resultPath):
         os.remove(resultPath)
@@ -257,7 +260,7 @@ def kernel_compile_tuning(opty : Type[OpInterface], cfgFile : str, devId :int, t
     
     st = time.time()
     print(f"=====  start at : {st}")
-    tuneRes = do_compile_and_benchmark_alternatively(opty,tuningSpace,cc,backend,arch,devId)
+    tuneRes = do_compile_and_benchmark_alternatively(opty,tuningSpace,cc,backend,arch,devId, task_id)
     
     # compile_kernel(opty,tuningSpace,devId,backend,arch,kernelLimit=1)
     # do_benchmark(opty,devId,cc,[])

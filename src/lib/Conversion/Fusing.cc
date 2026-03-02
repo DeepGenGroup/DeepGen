@@ -105,27 +105,34 @@ void moveOperation(mlir::func::FuncOp funcOp,
 }
 
 void normalizeParaForOp(std::vector<mlir::affine::AffineForOp>& yloops) {
-  // 规范化所有的并行循环，保证fory下就是forx
-  std::vector<int> idxs;
-  std::vector<mlir::affine::AffineForOp> newLoops;
-  for (int i=0; i<yloops.size(); i++) {
-    int index = 0;
-    yloops[i].walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
-      auto result = getStrAttr(forOp, FORDESC);
-      if (result == "x") {
-        if (index > 0) {
-          mlir::OpBuilder b = getBuilder(yloops[i], Position::before);
-          auto newY = decoupleNestedLoop(b, {yloops[i]}, forOp);
-          newLoops.push_back(newY[0]);
-          idxs.push_back(i);
+  // 规范化所有的并行循环，保证fory下就是forx。
+  // 由于 decouple 会在 walk 中修改 IR 导致后续 x-loop 被跳过，
+  // 这里用外层循环重复执行直到所有 y-loop 都只含一个 x-loop。
+  bool changed = true;
+  while (changed) {
+    changed = false;
+    std::vector<int> idxs;
+    std::vector<mlir::affine::AffineForOp> newLoops;
+    for (int i=0; i<yloops.size(); i++) {
+      // 收集该 y-loop 下的所有 x-loop（不在 walk 中修改）
+      std::vector<mlir::affine::AffineForOp> innerXLoops;
+      yloops[i].walk<mlir::WalkOrder::PreOrder>([&](mlir::affine::AffineForOp forOp) {
+        if (getStrAttr(forOp, FORDESC) == "x") {
+          innerXLoops.push_back(forOp);
         }
-        index++;
+      });
+      // 只 decouple 第二个 x-loop（每轮只拆一个，保证 walk 安全）
+      if (innerXLoops.size() > 1) {
+        mlir::OpBuilder b = getBuilder(yloops[i], Position::before);
+        auto newY = decoupleNestedLoop(b, {yloops[i]}, innerXLoops[1]);
+        newLoops.push_back(newY[0]);
+        idxs.push_back(i);
+        changed = true;
       }
-    });
-  }
-  // update yloops and paraCfg
-  for (int i=0; i<idxs.size(); i++) {
-    yloops.insert(yloops.begin() + idxs[idxs.size()-1-i], newLoops[newLoops.size()-1-i]);
+    }
+    for (int i=0; i<idxs.size(); i++) {
+      yloops.insert(yloops.begin() + idxs[idxs.size()-1-i], newLoops[newLoops.size()-1-i]);
+    }
   }
 }
 
@@ -194,6 +201,7 @@ bool isReduce(mlir::affine::AffineForOp foryOp,
 void separate(std::vector<mlir::affine::AffineForOp> forOps, 
               std::vector<mlir::affine::AffineStoreOp> storeOps, 
               std::vector<mlir::Operation*> calculateOps) {
+  if (calculateOps.size() <= 1) return;
   // 分离foryx
   sortOps(calculateOps);
   for (auto calculateOp : calculateOps) {
@@ -304,6 +312,25 @@ void eliminate(std::vector<mlir::affine::AffineLoadOp> &floadOps,
                std::vector<mlir::affine::AffineLoadOp> &bloadOps, 
                std::vector<mlir::affine::AffineStoreOp> &bstoreOps) {
   // eliminate
+  auto tryEraseLoadWithDebug = [&](mlir::affine::AffineLoadOp ld, const char* tag) {
+    auto result = ld.getResult();
+    if (!result.use_empty()) {
+      // llvm::errs() << "[Fusing::eliminate][" << tag << "] skip erase affine.load, use_count="
+      //              << std::distance(result.use_begin(), result.use_end()) << "\n";
+      // llvm::errs() << "[Fusing::eliminate][" << tag << "] load op = ";
+      // ld->print(llvm::errs());
+      // llvm::errs() << "\n";
+      // for (auto *user : result.getUsers()) {
+      //   llvm::errs() << "[Fusing::eliminate][" << tag << "] user = ";
+      //   user->print(llvm::errs());
+      //   llvm::errs() << "\n";
+      // }
+      return false;
+    }
+    ld.erase();
+    return true;
+  };
+
 // eliminate redundant load
   for (int i=bloadOps.size()-1; i>=0; i--) {
     auto bloadOp = bloadOps[i];
@@ -316,7 +343,9 @@ void eliminate(std::vector<mlir::affine::AffineLoadOp> &floadOps,
       auto fmap = fstoreOp.getAffineMap();
       if (fmap == map && isValueVecEqual(mapOperands, fmapOperands)) {
         bloadOp.getResult().replaceAllUsesWith(fstoreOp.getValue());
-        bloadOp.erase();
+        if (!tryEraseLoadWithDebug(bloadOp, "redundant-load")) {
+          continue;
+        }
         // 匹配上了就删除前面循环的loadop，同时检查后循环中是否有相同的storeop，有的话就删除前循环的storeop
         bool deled = false;
         for (int k=bstoreOps.size()-1; k>=0; k--) {
@@ -347,7 +376,7 @@ void eliminate(std::vector<mlir::affine::AffineLoadOp> &floadOps,
     auto mapOperands = bloadOp.getMapOperands();
     auto map = bloadOp.getAffineMap();
     for (int j=floadOps.size()-1; j>=0; j--) {
-      auto floadOp = floadOps[i];
+      auto floadOp = floadOps[j];
       auto fmapOperands = floadOp.getMapOperands();
       auto fmap = floadOp.getAffineMap();
       if (fmap == map && isValueVecEqual(mapOperands, fmapOperands)) {
@@ -375,21 +404,91 @@ void fuse(mlir::affine::AffineForOp yloop1, mlir::affine::AffineForOp yloop2) {
   eliminate(floadOps, fstoreOps, bloadOps, bstoreOps);
 }
 
+enum class YLoopStage {
+  Matmul = 0,
+  SoftmaxMax = 1,
+  SoftmaxExp = 2,
+  SoftmaxDiv = 3,
+  Unknown = 4,
+};
+
+YLoopStage classifyYLoopStage(mlir::affine::AffineForOp yloop) {
+  bool hasKFor = false;
+  bool hasMax = false;
+  bool hasExp = false;
+  bool hasDiv = false;
+  yloop.walk<mlir::WalkOrder::PreOrder>([&](mlir::Operation* op) {
+    if (auto forOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op)) {
+      auto forDesc = getStrAttr(forOp, FORDESC);
+      if (forDesc == "k") {
+        hasKFor = true;
+      }
+    } else if (mlir::dyn_cast<mlir::arith::MaxNumFOp>(op)) {
+      hasMax = true;
+    } else if (mlir::dyn_cast<mlir::math::ExpOp>(op)) {
+      hasExp = true;
+    } else if (mlir::dyn_cast<mlir::arith::DivFOp>(op)) {
+      hasDiv = true;
+    }
+  });
+  if (hasKFor) { return YLoopStage::Matmul; }
+  if (hasDiv) { return YLoopStage::SoftmaxDiv; }
+  if (hasMax) { return YLoopStage::SoftmaxMax; }
+  if (hasExp) { return YLoopStage::SoftmaxExp; }
+  return YLoopStage::Unknown;
+}
+
+std::vector<mlir::affine::AffineForOp> collectYLoopsByStage(mlir::func::FuncOp funcOp, YLoopStage stage) {
+  auto yLoops = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, std::string{"y"});
+  std::vector<mlir::affine::AffineForOp> result;
+  for (auto yloop : yLoops) {
+    if (classifyYLoopStage(yloop) == stage) {
+      result.push_back(yloop);
+    }
+  }
+  return result;
+}
+
+std::vector<mlir::affine::AffineForOp> collectSoftmaxNonDivYLoops(mlir::func::FuncOp funcOp) {
+  auto yLoops = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, std::string{"y"});
+  std::vector<mlir::affine::AffineForOp> result;
+  for (auto yloop : yLoops) {
+    auto stage = classifyYLoopStage(yloop);
+    if (stage != YLoopStage::Matmul && stage != YLoopStage::SoftmaxDiv) {
+      result.push_back(yloop);
+    }
+  }
+  return result;
+}
+
 void fuseParaForOps(mlir::func::FuncOp funcOp) {
   // fuse parallel forOp
   // 收集func中的fory循环，因为fory循环下必定是forx以及其他的for循环
   // ================ 目前只有attention的融合工作，所以先将attention使用手融合解决 =============
-  auto yLoops = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, std::string{"y"});
-  fuse(yLoops[0], yLoops[1]);  // matmul1 + front softmax(reduce)
+  // 改为语义匹配，避免依赖 yLoops[i] 的固定下标顺序。
+  auto matmulYLoops = collectYLoopsByStage(funcOp, YLoopStage::Matmul);
+  auto softmaxNonDivYLoops = collectSoftmaxNonDivYLoops(funcOp);
+  if (!matmulYLoops.empty() && !softmaxNonDivYLoops.empty()) {
+    fuse(matmulYLoops.front(), softmaxNonDivYLoops.front());  // matmul1 + front softmax stage
+  }
 
-  // 自我融合，我说fuse哪个就fuse哪个
-  yLoops = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, std::string{"y"});
-  fuse(yLoops[1], yLoops[2]);   // back softmax sub(binary) and exp(elem-wise) 
+  // 融合剩余的 softmax 的 non-div 阶段（例如 sub+exp）
+  softmaxNonDivYLoops = collectSoftmaxNonDivYLoops(funcOp);
+  if (softmaxNonDivYLoops.size() >= 2) {
+    fuse(softmaxNonDivYLoops[0], softmaxNonDivYLoops[1]);
+  }
 
-  // div move to matmul 2/3
-  yLoops = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, std::string{"y"});
-  auto fForOps = collectIndexForOps(yLoops[2]);
-  auto bForOps = collectIndexForOps(yLoops[3]);  // matmul2
+  // div move to matmul2
+  auto divYLoops = collectYLoopsByStage(funcOp, YLoopStage::SoftmaxDiv);
+  matmulYLoops = collectYLoopsByStage(funcOp, YLoopStage::Matmul);
+  if (divYLoops.empty() || matmulYLoops.size() < 2) {
+    return;
+  }
+  auto fForOps = collectIndexForOps(divYLoops.front());
+  auto bForOps = collectIndexForOps(matmulYLoops.back());  // matmul2
+  if (fForOps.size() < 2 || bForOps.size() < 3) {
+    return;
+  }
   // collect loadop or storeop
   auto floadOps = collectLoadOrStoreOps<mlir::affine::AffineLoadOp>(fForOps[1]);
   auto fstoreOps = collectLoadOrStoreOps<mlir::affine::AffineStoreOp>(fForOps[1]);
@@ -401,7 +500,7 @@ void fuseParaForOps(mlir::func::FuncOp funcOp) {
   spliceHaveBlockOp(bForOps.back(), fForOps.back(), 0, 0, -2);
   replaceOpsOperands(bForOps.back(), oldIvs, newIvs);
   eliminate(floadOps, fstoreOps, bloadOps, bstoreOps);
-  yLoops[2].erase();
+  divYLoops.front().erase();
   // a*b0*c0 + a*b1*c1 + ... + a*bk*ck == a*(b0*c0 + b1*c1 + ... + bk*ck)
   std::vector<mlir::Value> matmul_ivs;
   for (auto loop : bForOps) {

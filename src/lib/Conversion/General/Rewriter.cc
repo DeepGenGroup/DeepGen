@@ -858,7 +858,8 @@ std::pair<std::vector<mlir::affine::AffineForOp>, std::vector<mlir::affine::Affi
   auto pfLdSMForOps = createNewDataShift(builder, ldSMForOps, newBufMap, forKIv, ShiftType::RTSPrefetch);  // 涉及buoule buf 预取
   barrier(newForKOp, Position::before);
 
-  // delete origin
+  // delete origin — replace dangling IV refs (e.g. Q prologue reads smQFull with old k_outer IV)
+  forKOp.getInductionVar().replaceAllUsesWith(newForKIv);
   forKOp.erase(); forKOp = newForKOp;
   ldRegForOps = newLdRegForOps; ldSMForOps = newLdSMForOps;
   int index = buffers.size();
@@ -931,8 +932,16 @@ void doubleBufferAdjust(std::vector<mlir::affine::AffineForOp> &pfLdSMForOps,
                           std::vector<mlir::affine::AffineForOp> &regPfLdRegForOps, 
                           mlir::affine::AffineForOp &rearForOp) {
   // 使用两种预取后，需要进行的调整
+  auto op = rearForOp->getParentOp();
+  auto forKOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op);
   mlir::OpBuilder builder(rearForOp->getParentOp());
   // 1.寄存器预取提出最大循环，修改map的第一个expr为0
+  //    Clones are placed AFTER forKOp (outside its body), so any reference
+  //    to forKOp's IV must be replaced with the loop's lower-bound constant.
+  auto [kLb, kUb, kStep] = getLoopBoundAndStep(forKOp);
+  mlir::Value forKIv = forKOp.getInductionVar();
+  mlir::Value kLbConst = builder.create<mlir::arith::ConstantIndexOp>(
+      builder.getUnknownLoc(), kLb);
   for (auto forOp : regPfLdRegForOps) {
     // get nested forOp data
     mlir::IRMapping mapper;
@@ -952,10 +961,15 @@ void doubleBufferAdjust(std::vector<mlir::affine::AffineForOp> &pfLdSMForOps,
         replaceAndErase(newVectorLoadOp, vectorLoadOp);
       }
     }
+    // Replace any lingering forKOp IV refs with the lower-bound constant
+    // since these clones live outside forKOp's body.
+    regPerfetchLoop.walk([&](mlir::Operation* inner) {
+      for (unsigned i = 0; i < inner->getNumOperands(); ++i) {
+        if (inner->getOperand(i) == forKIv)
+          inner->setOperand(i, kLbConst);
+      }
+    });
   }
-  // 2. 调度最后的计算部分到第二个if的下方
-  auto op = rearForOp->getParentOp();
-  auto forKOp = mlir::dyn_cast<mlir::affine::AffineForOp>(op);
   builder.setInsertionPoint(&(forKOp.getBody()->back()));
   rearForOp->remove();
   builder.insert(rearForOp);
@@ -972,7 +986,7 @@ void doubleBufferAdjust(std::vector<mlir::affine::AffineForOp> &pfLdSMForOps,
       mlir::Location loc = b.getUnknownLoc();
       if (auto loadOp = mlir::dyn_cast<mlir::affine::AffineLoadOp>(op)) {
         auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, loadOp, step);
-        auto newLoadOp = builder.create<mlir::affine::AffineLoadOp>(loc, buf, map, operands);
+        auto newLoadOp = b.create<mlir::affine::AffineLoadOp>(loc, buf, map, operands);
         replaceAndErase(newLoadOp, loadOp);
       } else if (auto vectorLoadOp = mlir::dyn_cast<mlir::affine::AffineVectorLoadOp>(op)) {
         auto [operands, map, buf] = getDoubleBufferAdjustInfos(b, vectorLoadOp, step);

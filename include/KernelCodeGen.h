@@ -4,6 +4,11 @@
 #include "Operators/Operators.h"
 #include "Operators/Matmul.h"
 #include "Operators/Softmax.h"
+#include "Operators/ElemScale.h"
+#include "Operators/SoftmaxExp.h"
+#include "Operators/RowDiv.h"
+#include "Operators/SoftmaxStats.h"
+#include "Operators/BroadcastNorm.h"
 
 #include "Conversion/Fusing.h"
 #include "Conversion/Mapping.h"

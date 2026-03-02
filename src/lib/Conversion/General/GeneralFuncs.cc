@@ -215,6 +215,43 @@ std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::
     spliceHaveBlockOp(newForOps.back(), forOps[i].back(), 0, 0, -2);
     // replace operands
     replaceOpsOperands(newForOps.back(), oldIvs, newIvs);
+    // [DEBUG] check for dangling uses before erase
+    llvm::errs() << "[fuseForOps] about to erase forOps[" << i << "][0]\n";
+    bool hasDanglingUse = false;
+    forOps[i][0]->walk([&](mlir::Operation* op) {
+      for (auto result : op->getResults()) {
+        for (auto *user : result.getUsers()) {
+          if (!forOps[i][0]->isAncestor(user)) {
+            llvm::errs() << "[fuseForOps] DANGLING USE: value defined by:\n  ";
+            op->print(llvm::errs());
+            llvm::errs() << "\n  used by (outside erase scope):\n  ";
+            user->print(llvm::errs());
+            llvm::errs() << "\n";
+            hasDanglingUse = true;
+          }
+        }
+      }
+    });
+    // also check block args (IVs)
+    for (auto &region : forOps[i][0]->getRegions()) {
+      for (auto &block : region) {
+        for (auto arg : block.getArguments()) {
+          for (auto *user : arg.getUsers()) {
+            if (!forOps[i][0]->isAncestor(user)) {
+              llvm::errs() << "[fuseForOps] DANGLING block arg use, arg of:\n  ";
+              forOps[i][0]->print(llvm::errs());
+              llvm::errs() << "\n  used by:\n  ";
+              user->print(llvm::errs());
+              llvm::errs() << "\n";
+              hasDanglingUse = true;
+            }
+          }
+        }
+      }
+    }
+    if (!hasDanglingUse) {
+      llvm::errs() << "[fuseForOps] erase OK (no dangling uses)\n";
+    }
     forOps[i][0].erase();
   }
   return newForOps;
@@ -224,7 +261,11 @@ void replaceAndErase(mlir::Operation* newOp, mlir::Operation* oldOp) {
   // 替换后面op使用到oldOp的值，且删除oldOp
   auto oldResult = oldOp->getResult(0);
   oldResult.replaceAllUsesWith(newOp->getResult(0));
-  oldOp->erase();
+  // Some fusion paths can transiently leave nested-region users.
+  // Only erase when all uses are gone to avoid IR invalidation crash.
+  if (oldResult.use_empty()) {
+    oldOp->erase();
+  }
 }
 
 void spliceHaveBlockOp(mlir::Operation* newOp, 
@@ -341,14 +382,18 @@ void replaceOpOperands(mlir::Operation* op,
                        mlir::Value newOperand) {
   // 将op中operand==oldOperand的operand替换newOperand
   auto operands = op->getOperands();
-  unsigned index; 
+  bool found = false;
+  unsigned index = 0; 
   for (unsigned i=0; i<operands.size(); i++) {
     if (operands[i] == oldOperand) {
       index = i;
+      found = true;
       break;
     }
   }
-  op->setOperand(index, newOperand);
+  if (found) {
+    op->setOperand(index, newOperand);
+  }
 }
 
 void sortOps(std::vector<mlir::Operation*>& ops) {

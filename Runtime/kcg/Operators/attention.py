@@ -103,6 +103,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.SHARED_PREFETCH_P = 0 
         self.REG_PREFETCH_P = 0 
         self.REG_PREFETCH_O = 0 
+        self.SHUFFLE_P = 0
+        self.SPLITK_PV = 0
         
     def assignWithList(self, *args):
         self.Br= args[0]
@@ -140,6 +142,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.SHARED_PREFETCH_P= args[32]
         self.REG_PREFETCH_P= args[33]
         self.REG_PREFETCH_O= args[34]
+        self.SHUFFLE_P = args[35] if len(args) > 35 else 0
+        self.SPLITK_PV = args[36] if len(args) > 36 else 0
         
         # gridSize = [int(shape[2]/cfg[1]), shape[1], shape[0]]  # bx, by, bz
         # blockSize = [cfg[-1][0]]  # tx
@@ -185,6 +189,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
             ConfigKeywords.KEY_SHARED_PREFETCH_P : self.SHARED_PREFETCH_P,
             ConfigKeywords.KEY_REG_PREFETCH_P : self.REG_PREFETCH_P,
             ConfigKeywords.KEY_REG_PREFETCH_O : self.REG_PREFETCH_O,
+            "SHUFFLE_P" : self.SHUFFLE_P,
+            "SPLITK_PV" : self.SPLITK_PV,
             
             ConfigKeywords.KEY_BLOCK_DIM_X : self.blockDimX ,
             ConfigKeywords.KEY_BLOCK_DIM_Y : self.blockDimY ,
@@ -233,6 +239,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.SHARED_PREFETCH_P = config[kw.KEY_SHARED_PREFETCH_P]
         self.REG_PREFETCH_P = config[kw.KEY_REG_PREFETCH_P]
         self.REG_PREFETCH_O = config[kw.KEY_REG_PREFETCH_O]
+        self.SHUFFLE_P = config.get("SHUFFLE_P", 0)
+        self.SPLITK_PV = config.get("SPLITK_PV", 0)
         
         self.blockDimX = config[kw.KEY_BLOCK_DIM_X]
         self.blockDimY = config[kw.KEY_BLOCK_DIM_Y]
@@ -361,6 +369,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         ret += f"SPP{ self.SHARED_PREFETCH_P }"
         ret += f"RPP{ self.REG_PREFETCH_P }"
         ret += f"RPO{ self.REG_PREFETCH_O }"
+        ret += f"SHP{ self.SHUFFLE_P }"
+        ret += f"SKP{ self.SPLITK_PV }"
         return ret
     
     def assignWithJson(self, jsonObj) : 
@@ -400,6 +410,8 @@ class AttentionTuningArgs(TuningArgsInterface) :
         self.SHARED_PREFETCH_P = jsonObj[kw.KEY_SHARED_PREFETCH_P]
         self.REG_PREFETCH_P = jsonObj[kw.KEY_REG_PREFETCH_P]
         self.REG_PREFETCH_O = jsonObj[kw.KEY_REG_PREFETCH_O]
+        self.SHUFFLE_P = jsonObj.get("SHUFFLE_P", 0)
+        self.SPLITK_PV = jsonObj.get("SPLITK_PV", 0)
 
         self.blockDimX = jsonObj[kw.KEY_BLOCK_DIM_X]
         self.blockDimY = jsonObj[kw.KEY_BLOCK_DIM_Y]
@@ -460,8 +472,7 @@ class AttentionOp(OpInterface) :
             assert len(shapeList)==4
             [ b0, b1, m, n] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            scale = 1.0 / math.sqrt(float(n))
-            qq = (q * scale).transpose(-1,-2).contiguous() 
+            qq = q.transpose(-1,-2).contiguous() 
             kk = k
             d = torch.empty((b0, b1,m,n), dtype=ety, device= dev_name(devId) )
             self.InputTensors_Benchmark = [qq,kk,v,d]
@@ -507,6 +518,8 @@ class AttentionOp(OpInterface) :
         kernelName = info.kernelName
         self.SetKernelName( kernelName )
 
+        dtype_str = EnumKernelDType(dataTypeInt).name
+
         if is_hip():
             # hipcc compile
             hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
@@ -516,8 +529,11 @@ class AttentionOp(OpInterface) :
             res = HIPCompiler().build(Kernel.Attention, shape, config[info.kernelName], hsacopath, info.kernelName, fastCompile)
         else:
             # llvm compile 
-            res = self.CompileKernel(shape , config)
+            res = self.CompileKernel(shape, config, dtype_str)
 ##########
+        if not res:
+            raise RuntimeError(f"Kernel compilation failed for {info.kernelName}")
+
         hsacoPath = res
         blockDimX, blockDimY ,blockDimZ = info.blockDims
         gridDimX, gridDimY, gridDimZ = info.gridDims

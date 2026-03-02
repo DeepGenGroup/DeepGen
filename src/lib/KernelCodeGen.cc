@@ -47,6 +47,16 @@ std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod,
       create<Operators::Matmul>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
     } else if (kernel.type == "Softmax") {
       create<Operators::Softmax>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "ElemScale") {
+      create<Operators::ElemScale>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "SoftmaxExp") {
+      create<Operators::SoftmaxExp>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "RowDiv") {
+      create<Operators::RowDiv>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "SoftmaxStats") {
+      create<Operators::SoftmaxStats>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
+    } else if (kernel.type == "BroadcastNorm") {
+      create<Operators::BroadcastNorm>(mod, inputShape, outputShape, inputDType, outputDType, kernel.isTrans, kernel.name);
     } else {
       noSupKernels.push_back(kernel.type);
     }
@@ -98,14 +108,32 @@ bool KernelCodeGenerator::fusing(mlir::ModuleOp& mod, std::vector<FuseKernelData
     // x bufferize 将含有迭代变量的forx循环进行bufferize，形成foryx完美嵌套
     for (int i=0; i<xloops.size(); i++) {
       if (xloops[i].getNumIterOperands() > 0) {
-        auto iterDescs = getArrayStrAttr(xloops[i], ITERVARDESC);  // 获取含有迭代变量的for循环的属性
-        std::vector<mlir::affine::AffineForOp> upperLoops{yloops[i]};
+        auto iterDescs = getArrayStrAttr(xloops[i], ITERVARDESC);
+        // 查找该 x-loop 的真实父 y-loop（不再按下标假设对应）
+        mlir::affine::AffineForOp parentYLoop;
+        mlir::Operation* parent = xloops[i]->getParentOp();
+        while (parent && !mlir::dyn_cast<mlir::func::FuncOp>(parent)) {
+          if (auto forOp = mlir::dyn_cast<mlir::affine::AffineForOp>(parent)) {
+            if (getStrAttr(forOp, FORDESC) == "y") {
+              parentYLoop = forOp;
+              break;
+            }
+          }
+          parent = parent->getParentOp();
+        }
+        if (!parentYLoop) continue;
+        std::vector<mlir::affine::AffineForOp> upperLoops{parentYLoop};
         Rewriter::bufferizeLoopCarryVar(xloops[i], upperLoops, MemorySpace::global, iterDescs);
       }
     }
     LOG_DEBUG("===== X bufferize =====\n", mod);
     // 针对softmax这个算子，decouple 将y中含有两个x循环进行拆分，保证所有的fory下含有一个forx
     normalizeParaForOp(yloops);
+    llvm::errs() << "[fusing] after normalize: yloops.size()=" << yloops.size() << "\n";
+    {
+      auto xcheck = collectOpsInfuncOp<mlir::affine::AffineForOp>(newFuncOp, FORDESC, std::string{"x"});
+      llvm::errs() << "[fusing] after normalize: xloops.size()=" << xcheck.size() << "\n";
+    }
     LOG_DEBUG("===== decouple =====\n", mod);
     // 先将算子进行更加小粒度的切分，变成一些reduce、elem-wise、binary、matmul级别的算子
     separateParaForOps(newFuncOp);   // ！！！！=== 重点设计 === ！！！！
@@ -127,8 +155,9 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
     auto paraDims = getArrayStrAttr(kernel, PARALLELDIMS);  // 获取可并行维度
     auto yloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"y"});
     auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
-    // split & reorder & parallel 上一步做完必然会有fory和forx一一对应，大小相等
+    // split & reorder & parallel
     std::vector<mlir::affine::AffineParallelOp> blockIdxs;  // collect all block parallel ops
+    llvm::errs() << "[mapping] yloops.size()=" << yloops.size() << " xloops.size()=" << xloops.size() << "\n";
     LOG_DEBUG("===== start =====\n", mod);
     for (int i=0; i<yloops.size(); i++) {
       // split tile for
@@ -203,6 +232,10 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
       opts[KernelType] = std::make_unique<MatmulOptimizer>();
     } else if (KernelType == "FlashAttn") {
       opts[KernelType] = std::make_unique<FlashAttnOptimizer>();
+    } else if (KernelType == "GemmStats") {
+      opts[KernelType] = std::make_unique<GemmStatsOptimizer>();
+    } else if (KernelType == "FlashAttnSplitK2") {
+      opts[KernelType] = std::make_unique<FlashAttnSplitK2Optimizer>();
     } else {
       llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
       return false;
@@ -212,6 +245,7 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
   // optimize all kernel
   auto ntMap = Analyzer::collectNameTypeMap(mod);
   for (auto nt : ntMap) {  // {matmul1 : Matmul}
+    if (opts.find(nt.second) == opts.end()) continue;
     auto opt = std::move(opts[nt.second]);
     auto funcOps = getSpecifiedKernels(mod, {nt.first});
     if (!opt->applicable(funcOps[0], tuneConfig.at(nt.first))) {
@@ -225,23 +259,41 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
 }
 
 bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
-  // dialect optimize
   mlir::MLIRContext* context = &(this->context);
-  mlir::PassManager pm(context);
-  pm.addPass(createParallelToGPUPass());
-  // Keep native exp for numerical stability in attention softmax.
-  // Taylor approximation can introduce NaN for some shapes/configs.
-  // pm.addPass(createExpToTaylorPass());
-  pm.addPass(createCombineMemrefPass());
-  pm.addPass(ReplaceAllocToGetglobalPass());
-  pm.addPass(createAmendAllocaOpAddrSpacePass(this->target));
-  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopInvariantCodeMotionPass());
-  pm.addNestedPass<func::FuncOp>(affine::createAffineLoopNormalizePass(true));
-  pm.addPass(createAffineUnrollPass());
-  pm.addPass(mlir::createCSEPass());  // 冗余消除
-  pm.addPass(mlir::createSymbolDCEPass());  // 死代码消除/化简
-  if (mlir::failed(pm.run(mod)))
-    return false;
+
+  auto runOne = [&](std::unique_ptr<mlir::Pass> pass, const char* tag) -> bool {
+    mlir::PassManager pm(context);
+    pm.addPass(std::move(pass));
+    if (mlir::failed(pm.run(mod))) {
+      llvm::errs() << "[transform] FAILED at pass: " << tag << "\n";
+      llvm::errs() << "======== IR dump after failed pass ========\n";
+      mod->print(llvm::errs());
+      llvm::errs() << "\n======== end IR dump ========\n";
+      return false;
+    }
+    llvm::errs() << "[transform] OK: " << tag << "\n";
+    return true;
+  };
+  auto runOneNested = [&](std::unique_ptr<mlir::Pass> pass, const char* tag) -> bool {
+    mlir::PassManager pm(context);
+    pm.addNestedPass<func::FuncOp>(std::move(pass));
+    if (mlir::failed(pm.run(mod))) {
+      llvm::errs() << "[transform] FAILED at pass: " << tag << "\n";
+      return false;
+    }
+    llvm::errs() << "[transform] OK: " << tag << "\n";
+    return true;
+  };
+
+  if (!runOne(createParallelToGPUPass(), "ParallelToGPU")) return false;
+  if (!runOne(createCombineMemrefPass(), "CombineMemref")) return false;
+  if (!runOne(ReplaceAllocToGetglobalPass(), "ReplaceAllocToGetglobal")) return false;
+  if (!runOne(createAmendAllocaOpAddrSpacePass(this->target), "AmendAllocaAddr")) return false;
+  if (!runOneNested(affine::createAffineLoopInvariantCodeMotionPass(), "LICM")) return false;
+  if (!runOneNested(affine::createAffineLoopNormalizePass(true), "LoopNormalize")) return false;
+  if (!runOne(createAffineUnrollPass(), "AffineUnroll")) return false;
+  if (!runOne(mlir::createCSEPass(), "CSE")) return false;
+  if (!runOne(mlir::createSymbolDCEPass(), "SymbolDCE")) return false;
   return true;
 }
 

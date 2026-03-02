@@ -507,7 +507,18 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
 
     auto valueTy = adaptor.getValue().getType();
     auto int32Type = IntegerType::get(rewriter.getContext(), 32);
+    auto f32Type = Float32Type::get(rewriter.getContext());
     auto predTy = IntegerType::get(rewriter.getContext(), 1);
+
+    // NVVM shfl.sync only supports 32-bit types (i32/f32).
+    // For sub-32-bit types like f16, promote to f32, shuffle, then truncate.
+    bool needF16Cast = isa<Float16Type>(valueTy);
+    Value shflInput = adaptor.getValue();
+    Type shflValueTy = valueTy;
+    if (needF16Cast) {
+      shflInput = rewriter.create<LLVM::FPExtOp>(loc, f32Type, shflInput);
+      shflValueTy = f32Type;
+    }
 
     // Value one = rewriter.create<LLVM::ConstantOp>(loc, int32Type, 1);
     Value minusOne = rewriter.create<LLVM::ConstantOp>(loc, int32Type, -1);
@@ -536,10 +547,10 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
     
     bool predIsUsed = !op->getResult(1).use_empty();
     UnitAttr returnValueAndIsValidAttr = nullptr;
-    Type resultTy = valueTy;
+    Type resultTy = shflValueTy;
     if (predIsUsed) {
       returnValueAndIsValidAttr = rewriter.getUnitAttr();
-      resultTy = LLVM::LLVMStructType::getLiteral(rewriter.getContext(), {valueTy, predTy});
+      resultTy = LLVM::LLVMStructType::getLiteral(rewriter.getContext(), {shflValueTy, predTy});
     }
     NVVM::ShflKind nvvmMode;
     switch (op.getMode()) {
@@ -560,14 +571,19 @@ struct GPUShuffleOpToNVVMLowering : public ConvertOpToLLVMPattern<gpu::ShuffleOp
     }
     // Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, activeMask, adaptor.getValue(), adaptor.getOffset(),
         // maskAndClamp, nvvmMode, returnValueAndIsValidAttr);
-    Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, minusOne, adaptor.getValue(), adaptor.getOffset(),
+    Value shfl = rewriter.create<NVVM::ShflOp>(loc, resultTy, minusOne, shflInput, adaptor.getOffset(),
         segmaskAndClamp, nvvmMode, returnValueAndIsValidAttr);
     if (predIsUsed) {
       Value shflValue = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 0);
+      if (needF16Cast)
+        shflValue = rewriter.create<LLVM::FPTruncOp>(loc, valueTy, shflValue);
       Value isActiveSrcLane = rewriter.create<LLVM::ExtractValueOp>(loc, shfl, 1);
       rewriter.replaceOp(op, {shflValue, isActiveSrcLane});
     } else {
-      rewriter.replaceOp(op, {shfl, nullptr});
+      Value result = shfl;
+      if (needF16Cast)
+        result = rewriter.create<LLVM::FPTruncOp>(loc, valueTy, result);
+      rewriter.replaceOp(op, {result, nullptr});
     }
     return success();
   }
@@ -1214,7 +1230,15 @@ struct CombineMemrefPass : public PassWrapper<CombineMemrefPass, OperationPass<M
           b.setInsertionPointAfter(loadOp);
           auto newLoadOp = b.create<affine::AffineLoadOp>(loadOp.getLoc(), newAllocOp.getResult(), map, loadOp.getMapOperands());
           loadOp.getResult().replaceAllUsesWith(newLoadOp.getResult());
-          loadOp.erase();
+          if (loadOp.getResult().use_empty()) {
+            loadOp.erase();
+          } else {
+            llvm::errs() << "[LoweringPasses][combineAlloc] skip erase affine.load, use_count="
+                         << std::distance(loadOp.getResult().use_begin(), loadOp.getResult().use_end()) << "\n";
+            llvm::errs() << "[LoweringPasses][combineAlloc] load op = ";
+            loadOp->print(llvm::errs());
+            llvm::errs() << "\n";
+          }
 
         } else if (auto storeOp = mlir::dyn_cast<affine::AffineStoreOp>(user)) {
           auto map = moreDimToOneDimMap(storeOp, pair.second, shapes, storeOp->getContext());
@@ -1228,7 +1252,12 @@ struct CombineMemrefPass : public PassWrapper<CombineMemrefPass, OperationPass<M
           auto newVectorLoadOp = b.create<affine::AffineVectorLoadOp>(vectorLoadOp.getLoc(), vectorLoadOp.getVectorType(), 
                                                               newAllocOp.getResult(), map, vectorLoadOp.getMapOperands());
           vectorLoadOp.getResult().replaceAllUsesWith(newVectorLoadOp.getResult());
-          vectorLoadOp.erase();
+          if (vectorLoadOp.getResult().use_empty()) {
+            vectorLoadOp.erase();
+          } else {
+            llvm::errs() << "[LoweringPasses][combineAlloc] skip erase affine.vector_load, use_count="
+                         << std::distance(vectorLoadOp.getResult().use_begin(), vectorLoadOp.getResult().use_end()) << "\n";
+          }
 
         } else if (auto vectorStoreOp = mlir::dyn_cast<affine::AffineVectorStoreOp>(user)) {
           auto map = moreDimToOneDimMap(vectorStoreOp, pair.second, shapes, vectorStoreOp->getContext());
@@ -1791,7 +1820,20 @@ struct FlattenMemrefPass : public PassWrapper<FlattenMemrefPass, OperationPass<M
           assert(false && " KCG Unimplement Cast!!");
         }
       }
-      for(auto userOp : opToDelete){
+      for (auto userOp : opToDelete) {
+        if (auto loadOp = mlir::dyn_cast<affine::AffineLoadOp>(userOp)) {
+          if (!loadOp.getResult().use_empty()) {
+            llvm::errs() << "[LoweringPasses][flattenAlloc] skip erase affine.load, use_count="
+                         << std::distance(loadOp.getResult().use_begin(), loadOp.getResult().use_end()) << "\n";
+            continue;
+          }
+        } else if (auto vectorLoadOp = mlir::dyn_cast<affine::AffineVectorLoadOp>(userOp)) {
+          if (!vectorLoadOp.getResult().use_empty()) {
+            llvm::errs() << "[LoweringPasses][flattenAlloc] skip erase affine.vector_load, use_count="
+                         << std::distance(vectorLoadOp.getResult().use_begin(), vectorLoadOp.getResult().use_end()) << "\n";
+            continue;
+          }
+        }
         userOp->erase();
       }
       oldOp.erase();
