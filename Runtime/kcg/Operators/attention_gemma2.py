@@ -289,16 +289,21 @@ class Gemma2SplitOp(OpInterface):
             self._dump_tensor_stats("Q_in", qq)
             self._dump_tensor_stats("K_in", kk)
             self._dump_tensor_stats("V_in", v)
+        # warmup: K1 + K2
         if self._kernel1 is not None:
             self._kernel1.run(qq, kk, em, denom)
-            torch_ns.synchronize()
         else:
             self._compute_em_denom_pytorch(qq, kk, em, denom)
         packedKernel.run(qq, kk, v, em, denom, d)
         torch_ns.synchronize()
+        # timed: K1 + K2
         st = torch_ns.Event(enable_timing=True)
         et = torch_ns.Event(enable_timing=True)
         st.record()
+        if self._kernel1 is not None:
+            self._kernel1.run(qq, kk, em, denom)
+        else:
+            self._compute_em_denom_pytorch(qq, kk, em, denom)
         packedKernel.run(qq, kk, v, em, denom, d)
         et.record()
         torch_ns.synchronize()
