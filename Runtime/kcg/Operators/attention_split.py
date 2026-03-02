@@ -122,7 +122,7 @@ class AttentionSplitOp(OpInterface):
     def _compile_one_kernel(self, compileFunc, kernelName, shape, config, dtype_str, backendtype, arch, opt, info):
         """Compile a single kernel via the given C++ compile function."""
         self.SetKernelName(kernelName)
-        if is_hip():
+        if False:
             from kcg.HIPCompiler import HIPCompiler
             hsacopath = f"{PathManager.default_dump_dir()}/hs_{kernelName}.hsaco"
             fastCompile = True if opt is None else opt.fastCompile

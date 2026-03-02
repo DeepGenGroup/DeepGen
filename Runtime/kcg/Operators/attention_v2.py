@@ -92,7 +92,7 @@ class AttentionV2Op(OpInterface):
 
         dtype_str = EnumKernelDType(dataTypeInt).name
 
-        if is_hip():
+        if False:
             from kcg.HIPCompiler import HIPCompiler
             hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco"
             fastCompile = True if opt is None else opt.fastCompile

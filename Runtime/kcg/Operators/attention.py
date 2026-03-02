@@ -520,7 +520,7 @@ class AttentionOp(OpInterface) :
 
         dtype_str = EnumKernelDType(dataTypeInt).name
 
-        if is_hip():
+        if False:
             # hipcc compile
             hsacopath = f"{PathManager.default_dump_dir()}/hs_{info.kernelName}.hsaco" 
             fastCompile = True
