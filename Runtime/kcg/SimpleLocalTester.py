@@ -34,14 +34,15 @@ def init_cuda(_devId : List) :
         torch_ns.empty_cache()
 
 def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int, opt : CompileOption, task_id : str = "") :
-    # print("enter __compile_task_func",flush=True)
     op = OpTy()
-    # print("[D] info.baseArgs = ", info.baseArgs)
-    # print("[D] info dtype =",info.torchDataType)
-    ba, kernlCfg, compiledKernel = op.Compile(deviceId, backendtype, arch, info, opt)
+    result = op.Compile(deviceId, backendtype, arch, info, opt)
     pklName = f"{PathManager.pikle_dir()}/{deviceId}/{task_id}/kfg_{index}.pkl"
-    # print(f"__compile_task_func : ba = {ba}")
-    serialize_to_file(pklName, (ba, kernlCfg))  # pack (baseArgs, runtime config) to a pkl
+    if len(result) == 4:
+        ba, kernlCfg, compiledKernel, k1Cfg = result
+        serialize_to_file(pklName, (ba, kernlCfg, k1Cfg))
+    else:
+        ba, kernlCfg, compiledKernel = result
+        serialize_to_file(pklName, (ba, kernlCfg))
 
 
 g_index : int = 0
@@ -106,8 +107,13 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             f.close()
     for pkl in pkls :
         try:
-            (ba ,config ) = deserialize_from_file(pkl) 
+            pklData = deserialize_from_file(pkl)
             os.remove(pkl)
+            k1_config = None
+            if len(pklData) == 3:
+                ba, config, k1_config = pklData
+            else:
+                ba, config = pklData
             assert isinstance(ba, List)
             assert isinstance(config, KernelConfigs)
             print(f'[D] after desrialize : {ba}')
@@ -130,8 +136,13 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             op.GetBaselineInputTensor(devId)
             op.GetBenchmarkInputTensor(devId)
             print("[D] tensor shape verify ======",flush=True)
-            # print(tQ.shape, tK.shape, tV.shape, flush=True)
-            # print(tQQ.shape, tKK.shape, tVV.shape, flush=True)
+            
+            # rebuild K1 compiled kernel if config was serialized
+            if k1_config is not None:
+                sig_k1 = op._get_k1_signature(op.BaseArgs.getTorchDType())
+                op._kernel1 = CompiledKernel(
+                    k1_config.backend, k1_config.binaryPath, k1_config.kernelFuncName,
+                    k1_config.sharedMem(), sig_k1, k1_config.gridDims(), k1_config.blockDims(), devId)
             
             kernel = op.GetCompiledKernel(config,devId)
             # warmup

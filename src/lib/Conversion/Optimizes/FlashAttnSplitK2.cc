@@ -640,7 +640,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
         scaleConst = sb.create<mlir::arith::ConstantOp>(loc, sb.getFloatAttr(dtype, 50.0f));
       }
       if (doMask) {
-        negInf = sb.create<mlir::arith::ConstantOp>(loc, sb.getFloatAttr(dtype, -std::numeric_limits<double>::infinity()));
+        negInf = sb.create<mlir::arith::ConstantOp>(loc, sb.getFloatAttr(dtype, -1.0e30));
       }
 
       llvm::SmallVector<int64_t> lbs{0, 0}, ubs{cfg["PTr"], cfg["PTc"]}, steps{1, 1};
