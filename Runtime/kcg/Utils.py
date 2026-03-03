@@ -338,6 +338,7 @@ class EnumOperator:
 class EnumKernelDType(IntEnum):
     float8 = 1
     float16 = 2
+    bfloat16 = 62
     float32 = 4
     float64 = 8
     float128 = 16
@@ -355,6 +356,8 @@ def ToTorchType (t : EnumKernelDType) -> torch.dtype:
         return torch.float64
     if t == EnumKernelDType.float16.value :
         return torch.float16
+    if t == EnumKernelDType.bfloat16.value :
+        return torch.bfloat16
 
 def ToEnumIntDType (t : torch.dtype) -> EnumKernelDType:
     if t is torch.float32 :
@@ -363,6 +366,8 @@ def ToEnumIntDType (t : torch.dtype) -> EnumKernelDType:
         return EnumKernelDType.float64
     if t is torch.float16 :
         return EnumKernelDType.float16
+    if t is torch.bfloat16 :
+        return EnumKernelDType.bfloat16
 
 def sizeof(t : EnumKernelDType) : # bytes
     assert(t is not None)

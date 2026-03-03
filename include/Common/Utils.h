@@ -112,6 +112,7 @@ enum class Layout {
 enum class KcgDtype : int {
   float8 = 1,
   float16 = 2,
+  bfloat16 = 3,
   float32 = 4,
   float64 = 8,
   float128 = 16,
@@ -142,6 +143,7 @@ static std::ostream& operator<<(std::ostream& s, KcgDtype ty){
   switch(ty){
     case KcgDtype::float8: s << "f8" ; break;
     case KcgDtype::float16: s << "f16" ; break;
+    case KcgDtype::bfloat16: s << "bf16" ; break;
     case KcgDtype::float32: s << "f32" ; break;
     case KcgDtype::float64: s << "f64" ; break;
     case KcgDtype::float128: s << "f128" ; break;

@@ -239,8 +239,10 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
 _dtype_map = {
     "float32": torch.float32,
     "float16": torch.float16,
+    "bfloat16": torch.bfloat16,
     "fp32": torch.float32,
     "fp16": torch.float16,
+    "bf16": torch.bfloat16,
 }
 
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32) -> TsGeneratorType :

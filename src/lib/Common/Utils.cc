@@ -130,6 +130,7 @@ mlir::Type getDType(mlir::OpBuilder& builder, const std::string& dtype) {
   if(dtype == "int16") return builder.getIntegerType(16);
   if(dtype == "index") return builder.getIndexType();
   if(dtype == "bool") return builder.getIntegerType(1);
+  if(dtype == "bfloat16") return builder.getBF16Type();
   assert(false && "getDType:: Unsupported Type!");
   return nullptr;
 }
@@ -147,6 +148,7 @@ std::string KcgDtypeToStr(KcgDtype type){
   switch (type){
     case KcgDtype::float8   : return "";break;
     case KcgDtype::float16  : return "float16";break;
+    case KcgDtype::bfloat16  : return "bfloat16";break;
     case KcgDtype::float32  : return "float32";break;
     case KcgDtype::float64  : return "float64";break;
     case KcgDtype::float128 : return "";break;
@@ -162,6 +164,7 @@ std::string KcgDtypeToStr(KcgDtype type){
 }
 
 std::string typeToStr(mlir::Type type) {
+  if(mlir::isa<mlir::BFloat16Type>(type)) return {"bfloat16"};
   if(mlir::isa<mlir::Float16Type>(type)) return {"float16"};
   if(mlir::isa<mlir::Float32Type>(type)) return {"float32"};
   if(mlir::isa<mlir::Float64Type>(type)) return {"float64"};
