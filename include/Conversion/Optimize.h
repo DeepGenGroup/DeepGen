@@ -259,6 +259,47 @@ struct FlashAttnSplitK2Optimizer : Optimizer {
   void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
 };
 
+// ====================================== GemmNormColSum (H2O split kernel 2) ================================
+struct GemmNormColSumOptimizer : Optimizer {
+  GemmNormColSumOptimizer() {
+    this->name = std::move(std::string("GemmNormColSum"));
+  }
+  virtual bool applicable(mlir::func::FuncOp& funcOp, const std::map<std::string, int64_t>& config) override;
+  virtual void applyOptimzer(mlir::func::FuncOp& funcOp) override;
+
+  std::array<int64_t, 7> getCfgDatas(const std::string& bufType);
+  std::array<mlir::AffineExpr, 2> getGlobToSmExprs(const llvm::SmallVector<mlir::AffineExpr>& dims,
+                                                    const std::array<int64_t, 7>& args);
+  mlir::AffineMap getGlobQKToTempQKMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getTempToSmMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getTempToSmKPrologueMap(mlir::OpBuilder& builder);
+  mlir::AffineMap getSmKPrologueToRegKMap(mlir::OpBuilder& builder);
+  std::array<int64_t, 8> getSmCfgDatas(const std::string& bufType);
+  mlir::AffineMap getSmQKVToRegQKVMap(mlir::OpBuilder& builder, const std::string& bufType);
+  mlir::AffineMap getCalculateMap(mlir::OpBuilder& builder, std::string calculatetype);
+  mlir::AffineMap getRowSumWriteMap(mlir::OpBuilder& builder);
+
+  std::map<std::string, int64_t> cfg;
+  mlir::Value midBuf;
+  std::vector<mlir::affine::AffineForOp> xBlockFors, xTileForOps, yTileForOps, kForOps;
+  mlir::affine::AffineParallelOp blockIdx, threadIdx;
+  mlir::Value byIdx, K, Q, Em, Denom, RowSumOut;
+
+  mlir::MemRefType typeK, typeQ, typeEm, typeDenom, typeRowSumOut, typeMid;
+  int64_t batchSize, headNum, seqLen, headDim;
+  bool isTranK, isTranQ;
+
+  int64_t threadNum, blockPY, blockPX;
+  int64_t blockRepeatK, blockRepeatQ, warpRepeatK, warpRepeatQ;
+  int64_t globLoadTotalWidthK, globLoadTotalWidthQ;
+  int64_t globLoadRowWidthK, globLoadRowWidthQ;
+  int64_t globLoadAllWidthK, globLoadAllWidthQ;
+
+  void computeTuneArgs();
+  void parseFuncArgs(mlir::func::FuncOp funcOp);
+  void moveMemrefDefineAhead(mlir::Operation* threadParallelOp);
+};
+
 }  // KernelCodeGen
 
 #endif // _Optimizer_h_

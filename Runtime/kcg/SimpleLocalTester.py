@@ -9,6 +9,7 @@ import kcg.Operators.attention as kcg_att
 import kcg.Operators.attention_v2 as kcg_att_v2
 import kcg.Operators.attention_split as kcg_att_split
 import kcg.Operators.attention_gemma2 as kcg_att_gemma2
+import kcg.Operators.attention_h2o as kcg_att_h2o
 import numpy as np
 
 ctx = multiprocessing.get_context('spawn')
@@ -37,7 +38,10 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
     op = OpTy()
     result = op.Compile(deviceId, backendtype, arch, info, opt)
     pklName = f"{PathManager.pikle_dir()}/{deviceId}/{task_id}/kfg_{index}.pkl"
-    if len(result) == 4:
+    if len(result) == 5:
+        ba, kernlCfg, compiledKernel, k1Cfg, k2Cfg = result
+        serialize_to_file(pklName, (ba, kernlCfg, k1Cfg, k2Cfg))
+    elif len(result) == 4:
         ba, kernlCfg, compiledKernel, k1Cfg = result
         serialize_to_file(pklName, (ba, kernlCfg, k1Cfg))
     else:
@@ -110,7 +114,10 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             pklData = deserialize_from_file(pkl)
             os.remove(pkl)
             k1_config = None
-            if len(pklData) == 3:
+            k2_config = None
+            if len(pklData) == 4:
+                ba, config, k1_config, k2_config = pklData
+            elif len(pklData) == 3:
                 ba, config, k1_config = pklData
             else:
                 ba, config = pklData
@@ -130,6 +137,8 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 ...
             elif config.operatorKind is kcg_att_gemma2.Gemma2SplitOp :
                 ...
+            elif config.operatorKind is kcg_att_h2o.H2OSplitOp :
+                ...
             # init tensors
             op = OpTy()
             op.InitBaseArgs(ba)
@@ -143,6 +152,13 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 op._kernel1 = CompiledKernel(
                     k1_config.backend, k1_config.binaryPath, k1_config.kernelFuncName,
                     k1_config.sharedMem(), sig_k1, k1_config.gridDims(), k1_config.blockDims(), devId)
+            
+            # rebuild K2 compiled kernel if config was serialized (H2O 3-kernel split)
+            if k2_config is not None:
+                sig_k2 = op._get_k2_signature(op.BaseArgs.getTorchDType())
+                op._kernel2 = CompiledKernel(
+                    k2_config.backend, k2_config.binaryPath, k2_config.kernelFuncName,
+                    k2_config.sharedMem(), sig_k2, k2_config.gridDims(), k2_config.blockDims(), devId)
             
             kernel = op.GetCompiledKernel(config,devId)
             # warmup
@@ -243,6 +259,46 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
     if OpTy is kcg_att_gemma2.Gemma2SplitOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace([1, 32, 4096, 64],cfgPath,[], torch_dtype)
+    if OpTy is kcg_att_h2o.H2OSplitOp :
+        import json, tempfile
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        sub_cfg = full_cfg.get("k3", full_cfg)
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump(sub_cfg, tmp); tmp.flush(); tmp.close()
+        return ns_attentiopn.getTuneSpace([1, 32, 4096, 64], tmp.name, [], torch_dtype)
+    if OpTy in (kcg_att_h2o.H2OK1Op, kcg_att_h2o.H2OK2Op, kcg_att_h2o.H2OK3Op):
+        import json, tempfile
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        sub_key = {kcg_att_h2o.H2OK1Op: "k1", kcg_att_h2o.H2OK2Op: "k2", kcg_att_h2o.H2OK3Op: "k3"}[OpTy]
+        sub_cfg = full_cfg[sub_key] if sub_key in full_cfg else full_cfg
+        _o_defaults = {
+            "Slice2": [4], "OTr": [4], "OTc": [8], "GLOB_LOAD_WIDTH_V": [4],
+            "BLOCK_LAYOUT_O_Y": [2], "BLOCK_LAYOUT_O_X": [1],
+            "WARP_LAYOUT_O_Y": [4], "WARP_LAYOUT_O_X": [8],
+            "BLOCK_SCATTER_WIDTH_P": [4], "BLOCK_SCATTER_WIDTH_V": [4],
+            "WARP_SCATTER_WIDTH_P": [4], "WARP_SCATTER_WIDTH_V": [4],
+            "LOAD_CONTINUOUS_O": [1], "REG_PREFETCH_O": [0],
+            "SHUFFLE_P": [0], "SPLITK_PV": [0],
+        }
+        for k, v in _o_defaults.items():
+            sub_cfg.setdefault(k, v)
+        tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
+        json.dump(sub_cfg, tmp); tmp.flush(); tmp.close()
+        tag = sub_key.upper()
+        def _rename_gen(gen, t):
+            for info in gen:
+                old_name = info.kernelName
+                new_name = old_name.replace("kcg_Attention_", f"kcg_H2O{t}_")
+                info.kernelName = new_name
+                shape, config = info.tsArgs
+                config[new_name] = config.pop(old_name)
+                info.tsArgs = [shape, config]
+                yield info
+        return _rename_gen(ns_attentiopn.getTuneSpace([1, 32, 4096, 64], tmp.name, [], torch_dtype), tag)
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'
     
 
@@ -297,10 +353,14 @@ _opty_map = {
     "attn_v2": kcg_att_v2.AttentionV2Op,
     "attn_split": kcg_att_split.AttentionSplitOp,
     "gemma2_split": kcg_att_gemma2.Gemma2SplitOp,
+    "h2o_split": kcg_att_h2o.H2OSplitOp,
+    "h2o_k1": kcg_att_h2o.H2OK1Op,
+    "h2o_k2": kcg_att_h2o.H2OK2Op,
+    "h2o_k3": kcg_att_h2o.H2OK3Op,
 }
 
 def getInputs() :
-    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|gemma2_split)] [devId(int)] [dtype(float32|float16)]" 
+    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|gemma2_split|h2o_split|h2o_k1|h2o_k2|h2o_k3)] [devId(int)] [dtype(float32|float16)]" 
     if len(sys.argv) < 4 :
         print(helpmsg)
         assert False, f"invalid input args. {helpmsg}"

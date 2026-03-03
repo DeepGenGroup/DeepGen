@@ -408,6 +408,180 @@ std::string gemma2_split_k2(std::vector<int64_t> shape, const TuneConfig& config
   return compile_kernel(configK2, tileConfig, kds, fkds);
 }
 
+std::string h2o_split_k1(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // H2O split kernel 1: GEMM(Q@K^T) + causal mask + online reduce → em, denom
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmaxstats1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "softmaxstats1", "SoftmaxStats", {shc, sh_em, sh_denom}, {dtype, dtype, dtype}, {false}, 2
+  };
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "GemmStats", {"matmul1", "softmaxstats1"},
+    {kd1.shapes[0], kd1.shapes[1], sh_em, sh_denom},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"softmaxstats1", {1}}}, {{"softmaxstats1", {2}}}},
+    {{{"matmul1", {2}}, {"softmaxstats1", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1]}, {"y"}, 2
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK1 = config;
+  configK1[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK1[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK1, tileConfig, kds, fkds);
+}
+
+std::string h2o_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // H2O split kernel 2: GEMM(K^T@Q) + causal mask + normalize(em,denom) + row reduce → row_sum
+  //
+  // TRANSPOSED TILING: K is funcArg[0] (A, outer), Q is funcArg[1] (B, inner).
+  //   GEMM produces P^T = K^T @ Q  [S_k, S_q]
+  //   - Outer blocks tile along S_k (each block "owns" Br rows of row_sum)
+  //   - Inner loop iterates along S_q
+  //   - em/denom index S_q (inner dim), loaded per iteration
+  //   - reduce_sum along S_q (inner dim) → row_sum[S_k], local to each block
+  //   - No cross-block atomics needed.
+  //
+  // Python passes: (K[B,H,D,S], Q_t[B,H,D,S], em[B,H,S,1], denom[B,H,S,1], row_sum[B,H,S])
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"reducesum1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  // sha/shb are symmetric ({hd, sl}), but semantically:
+  //   funcArg[0] → A = K, funcArg[1] → B = Q_t
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  std::vector<int64_t> sh_rowsum{sl};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+    sh_rowsum.insert(sh_rowsum.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "reducesum1", "ReduceSum", {shc, sh_rowsum}, {dtype, dtype}, {false}, 2
+  };
+
+  // funcArgs: [K, Q_t, em, denom, row_sum]
+  //   K → matmul1.arg[0] (A, outer blocks tile S_k)
+  //   Q_t → matmul1.arg[1] (B, inner loop iterates S_q)
+  //   em, denom → handled by optimizer (index inner dim S_q)
+  //   row_sum → reducesum1.arg[1] (output, indexed by outer dim S_k)
+  FuseKernelData fkd = {
+    __GlobalKernelName, "GemmNormColSum", {"matmul1", "reducesum1"},
+    {kd1.shapes[0], kd1.shapes[1], sh_em, sh_denom, sh_rowsum},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {}, {}, {{"reducesum1", {1}}}},
+    {{{"matmul1", {2}}, {"reducesum1", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1]}, {"y"}, 2
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK2 = config;
+  configK2[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK2, tileConfig, kds, fkds);
+}
+
+std::string h2o_split_k3(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // H2O split kernel 3: GEMM(Q@K^T) + causal mask + broadcast normalize(em,denom) + GEMM(P@V) → O
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+
+  std::vector<int64_t> sha{hd, sl}, shb{hd, sl}, shc{sl, sl};
+  std::vector<int64_t> sh_em{sl, 1}, sh_denom{sl, 1};
+  std::vector<int64_t> sha1{sl, sl}, shb1{sl, hd}, shc1{sl, hd};
+  for (int i=b.size()-1; i>=0; i--) {
+    sha.insert(sha.begin(), b[i]); shb.insert(shb.begin(), b[i]); shc.insert(shc.begin(), b[i]);
+    sh_em.insert(sh_em.begin(), b[i]); sh_denom.insert(sh_denom.begin(), b[i]);
+    sha1.insert(sha1.begin(), b[i]); shb1.insert(shb1.begin(), b[i]); shc1.insert(shc1.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {sha, shb, shc}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
+  };
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "FlashAttnSplitK2", {"matmul1", "matmul2"},
+    {kd1.shapes[0], kd1.shapes[1], kd2.shapes[1], sh_em, sh_denom, kd2.shapes[2]},
+    {kd1.shapes[2]},
+    {dtype, dtype, dtype, dtype, dtype, dtype}, {dtype},
+    {{{"matmul1", {0}}}, {{"matmul1", {1}}}, {{"matmul2", {1}}}, {}, {}, {{"matmul2", {2}}}},
+    {{{"matmul1", {2}}, {"matmul2", {0}}}},
+    {kd1.isTrans[0], kd1.isTrans[1], kd2.isTrans[1]}, {"y"}, 1
+  };
+
+  std::vector<KernelData> kds{kd1, kd2};
+  std::vector<FuseKernelData> fkds{fkd};
+
+  TuneConfig configK3 = config;
+  configK3[__GlobalKernelName]["SCALE_Q"] = 1;
+  configK3[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  return compile_kernel(configK3, tileConfig, kds, fkds);
+}
+
 // bind python module
 static bool py_list_to_vector(PyObject* py_list, std::vector<int64_t>& vec) {
   // list to vector
@@ -625,6 +799,51 @@ static PyObject* py_compile_gemma2_split_k2(PyObject* self, PyObject* args) {
   return PyUnicode_FromString(result.c_str());
 }
 
+static PyObject* py_compile_h2o_split_k1(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = h2o_split_k1(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_h2o_split_k2(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = h2o_split_k2(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_h2o_split_k3(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = h2o_split_k3(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
 static PyMethodDef DeepgenMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
     {"compile_attn_v2", py_compile_attn_v2, METH_VARARGS, "Compile optimized attention (scale before mm1, div after mm2)"},
@@ -635,6 +854,9 @@ static PyMethodDef DeepgenMethods[] = {
     {"compile_attn_split_k2", py_compile_attn_split_k2, METH_VARARGS, "Compile split attention kernel 2 (GEMM + broadcast norm + GEMM -> O)"},
     {"compile_gemma2_split_k1", py_compile_gemma2_split_k1, METH_VARARGS, "Compile Gemma2 split kernel 1 (GEMM + softcap + mask + reduce -> em, denom)"},
     {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + broadcast norm + GEMM -> O)"},
+    {"compile_h2o_split_k1", py_compile_h2o_split_k1, METH_VARARGS, "Compile H2O split kernel 1 (GEMM + mask + reduce -> em, denom)"},
+    {"compile_h2o_split_k2", py_compile_h2o_split_k2, METH_VARARGS, "Compile H2O split kernel 2 (GEMM + mask + normalize + col reduce -> row_sum)"},
+    {"compile_h2o_split_k3", py_compile_h2o_split_k3, METH_VARARGS, "Compile H2O split kernel 3 (GEMM + mask + broadcast norm + GEMM -> O)"},
     {NULL, NULL, 0, NULL}
 };
 

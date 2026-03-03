@@ -903,47 +903,46 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== p. split-K tileO warp reduction =====
-  if (useSplitKPV) {
-    int64_t OTr_ = cfg["OTr"], OTc_ = cfg["OTc"];
-    int64_t WLPX = cfg["WARP_LAYOUT_P_X"];
-    int64_t WARP_SZ = cfg["WARP_SIZE"];
-    mlir::OpBuilder reduceBuilder = getBuilder(tyds.back(), Position::before);
-    auto loc = reduceBuilder.getUnknownLoc();
-    auto i32Ty = reduceBuilder.getI32Type();
-    auto widthI32 = reduceBuilder.create<mlir::arith::ConstantOp>(loc, reduceBuilder.getI32IntegerAttr(WARP_SZ));
-
-    for (int64_t dist = 1; dist < WLPX; dist *= 2) {
-      auto distI32 = reduceBuilder.create<mlir::arith::ConstantOp>(loc, reduceBuilder.getI32IntegerAttr(dist));
-      for (int64_t r = 0; r < OTr_; ++r) {
-        for (int64_t c = 0; c < OTc_; ++c) {
-          auto rIdx = reduceBuilder.create<mlir::arith::ConstantIndexOp>(loc, r);
-          auto cIdx = reduceBuilder.create<mlir::arith::ConstantIndexOp>(loc, c);
-          auto val = reduceBuilder.create<mlir::affine::AffineLoadOp>(
-              loc, tileO[0], mlir::ValueRange{rIdx, cIdx});
-          auto shfl = reduceBuilder.create<mlir::gpu::ShuffleOp>(
-              loc, val.getResult(), distI32, widthI32, mlir::gpu::ShuffleMode::DOWN);
-          auto sum = reduceBuilder.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
-          reduceBuilder.create<mlir::affine::AffineStoreOp>(
-              loc, sum, tileO[0], mlir::ValueRange{rIdx, cIdx});
-        }
-      }
-    }
-  }
-
   // ===== Store tileO to global O =====
-  // bufferizeLoopCarryVar does NOT create write-back from tileO to O.
-  // In FlashAttn, updateTileO("ORegSum") handles tileO/=sum + store to O.
-  // For SplitK2 we skip division and directly write tileO → O.
-  //
-  // Simple OTr × OTc output write with direct global index computation.
-  // Uses the same index formula as the original matmul2 ttileyDown:
-  //   row = by*Br + (tid / blockPX) * OTr + i
-  //   col = (tid % blockPX) * OTc + j
-  // where blockPX = Bc/PTc (threads in X direction for P-tile, reused for O).
+  // For useSplitKPV: first reduce tileO across lane_x via warp shuffle,
+  // then only lane_x==0 writes. Both must happen AFTER xBlockFor completes.
   {
     mlir::OpBuilder writeBuilder = getBuilder(xBlockFor, Position::after);
     auto loc = writeBuilder.getUnknownLoc();
+
+    // Step 1: warp shuffle reduction for split-K PV (AFTER all blockx iterations)
+    if (useSplitKPV) {
+      int64_t OTr_ = cfg["OTr"], OTc_ = cfg["OTc"];
+      int64_t WLPX = cfg["WARP_LAYOUT_P_X"];
+      auto i32Ty = writeBuilder.getI32Type();
+      auto widthI32 = writeBuilder.create<mlir::arith::ConstantOp>(loc, writeBuilder.getI32IntegerAttr(WLPX));
+
+      for (int64_t dist = 1; dist < WLPX; dist *= 2) {
+        auto distI32 = writeBuilder.create<mlir::arith::ConstantOp>(loc, writeBuilder.getI32IntegerAttr(dist));
+        for (int64_t r = 0; r < OTr_; ++r) {
+          for (int64_t c = 0; c < OTc_; ++c) {
+            auto rIdx = writeBuilder.create<mlir::arith::ConstantIndexOp>(loc, r);
+            auto cIdx = writeBuilder.create<mlir::arith::ConstantIndexOp>(loc, c);
+            auto val = writeBuilder.create<mlir::affine::AffineLoadOp>(
+                loc, tileO[0], mlir::ValueRange{rIdx, cIdx});
+            auto shfl = writeBuilder.create<mlir::gpu::ShuffleOp>(
+                loc, val.getResult(), distI32, widthI32, mlir::gpu::ShuffleMode::DOWN);
+            auto sum = writeBuilder.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
+            writeBuilder.create<mlir::affine::AffineStoreOp>(
+                loc, sum, tileO[0], mlir::ValueRange{rIdx, cIdx});
+          }
+        }
+      }
+
+      // Step 2: guard write-back — only lane_x==0 threads have correct reduced tileO
+      mlir::Value tid = this->threadIdx.getIVs()[0];
+      auto d0 = writeBuilder.getAffineDimExpr(0);
+      auto modExpr = d0 % WLPX;
+      auto intSet = mlir::IntegerSet::get(1, 0, {modExpr}, {true});
+      auto ifOp = writeBuilder.create<mlir::affine::AffineIfOp>(
+          loc, intSet, mlir::ValueRange{tid}, false);
+      writeBuilder.setInsertionPointToStart(ifOp.getThenBlock());
+    }
 
     llvm::SmallVector<int64_t> lbs{0, 0}, ubs{cfg["OTr"], cfg["OTc"]}, steps{1, 1};
     auto [oLoops, oIvs] = createNestedLoops(writeBuilder, lbs, ubs, steps);

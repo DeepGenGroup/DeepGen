@@ -236,6 +236,8 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
       opts[KernelType] = std::make_unique<GemmStatsOptimizer>();
     } else if (KernelType == "FlashAttnSplitK2") {
       opts[KernelType] = std::make_unique<FlashAttnSplitK2Optimizer>();
+    } else if (KernelType == "GemmNormColSum") {
+      opts[KernelType] = std::make_unique<GemmNormColSumOptimizer>();
     } else {
       llvm::errs() << "Optimization failed: Create Optimizer Failed.\n";
       return false;

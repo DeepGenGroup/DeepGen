@@ -118,6 +118,8 @@ class CreateAttnConfig:
               for unroll in self.cfg["UNROLL_NUM"]:
                 for shp in self.cfg.get("SHUFFLE_P", [0]):
                   for skp in self.cfg.get("SPLITK_PV", [0]):
+                    if (shp == 1 or skp == 1) and not self._can_shuffle_p(old_cfg):
+                      continue
                     result.append(old_cfg + ((unroll, self.cfg["WARP_SIZE"][0], 1, 1, spp, rpp, rpo, shp, skp), smem_size * self.type_width))
     # (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly, blx, wly, wlx, bswq, bswk, wswq, wswk), 
     # (bly, blx, wly, wlx, bswp, bswv, wswp, wswv), (unroll, warp_size, lc_p, lc_o, spp, rpp, rpo, shp, skp))
