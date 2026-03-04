@@ -950,7 +950,11 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
     auto oVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, tileO[0], oIvs);
 
-    // Global index: {batch, head, by + (tid / blockOX) * OTr + i, (tid % blockOX) * OTc + j}
+    // Global index for O store.
+    // For normal path (SPLITK_PV=0), use the same O-layout decomposition as getTileOToGlobOMap:
+    //   i/j are decomposed by block/warp scatter widths, then combined with warp/lane ids.
+    // This avoids column mis-mapping when OTc is split across scatter lanes.
+    // Keep the old compact mapping only for SPLITK_PV path.
     int batchCount = (int)Analyzer::getParallelIdx(this->blockIdx).size() - 1;
     int dimCount = batchCount + 4; // batch dims + by + tid + i + j
     auto dims = getExprs(writeBuilder, dimCount);
@@ -958,9 +962,42 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto tidE = dims[batchCount + 1];
     auto iE = dims[batchCount + 2];
     auto jE = dims[batchCount + 3];
+    mlir::AffineExpr rowE, colE;
 
-    auto rowE = byE + tidE.floorDiv(this->blockOX) * cfg["OTr"] + iE;
-    auto colE = (tidE % this->blockOX) * cfg["OTc"] + jE;
+    if (!useSplitKPV) {
+      int64_t BLOY = cfg["BLOCK_LAYOUT_O_Y"];
+      int64_t BLOX = cfg["BLOCK_LAYOUT_O_X"];
+      int64_t WLOY = cfg["WARP_LAYOUT_O_Y"];
+      int64_t WLOX = cfg["WARP_LAYOUT_O_X"];
+      int64_t BSWP = cfg["BLOCK_SCATTER_WIDTH_P"];
+      int64_t BSWV = cfg["BLOCK_SCATTER_WIDTH_V"];
+      int64_t WSWP = cfg["WARP_SCATTER_WIDTH_P"];
+      int64_t WSWV = cfg["WARP_SCATTER_WIDTH_V"];
+      int64_t WARP_SZ = cfg["WARP_SIZE"];
+
+      auto warp_y = tools::mapUtils::wapr_y(tidE, WARP_SZ, BLOX);
+      auto warp_x = tools::mapUtils::wapr_x(tidE, WARP_SZ, BLOX);
+      auto lane_y = tools::mapUtils::lane_y(tidE, WARP_SZ, WLOX);
+      auto lane_x = tools::mapUtils::lane_x(tidE, WARP_SZ, WLOX);
+
+      auto blockRepQ = iE.floorDiv(BSWP);
+      auto warpRepQ = (iE % BSWP).floorDiv(WSWP);
+      auto iterQ = iE % WSWP;
+
+      auto blockRepK = jE.floorDiv(BSWV);
+      auto warpRepK = (jE % BSWV).floorDiv(WSWV);
+      auto iterK = jE % WSWV;
+
+      auto ty = (blockRepQ * BLOY + warp_y) * WLOY * BSWP
+              + (warpRepQ * WLOY + lane_y) * WSWP + iterQ;
+      auto tx = (blockRepK * BLOX + warp_x) * WLOX * BSWV
+              + (warpRepK * WLOX + lane_x) * WSWV + iterK;
+      rowE = byE + ty;
+      colE = tx;
+    } else {
+      rowE = byE + tidE.floorDiv(this->blockOX) * cfg["OTr"] + iE;
+      colE = (tidE % this->blockOX) * cfg["OTc"] + jE;
+    }
 
     llvm::SmallVector<mlir::AffineExpr> globExprs;
     for (int i = 0; i < batchCount; i++) globExprs.push_back(dims[i]);
@@ -979,7 +1016,15 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
     writeBuilder.create<mlir::affine::AffineStoreOp>(loc, oVal, O, globMap, stOps);
 
-    Rewriter::vectorize(oLoops.back(), cfg["WARP_SCATTER_WIDTH_V"]);
+    // NOTE:
+    // For the non-SPLITK path we now use a decomposed O-layout mapping where the
+    // innermost j loop is no longer linear-contiguous in global memory (contains
+    // floorDiv/mod decomposition). Vectorizing this loop can generate invalid
+    // vector accesses and corrupt output.
+    // Keep vectorize only on SPLITK path where the compact linear mapping is used.
+    if (useSplitKPV) {
+      Rewriter::vectorize(oLoops.back(), cfg["WARP_SCATTER_WIDTH_V"]);
+    }
 
     // Erase matmul2's original ttileyDown write-back (from bufferize).
     // Our 6-level output write loop handles the output correctly.

@@ -323,13 +323,9 @@ std::vector<mlir::affine::AffineForOp> GemmStatsOptimizer::reduceAndBraodcast(ml
   mlir::OpBuilder builder = getBuilder(localtionOp, Position::after);
   auto warpLevelForOp = warpReduce(builder, ydim, width, regBufs, onlineSoftmax);
   auto blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
-  // Broadcast both max and sum inside each lane_x group.
-  // Later global writes are indexed by (warp_y, lane_y, ...), i.e. lane_x-collapsed.
-  // If regSum is not broadcast here, different lane_x in the same group can race-write
-  // different partial sums to the same output row, which is especially visible on wave64.
-  // [bzf] fixme: why only broadcast regBufs[0] ?
-  // auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
-  auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0]}, /*index*/0);
+  // Broadcast both rowMax and rowSum inside each lane_x group.
+  // Global em/denom writes are lane_x-collapsed, so regMax/regSum must be consistent.
+  auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
   return std::vector<mlir::affine::AffineForOp>{warpLevelForOp, blockLevelForOp, bcForOp};
 }
 
