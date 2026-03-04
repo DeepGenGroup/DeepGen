@@ -1,7 +1,7 @@
 import time
 import glob
 import uuid
-from typing import Generator
+from typing import Generator, List, Optional, Tuple
 import multiprocessing
 from kcg.Kernel import *
 import kcg.Operators.matmul as kcg_mm
@@ -245,22 +245,34 @@ _dtype_map = {
     "bf16": torch.bfloat16,
 }
 
-def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32) -> TsGeneratorType :
+def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32, seqlen: Optional[int] = None) -> TsGeneratorType :
     if OpTy is kcg_mm.MatmulOp :
         import kcg.tuning.NewCfgTest as ns_mm
         return ns_mm.getTuneSpace(cfgPath)
     if OpTy is kcg_att.AttentionOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace([1, 32, 2048, 64],cfgPath,[], torch_dtype)
+        shape = [1, 32, 2048, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype)
     if OpTy is kcg_att_v2.AttentionV2Op :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace([1, 32, 2048, 64],cfgPath,[], torch_dtype)
+        shape = [1, 32, 2048, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype)
     if OpTy is kcg_att_split.AttentionSplitOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace([1, 32, 2048, 64],cfgPath,[], torch_dtype)
+        shape = [1, 32, 2048, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype)
     if OpTy is kcg_att_gemma2.Gemma2SplitOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace([1, 32, 4096, 64],cfgPath,[], torch_dtype)
+        shape = [1, 32, 4096, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype)
     if OpTy is kcg_att_h2o.H2OSplitOp :
         import json, tempfile
         import kcg.tuning.attn_FP32_test as ns_attentiopn
@@ -269,7 +281,10 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
         sub_cfg = full_cfg.get("k3", full_cfg)
         tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(sub_cfg, tmp); tmp.flush(); tmp.close()
-        return ns_attentiopn.getTuneSpace([1, 32, 4096, 64], tmp.name, [], torch_dtype)
+        shape = [1, 32, 4096, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return ns_attentiopn.getTuneSpace(shape, tmp.name, [], torch_dtype)
     if OpTy in (kcg_att_h2o.H2OK1Op, kcg_att_h2o.H2OK2Op, kcg_att_h2o.H2OK3Op):
         import json, tempfile
         import kcg.tuning.attn_FP32_test as ns_attentiopn
@@ -300,7 +315,10 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
                 config[new_name] = config.pop(old_name)
                 info.tsArgs = [shape, config]
                 yield info
-        return _rename_gen(ns_attentiopn.getTuneSpace([1, 32, 4096, 64], tmp.name, [], torch_dtype), tag)
+        shape = [1, 32, 4096, 64]
+        if seqlen is not None:
+            shape[2] = seqlen
+        return _rename_gen(ns_attentiopn.getTuneSpace(shape, tmp.name, [], torch_dtype), tag)
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'
     
 
@@ -361,31 +379,70 @@ _opty_map = {
     "h2o_k3": kcg_att_h2o.H2OK3Op,
 }
 
+def _extract_int_flag(argv: List[str], flag_name: str) -> Tuple[List[str], Optional[int]]:
+    """Extract an int flag from argv (supports --name N and --name=N)."""
+    out: List[str] = []
+    value: Optional[int] = None
+    i = 0
+    while i < len(argv):
+        tok = argv[i]
+        if tok == flag_name:
+            if i + 1 >= len(argv):
+                raise ValueError(f"missing value after {flag_name}")
+            if value is not None:
+                raise ValueError(f"duplicated flag {flag_name}")
+            value = int(argv[i + 1])
+            i += 2
+            continue
+        if tok.startswith(flag_name + "="):
+            if value is not None:
+                raise ValueError(f"duplicated flag {flag_name}")
+            value = int(tok.split("=", 1)[1])
+            i += 1
+            continue
+        out.append(tok)
+        i += 1
+    return out, value
+
 def getInputs() :
-    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|gemma2_split|h2o_split|h2o_k1|h2o_k2|h2o_k3)] [devId(int)] [dtype(float32|float16)]" 
-    if len(sys.argv) < 4 :
+    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|gemma2_split|h2o_split|h2o_k1|h2o_k2|h2o_k3)] [devId(int)] [dtype(float32|float16)] [--seqlen int]"
+    argv = sys.argv[1:]
+    try:
+        argv, seqlen = _extract_int_flag(argv, "--seqlen")
+    except ValueError as e:
+        print(helpmsg)
+        raise
+
+    if len(argv) < 4 :
         print(helpmsg)
         assert False, f"invalid input args. {helpmsg}"
         
-    cfgFile = sys.argv[1]
-    result_json_path = sys.argv[2]
-    start = int(sys.argv[3])
-    maxCount = int(sys.argv[4])
-    if len(sys.argv) > 5:
-        checktflops, checkAcc = int(sys.argv[5]) > 0 , float(sys.argv[6])
+    cfgFile = argv[0]
+    result_json_path = argv[1]
+    start = int(argv[2])
+    maxCount = int(argv[3])
+
+    if len(argv) >= 6:
+        checktflops, checkAcc = int(argv[4]) > 0 , float(argv[5])
+    elif len(argv) >= 5:
+        print(helpmsg)
+        assert False, f"invalid input args (missing checkAcc). {helpmsg}"
     else:
         checktflops, checkAcc = True, 0
-    opty_name = sys.argv[7] if len(sys.argv) > 7 else "attn_v1"
+
+    opty_name = argv[6] if len(argv) >= 7 else "attn_v1"
     assert opty_name in _opty_map, f"invalid opty '{opty_name}', must be one of {list(_opty_map.keys())}"
     opty = _opty_map[opty_name]
-    devId = int(sys.argv[8]) if len(sys.argv) > 8 else 7
-    dtype_name = sys.argv[9] if len(sys.argv) > 9 else "float32"
+    devId = int(argv[7]) if len(argv) >= 8 else 7
+    dtype_name = argv[8] if len(argv) >= 9 else "float32"
     assert dtype_name in _dtype_map, f"invalid dtype '{dtype_name}', must be one of {list(_dtype_map.keys())}"
     torch_dtype = _dtype_map[dtype_name]
-    return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype)
+    if seqlen is not None and seqlen <= 0:
+        raise ValueError("--seqlen must be > 0")
+    return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen)
 
 def main():
-    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype = getInputs()
+    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen = getInputs()
     print(f"[Info] opty = {opty.__name__}, devId = {devId}, dtype = {torch_dtype}")
 
     if is_hip():
@@ -401,13 +458,13 @@ def main():
     os.makedirs(f"{PathManager().pikle_dir()}/{devId}/{task_id}", exist_ok=True)
     print("get_tune_space",flush=True)
     tssize = 0
-    for c in  get_tuning_space(opty, cfgFile, torch_dtype):
+    for c in  get_tuning_space(opty, cfgFile, torch_dtype, seqlen=seqlen):
         tssize += 1
     print(f"==== tune space size = {tssize}")
     
     # return
     print("=== checktflops, checkAcc",checktflops, checkAcc)
-    ts = get_tuning_space(opty, cfgFile, torch_dtype)
+    ts = get_tuning_space(opty, cfgFile, torch_dtype, seqlen=seqlen)
     bc = BenchmarkConfig()
     bc.keepTopNum = 10
     bc.max_kernel_per_iter = 80
