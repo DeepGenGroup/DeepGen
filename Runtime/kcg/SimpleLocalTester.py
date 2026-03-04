@@ -183,6 +183,19 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
                 acc = t0 / t
                 print(f"Test Correct! {funName} , speedup = {acc}")
             else:
+                abs_diff = torch.abs(r - r0)
+                max_abs_err = abs_diff.max().item()
+                rel_diff = abs_diff / (torch.abs(r0) + 1e-8)
+                max_rel_err = rel_diff.max().item()
+                total = r.numel()
+                for thr in [1e-2, 1e-3, 1e-4]:
+                    cnt = int((abs_diff > thr).sum().item())
+                    print(f"[err-dist] abs_err > {thr:.0e}: {cnt}/{total} ({100.0*cnt/total:.2f}%)")
+                pcts = [50, 90, 95, 99, 99.9, 100]
+                q_vals = torch.quantile(abs_diff.float().flatten(), torch.tensor([p/100.0 for p in pcts], device=abs_diff.device))
+                for p, qv in zip(pcts, q_vals):
+                    print(f"[err-dist] P{p}={qv.item():.6e}")
+                print(f"Test Error! {funName} max_abs_err={max_abs_err:.6e} max_rel_err={max_rel_err:.6e}")
                 print(f"Test Error! {funName} r= {r} , r0 = {r0}")
             # save result
 
