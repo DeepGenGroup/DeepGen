@@ -154,10 +154,14 @@ class CreateAttnConfig:
       rep_p_x = (old[2][1] // old[4][5]) * (old[4][5] // old[4][7])  # (ptc / bswk) * (bswk / wswk)
       rep_o_y = (old[2][2] // old[5][4]) * (old[5][4] // old[5][6])  # (otr / bswp) * (bswp / wswp)
       rep_o_x = (old[2][3] // old[5][5]) * (old[5][5] // old[5][7])  # (otc / bswv) * (bswv / wswv)
+      # NOTE:
+      # This heuristic is used as a coarse pruning step. Using warp_size(64 on DCU)
+      # here over-prunes valid layouts for current H2O tuning spaces and can make
+      # the tune-space empty. Keep the legacy 32-lane normalization for pruning.
       best_rep_p_y = (old[4][2] * old[2][0] * (4 // self.type_width)) // 32  # wly * ptr * (fp32w / typew) / 32
-      best_rep_p_x = (old[4][3] * old[2][1] * (4 // self.type_width)) // 32  # wly * ptr * (fp32w / typew) / 32
+      best_rep_p_x = (old[4][3] * old[2][1] * (4 // self.type_width)) // 32  # wlx * ptc * (fp32w / typew) / 32
       best_rep_o_y = (old[5][2] * old[2][2] * (4 // self.type_width)) // 32  # wly * otr * (fp32w / typew) / 32
-      best_rep_o_x = (old[5][3] * old[2][3] * (4 // self.type_width)) // 32  # wly * otc * (fp32w / typew) / 32
+      best_rep_o_x = (old[5][3] * old[2][3] * (4 // self.type_width)) // 32  # wlx * otc * (fp32w / typew) / 32
       best_rep_p_y = 1 if best_rep_p_y == 0 else best_rep_p_y
       best_rep_p_x = 1 if best_rep_p_x == 0 else best_rep_p_x
       best_rep_o_y = 1 if best_rep_o_y == 0 else best_rep_o_y
@@ -175,9 +179,9 @@ class CreateAttnConfig:
     result = self.layoutAndScatterO(result)
     result = self.storeSizeAndOther(result)
     result = self.cut(result)
-    if len(result):
-      return result
-    return None
+    # Keep return type stable: no valid cfg -> empty list (not None),
+    # so callers can iterate safely without TypeError.
+    return result
 
  
 class CreateConfig:
@@ -352,6 +356,8 @@ def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128], type_width : int = 4
   print(f"attn Hd = {cfg_dict['Hd']}",flush=True)
   cc = CreateAttnConfig(cfg_dict, shape, type_width=type_width)
   cfgs = cc.main()
+  if len(cfgs) == 0:
+    print(f"[Warn] no valid attention tuning cfg generated for shape={shape} from {cfgfilepath}", flush=True)
   return cfgs
 
 def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : torch.dtype = torch.float32) -> TsGeneratorType : 
@@ -362,6 +368,9 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : t
   type_width = sizeof(enum_dtype)
   if len(cfgs) <= 0:
     cfgs = get_cfgs(cfgfile, shape, type_width)
+  if len(cfgs) <= 0:
+    print("[Warn] empty tune space, skip iteration.", flush=True)
+    return
   for cfg in cfgs:
     (th_num, (br, bc, hd, s1, s2), (ptr, ptc, otr, otc), (glwq, glwk, glwv), (bly_p, blx_p, wly_p, wlx_p, bswq_p, bswk_p, wswq_p, wswk_p), 
     (bly_o, blx_o, wly_o, wlx_o, bswp_o, bswv_o, wswp_o, wswv_o), (unroll, warp_size, load_continuous_p, load_continuous_o, sm_prefetch_p, reg_prefetch_p, reg_prefetch_o, shuffle_p, splitk_pv), smem_size) = cfg

@@ -593,7 +593,11 @@ std::vector<mlir::affine::AffineForOp> FlashAttnOptimizer::reduceAndBraodcast(ml
   auto warpLevelForOp = warpReduce(builder, ydim, width, regBufs, onlineSoftmax);
   // create block level ops
   auto blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
-  // broadcast rowMax to each row elem
+  // Broadcast both rowMax and rowSum inside each lane_x group.
+  // The factor load map for tileO update is lane_x-collapsed (indexed by lane_y),
+  // so regSum must also be uniform across lane_x to avoid wave64 inconsistencies.
+  // [bzf] fixme: why only broadcast regBufs[0] ?
+  // auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
   auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0]}, /*index*/0);
   return std::vector<mlir::affine::AffineForOp>{warpLevelForOp, blockLevelForOp, bcForOp};
 }

@@ -627,6 +627,9 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
           auto shfl = wb.create<mlir::gpu::ShuffleOp>(
               loc, val.getResult(), distI32, widthI32, mlir::gpu::ShuffleMode::DOWN);
           auto sum = wb.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
+
+          // auto added = wb.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
+          // auto sum = wb.create<mlir::arith::SelectOp>(loc, shfl.getResult(1), added, val.getResult());
           wb.create<mlir::affine::AffineStoreOp>(
               loc, sum, regRowSum, mlir::ValueRange{rIdx});
         }

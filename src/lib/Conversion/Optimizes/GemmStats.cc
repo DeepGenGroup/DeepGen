@@ -323,6 +323,12 @@ std::vector<mlir::affine::AffineForOp> GemmStatsOptimizer::reduceAndBraodcast(ml
   mlir::OpBuilder builder = getBuilder(localtionOp, Position::after);
   auto warpLevelForOp = warpReduce(builder, ydim, width, regBufs, onlineSoftmax);
   auto blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
+  // Broadcast both max and sum inside each lane_x group.
+  // Later global writes are indexed by (warp_y, lane_y, ...), i.e. lane_x-collapsed.
+  // If regSum is not broadcast here, different lane_x in the same group can race-write
+  // different partial sums to the same output row, which is especially visible on wave64.
+  // [bzf] fixme: why only broadcast regBufs[0] ?
+  // auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
   auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0]}, /*index*/0);
   return std::vector<mlir::affine::AffineForOp>{warpLevelForOp, blockLevelForOp, bcForOp};
 }
@@ -632,6 +638,19 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
     mlir::OpBuilder emBuilder = getBuilder(blForOps.front(), Position::after);
     auto loc = emBuilder.getUnknownLoc();
+
+    // Guard write-back to avoid lane_x write races on wave64:
+    // global row mapping collapses lane_x, so only one lane_x should store.
+    int64_t WLP_X = cfg["WARP_LAYOUT_P_X"];
+    if (WLP_X > 1) {
+      mlir::Value tid = this->threadIdx.getIVs()[0];
+      auto gd0 = emBuilder.getAffineDimExpr(0);
+      auto modExpr = gd0 % WLP_X;
+      auto intSet = mlir::IntegerSet::get(1, 0, {modExpr}, {true});
+      auto ifOp = emBuilder.create<mlir::affine::AffineIfOp>(
+          loc, intSet, mlir::ValueRange{tid}, false);
+      emBuilder.setInsertionPointToStart(ifOp.getThenBlock());
+    }
 
     llvm::SmallVector<int64_t> lbs{0, 0, 0};
     llvm::SmallVector<int64_t> ubs{blockRepeatQ, warpRepeatQ, cfg["WARP_SCATTER_WIDTH_Q"]};
