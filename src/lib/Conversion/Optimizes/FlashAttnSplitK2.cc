@@ -329,18 +329,19 @@ void FlashAttnSplitK2Optimizer::computeTuneArgs() {
   this->globLoadAllWidthK = this->threadNum * cfg.at("GLOB_LOAD_WIDTH_K");
   this->globLoadAllWidthV = this->threadNum * cfg.at("GLOB_LOAD_WIDTH_V");
 
+  bool layoutOk = (
+    cfg.at("BLOCK_LAYOUT_P_X") == 1 &&
+    cfg.at("PTr") == cfg.at("OTr") &&
+    cfg.at("BLOCK_LAYOUT_P_Y") == cfg.at("BLOCK_LAYOUT_O_Y") &&
+    cfg.at("BLOCK_LAYOUT_P_X") == cfg.at("BLOCK_LAYOUT_O_X") &&
+    cfg.at("WARP_LAYOUT_P_Y") == cfg.at("WARP_LAYOUT_O_Y") &&
+    cfg.at("WARP_LAYOUT_P_X") == cfg.at("WARP_LAYOUT_O_X") &&
+    cfg.at("BLOCK_SCATTER_WIDTH_Q") == cfg.at("BLOCK_SCATTER_WIDTH_P") &&
+    cfg.at("WARP_SCATTER_WIDTH_Q") == cfg.at("WARP_SCATTER_WIDTH_P")
+  );
+
   this->useShuffleP = false;
   if (cfg.count("SHUFFLE_P") && cfg.at("SHUFFLE_P") == 1) {
-    bool layoutOk = (
-      cfg.at("BLOCK_LAYOUT_P_X") == 1 &&
-      cfg.at("PTr") == cfg.at("OTr") &&
-      cfg.at("BLOCK_LAYOUT_P_Y") == cfg.at("BLOCK_LAYOUT_O_Y") &&
-      cfg.at("BLOCK_LAYOUT_P_X") == cfg.at("BLOCK_LAYOUT_O_X") &&
-      cfg.at("WARP_LAYOUT_P_Y") == cfg.at("WARP_LAYOUT_O_Y") &&
-      cfg.at("WARP_LAYOUT_P_X") == cfg.at("WARP_LAYOUT_O_X") &&
-      cfg.at("BLOCK_SCATTER_WIDTH_Q") == cfg.at("BLOCK_SCATTER_WIDTH_P") &&
-      cfg.at("WARP_SCATTER_WIDTH_Q") == cfg.at("WARP_SCATTER_WIDTH_P")
-    );
     if (layoutOk) {
       this->useShuffleP = true;
       llvm::errs() << "[opt] useShuffleP=1: skipping smP, using warp shuffle\n";
@@ -351,16 +352,6 @@ void FlashAttnSplitK2Optimizer::computeTuneArgs() {
 
   this->useSplitKPV = false;
   if (cfg.count("SPLITK_PV") && cfg.at("SPLITK_PV") == 1) {
-    bool layoutOk = (
-      cfg.at("BLOCK_LAYOUT_P_X") == 1 &&
-      cfg.at("PTr") == cfg.at("OTr") &&
-      cfg.at("BLOCK_LAYOUT_P_Y") == cfg.at("BLOCK_LAYOUT_O_Y") &&
-      cfg.at("BLOCK_LAYOUT_P_X") == cfg.at("BLOCK_LAYOUT_O_X") &&
-      cfg.at("WARP_LAYOUT_P_Y") == cfg.at("WARP_LAYOUT_O_Y") &&
-      cfg.at("WARP_LAYOUT_P_X") == cfg.at("WARP_LAYOUT_O_X") &&
-      cfg.at("BLOCK_SCATTER_WIDTH_Q") == cfg.at("BLOCK_SCATTER_WIDTH_P") &&
-      cfg.at("WARP_SCATTER_WIDTH_Q") == cfg.at("WARP_SCATTER_WIDTH_P")
-    );
     if (layoutOk) {
       this->useSplitKPV = true;
       this->useShuffleP = false;
@@ -369,6 +360,21 @@ void FlashAttnSplitK2Optimizer::computeTuneArgs() {
       llvm::errs() << "[opt] SPLITK_PV=1 requested but layout constraints not met, falling back to smP\n";
     }
   }
+
+  // wave64 policy:
+  // Keep default path on smP for correctness across configs.
+  // (shuffle/split-k can be re-enabled only after full validation matrix.)
+  bool wave64 = cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32;
+  if (wave64) {
+    if (this->useShuffleP || this->useSplitKPV) {
+      this->useShuffleP = false;
+      this->useSplitKPV = false;
+      llvm::errs() << "[opt] wave64 default path=smp: disable SHUFFLE_P/SPLITK_PV\n";
+    }
+  }
+  llvm::errs() << "[opt] splitk2 path="
+               << (this->useSplitKPV ? "splitk" : (this->useShuffleP ? "shuffle" : "smp"))
+               << " WARP_SIZE=" << cfg.at("WARP_SIZE") << "\n";
 }
 
 void FlashAttnSplitK2Optimizer::parseFuncArgs(mlir::func::FuncOp funcOp) {
@@ -781,7 +787,13 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       rtsOperands.push_back(ks[i].getInductionVar());
     }
     Rewriter::cache_write(ks_inner, midBuf, smP, tilePToSmPMap, rtsOperands);
-    Rewriter::vectorize(ks_inner, cfg["WARP_SCATTER_WIDTH_K"]);
+    // wave64 backend may mis-lower this vectorized shared-memory store pattern.
+    // Keep scalar store on wave64 for correctness.
+    if (cfg["WARP_SIZE"] <= 32) {
+      Rewriter::vectorize(ks_inner, cfg["WARP_SCATTER_WIDTH_K"]);
+    } else {
+      llvm::errs() << "[opt] wave64: skip tileP->smP vectorize\n";
+    }
     Rewriter::barrier(qs_outer, Position::after);
   }
   LOG_DEBUG("===== split & reorder tileP to smP =======\n",module);

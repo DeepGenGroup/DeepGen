@@ -322,7 +322,22 @@ std::vector<mlir::affine::AffineForOp> GemmStatsOptimizer::reduceAndBraodcast(ml
   mlir::Value tid = this->threadIdx.getIVs()[0];
   mlir::OpBuilder builder = getBuilder(localtionOp, Position::after);
   auto warpLevelForOp = warpReduce(builder, ydim, width, regBufs, onlineSoftmax);
-  auto blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
+  mlir::affine::AffineForOp blockLevelForOp;
+  // Wave64-safe path:
+  // The generic blockReduce stage may remap shared accesses in a backend-
+  // sensitive way. For this attention-split config, rows are already lane_x-
+  // grouped and fully reduced by warpReduce(width=blockPX). Keep a no-op
+  // placeholder loop to preserve downstream split/map pipeline shape.
+  if (cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32) {
+    auto nopBody = [&](mlir::OpBuilder &b, mlir::Location l, mlir::Value, mlir::ValueRange) {
+      b.create<mlir::affine::AffineYieldOp>(l);
+    };
+    blockLevelForOp = builder.create<mlir::affine::AffineForOp>(
+        builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange{}, nopBody);
+    llvm::errs() << "[opt] GemmStats wave64: skip blockReduce (warpReduce-only safe path)\n";
+  } else {
+    blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
+  }
   // Broadcast both rowMax and rowSum inside each lane_x group.
   // Global em/denom writes are lane_x-collapsed, so regMax/regSum must be consistent.
   auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
@@ -580,13 +595,19 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // smMax/smSum/regMax/regSum initialization
-  // smMax/smSum: at threadIdx scope (shared, init once per block)
-  // regMax/regSum: ALSO at threadIdx scope (local, init once per thread BEFORE blockx loop)
+  bool wave64NoBlockReduce = (cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32);
+
+  // regMax/regSum initialization at thread scope (init once per thread BEFORE blockx loop)
   // This lets the online reduce accumulate across ALL blockx iterations.
-  auto smMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["Br"]}, threadIdx, MemorySpace::shared);
   auto regMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["PTr"]}, threadIdx, MemorySpace::local);
-  auto smMax = smMaxAndSum[0], smSum = smMaxAndSum[1], regMax = regMaxAndSum[0], regSum = regMaxAndSum[1];
+  auto regMax = regMaxAndSum[0], regSum = regMaxAndSum[1];
+  mlir::Value smMax, smSum;
+  if (!wave64NoBlockReduce) {
+    // Shared block-level buffers are only needed when blockReduce is enabled.
+    auto smMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["Br"]}, threadIdx, MemorySpace::shared);
+    smMax = smMaxAndSum[0];
+    smSum = smMaxAndSum[1];
+  }
   LOG_DEBUG("===== createSMAndRegInitBuf =======\n",module);
 
   // Cache read/write for max/sum: replace maxBuf/sumBuf with regMax/regSum
@@ -602,26 +623,37 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   // reduceAndBraodcast: AFTER blockx loop (not inside it!)
   // Each thread has accumulated partial max/sum across all blockx iterations.
   // Now combine across threads via warp/block reduce.
-  auto softmaxForOps = reduceAndBraodcast(xBlockFors[0].getOperation(), {regMax, regSum}, {smMax, smSum, smFactor});
+  std::vector<mlir::Value> softmaxSmBufs;
+  if (!wave64NoBlockReduce) softmaxSmBufs = {smMax, smSum, smFactor};
+  auto softmaxForOps = reduceAndBraodcast(xBlockFors[0].getOperation(), {regMax, regSum}, softmaxSmBufs);
   LOG_DEBUG("===== add warp level and block level ops of max and sum =======\n",module);
 
-  // blockLevel reduce split and map patching
-  auto blForOps = Rewriter::split(softmaxForOps[1], widthsQ);
-  auto blSmMap = getBlockLevelSmMap(builder);
-  auto blRegMap = getBlockLevelRegMap(builder);
-  llvm::SmallVector<mlir::Value> blRegOperands;
-  for (auto bl : blForOps) { blRegOperands.push_back(bl.getInductionVar()); }
-  llvm::SmallVector<mlir::Value> blSmOperands(blRegOperands);
-  blSmOperands.insert(blSmOperands.begin(), tIdx[0]);
-  Rewriter::cache_read(blForOps.back(), smMax, smMax, blSmMap, blSmOperands);
-  Rewriter::cache_read(blForOps.back(), smSum, smSum, blSmMap, blSmOperands);
-  Rewriter::cache_read(blForOps.back(), regMax, regMax, blRegMap, blRegOperands);
-  Rewriter::cache_read(blForOps.back(), regSum, regSum, blRegMap, blRegOperands);
-  Rewriter::cache_write(blForOps.back(), smMax, smMax, blSmMap, blSmOperands);
-  Rewriter::cache_write(blForOps.back(), smSum, smSum, blSmMap, blSmOperands);
-  Rewriter::cache_write(blForOps.back(), smFactor, smFactor, blSmMap, blSmOperands);
-  Rewriter::cache_write(blForOps.back(), regMax, regMax, blRegMap, blRegOperands);
-  LOG_DEBUG("===== split block level forop and amend map of reg and sm =======\n",module);
+  mlir::Operation* emWriteAnchor = nullptr;
+  if (!wave64NoBlockReduce) {
+    // blockLevel reduce split and map patching
+    auto blForOps = Rewriter::split(softmaxForOps[1], widthsQ);
+    auto blSmMap = getBlockLevelSmMap(builder);
+    auto blRegMap = getBlockLevelRegMap(builder);
+    llvm::SmallVector<mlir::Value> blRegOperands;
+    for (auto bl : blForOps) { blRegOperands.push_back(bl.getInductionVar()); }
+    llvm::SmallVector<mlir::Value> blSmOperands(blRegOperands);
+    blSmOperands.insert(blSmOperands.begin(), tIdx[0]);
+    Rewriter::cache_read(blForOps.back(), smMax, smMax, blSmMap, blSmOperands);
+    Rewriter::cache_read(blForOps.back(), smSum, smSum, blSmMap, blSmOperands);
+    Rewriter::cache_read(blForOps.back(), regMax, regMax, blRegMap, blRegOperands);
+    Rewriter::cache_read(blForOps.back(), regSum, regSum, blRegMap, blRegOperands);
+    Rewriter::cache_write(blForOps.back(), smMax, smMax, blSmMap, blSmOperands);
+    Rewriter::cache_write(blForOps.back(), smSum, smSum, blSmMap, blSmOperands);
+    Rewriter::cache_write(blForOps.back(), smFactor, smFactor, blSmMap, blSmOperands);
+    Rewriter::cache_write(blForOps.back(), regMax, regMax, blRegMap, blRegOperands);
+    emWriteAnchor = blForOps.front().getOperation();
+    LOG_DEBUG("===== split block level forop and amend map of reg and sm =======\n",module);
+  } else {
+    // In wave64 safe path, blockReduce is skipped entirely, so keep write-back
+    // anchored after warpBroadcast to avoid injecting stale block-level remaps.
+    emWriteAnchor = softmaxForOps.back().getOperation();
+    llvm::errs() << "[opt] GemmStats wave64: skip block-level remap for smMax/smSum\n";
+  }
 
   // ====== Write em and denom to global memory ======
   {
@@ -632,13 +664,15 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto regIdxExpr = d0 * cfg["BLOCK_SCATTER_WIDTH_Q"] + d1 * cfg["WARP_SCATTER_WIDTH_Q"] + d2;
     auto regIdxMap = mlir::AffineMap::get(3, 0, {regIdxExpr}, builder.getContext());
 
-    mlir::OpBuilder emBuilder = getBuilder(blForOps.front(), Position::after);
+    mlir::OpBuilder emBuilder = getBuilder(emWriteAnchor, Position::after);
     auto loc = emBuilder.getUnknownLoc();
 
-    // Guard write-back to avoid lane_x write races on wave64:
-    // global row mapping collapses lane_x, so only one lane_x should store.
+    // Guard write-back to avoid lane_x write races.
+    // For wave64 backends, keep all-lane write-back as a correctness fallback:
+    // regMax/regSum are already warpBroadcast-synchronized across lane_x, so
+    // duplicate stores write identical values.
     int64_t WLP_X = cfg["WARP_LAYOUT_P_X"];
-    if (WLP_X > 1) {
+    if (!wave64NoBlockReduce && WLP_X > 1) {
       mlir::Value tid = this->threadIdx.getIVs()[0];
       auto gd0 = emBuilder.getAffineDimExpr(0);
       auto modExpr = gd0 % WLP_X;
@@ -646,6 +680,8 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       auto ifOp = emBuilder.create<mlir::affine::AffineIfOp>(
           loc, intSet, mlir::ValueRange{tid}, false);
       emBuilder.setInsertionPointToStart(ifOp.getThenBlock());
+    } else if (wave64NoBlockReduce) {
+      llvm::errs() << "[opt] GemmStats wave64: disable lane_x write guard for em/denom\n";
     }
 
     llvm::SmallVector<int64_t> lbs{0, 0, 0};
