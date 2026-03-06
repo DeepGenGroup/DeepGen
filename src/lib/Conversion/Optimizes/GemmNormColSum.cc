@@ -294,6 +294,9 @@ void GemmNormColSumOptimizer::moveMemrefDefineAhead(mlir::Operation* threadParal
 void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   mlir::ModuleOp module = mlir::dyn_cast<mlir::ModuleOp>(funcOp->getParentOp());
   mlir::OpBuilder builder(module);
+  bool wave64SafeRowSum = cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32;
+  bool useWave64DirectScore =
+      wave64SafeRowSum && cfg.count("CAUSAL_MASK") && cfg.at("CAUSAL_MASK");
 
   // tileP bufferize
   std::vector<mlir::affine::AffineForOp> tilePLoops{yTileForOps[0], xTileForOps[0]};
@@ -319,6 +322,12 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   std::vector<std::string> smDescs{"smK", "smQ"};
   auto sm = Rewriter::allocBuffers(smShapes, smType, MemorySpace::shared, smDescs, blockIdx);
   auto smK = sm[0], smQ = sm[1];
+  mlir::Value smQFix;
+  if (useWave64DirectScore) {
+    smQFix = Rewriter::allocBuffers({{cfg.at("Hd")}},
+                                    {dtypeQ},
+                                    MemorySpace::shared, {"smQFix"}, blockIdx)[0];
+  }
 
   std::vector<std::vector<int64_t>> regShapes{
     {globLoadTotalWidthK}, {globLoadTotalWidthQ}, {cfg.at("PTr")}, {cfg.at("PTc")}
@@ -327,6 +336,13 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   std::vector<std::string> regDescs{"tempK", "tempQ", "regK", "regQ"};
   auto reg = Rewriter::allocBuffers(regShapes, regDTypes, MemorySpace::local, regDescs, this->xBlockFors[0]);
   auto tempK = reg[0], tempQ = reg[1], regK = reg[2], regQ = reg[3];
+  mlir::Value scoreAccWave64;
+  if (useWave64DirectScore) {
+    scoreAccWave64 = Rewriter::allocBuffers(
+        {{1}},
+        {dtypeMid},
+        MemorySpace::local, {"scoreAccWave64"}, this->xBlockFors[0])[0];
+  }
   LOG_DEBUG("===== after alloc_buffer =======\n",module);
 
   // smKFull allocation (K is pre-loaded like Q in GemmStats)
@@ -340,7 +356,7 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   }
   LOG_DEBUG("===== after alloc smKFull =======\n",module);
 
-  // regRowSum allocation: per-thread accumulator for row_sum along PTr
+  // regRowSum allocation for row_sum along PTr
   auto regRowSum = Rewriter::allocBuffers({{cfg.at("PTr")}},
                                            {dtypeMid},
                                            MemorySpace::local, {"regRowSum"}, blockIdx)[0];
@@ -359,6 +375,7 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
   auto bIdx = Analyzer::getParallelIdx(this->blockIdx);
   auto tIdx = Analyzer::getParallelIdx(this->threadIdx);
+  int batchCount = (int)bIdx.size() - 1;
 
   // ====== K PROLOGUE: load entire K tile into smKFull[Hd×Br] before the blockx loop ======
   auto loadTileKMap = getGlobQKToTempQKMap(builder, "K");
@@ -405,9 +422,38 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   LOG_DEBUG("===== K prologue done =======\n",module);
 
   // ====== Q loading: Q is loaded inside k1_outer (inner dimension) ======
+  auto loadTileQMap = getGlobQKToTempQKMap(builder, "Q");
+  if (useWave64DirectScore) {
+    mlir::OpBuilder qFixBuilder = getBuilder(k1_outer, Position::before);
+    auto loc = qFixBuilder.getUnknownLoc();
+    auto fixColConst =
+        qFixBuilder.create<mlir::arith::ConstantIndexOp>(loc, cfg.at("WARP_SCATTER_WIDTH_K"));
+    auto d0 = qFixBuilder.getAffineDimExpr(0);
+    auto validTidSet = mlir::IntegerSet::get(
+        1, 0, {qFixBuilder.getAffineConstantExpr(headDim - 1) - d0}, {false});
+    auto qFixIf = qFixBuilder.create<mlir::affine::AffineIfOp>(
+        loc, validTidSet, mlir::ValueRange{tIdx[0]}, false);
+    mlir::OpBuilder thenB = mlir::OpBuilder::atBlockBegin(qFixIf.getThenBlock());
+
+    auto fixColGlobal = thenB.create<mlir::arith::AddIOp>(
+        loc, xBlockFors[0].getInductionVar(), fixColConst);
+    llvm::SmallVector<mlir::Value> qIdxs;
+    qIdxs.reserve(batchCount + 2);
+    for (int bi = 0; bi < batchCount; ++bi) {
+      qIdxs.push_back(bIdx[bi]);
+    }
+    qIdxs.push_back(tIdx[0]);
+    qIdxs.push_back(fixColGlobal);
+    auto qFixVal = thenB.create<mlir::memref::LoadOp>(loc, Q, qIdxs);
+    thenB.create<mlir::affine::AffineStoreOp>(loc, qFixVal, smQFix, mlir::ValueRange{tIdx[0]});
+
+    auto afterQFix = getBuilder(qFixIf, Position::after);
+    Rewriter::barrier(afterQFix);
+    LOG_DEBUG("===== Q fix-column prologue done =======\n",module);
+  }
+
   llvm::SmallVector<mlir::Value> operands(bIdx.begin(), bIdx.end()-1);
   operands.push_back(byIdx); operands.push_back(xBlockFors[0].getInductionVar()); operands.push_back(tIdx[0]);
-  auto loadTileQMap = getGlobQKToTempQKMap(builder, "Q");
   llvm::SmallVector<mlir::Value> qGlobOperands(operands);
   qGlobOperands.push_back(k1_outer.getInductionVar());
   auto loadTileQ = Rewriter::loadToRegisters(Q, tempQ, loadTileQMap, qGlobOperands, {cfg["GLOB_LOAD_WIDTH_K"]}, k1_outer, Position::begin, "");
@@ -486,12 +532,12 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
       // Transposed mask: P^T[i_k, j_q] should be masked when i_k > j_q
       // (original P[j_q, i_k] masked when i_k > j_q, i.e. col > row)
-      auto rowMap = mlir::AffineMap::get(dimCount, 0, {globalRow}, sb.getContext());
-      auto colMap = mlir::AffineMap::get(dimCount, 0, {globalCol}, sb.getContext());
-
       mlir::Value tid = this->threadIdx.getIVs()[0];
       mlir::Value bx = xBlockFors[0].getInductionVar();
       llvm::SmallVector<mlir::Value> mapOps{ivs[0], ivs[1], tid, byIdx, bx};
+
+      auto rowMap = mlir::AffineMap::get(dimCount, 0, {globalRow}, sb.getContext());
+      auto colMap = mlir::AffineMap::get(dimCount, 0, {globalCol}, sb.getContext());
 
       auto rowVal = sb.create<mlir::affine::AffineApplyOp>(loc, rowMap, mapOps);
       auto colVal = sb.create<mlir::affine::AffineApplyOp>(loc, colMap, mapOps);
@@ -523,8 +569,6 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto [jForOps, jIvs] = createNestedLoops(nb, jlbs, jubs, jsteps);
     nb.setInsertionPointToStart(jForOps.back().getBody());
 
-    // Build Em/Denom affine map: indexed by inner dim (j -> globalCol_Q in S_q)
-    int batchCount = (int)bIdx.size() - 1;
     int emMapDims = batchCount + 3; // batch dims + bx + tid + flat_j
     auto emDimExprs = getExprs(nb, emMapDims);
     auto bxExpr = emDimExprs[batchCount];
@@ -576,14 +620,100 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto [iForOps, iIvs] = createNestedLoops(nb, ilbs, iubs, isteps);
     nb.setInsertionPointToStart(iForOps.back().getBody());
 
-    llvm::SmallVector<mlir::Value> tilePIdx{iIvs[0], jIvs[0]};
-    auto pVal = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], tilePIdx);
-    auto expVal = nb.create<mlir::math::ExpOp>(loc, pVal);
-    auto normalized = nb.create<mlir::arith::DivFOp>(loc, expVal, factor);
+    // ROCm wave64 still shows residual row_sum leakage on one local Q slot.
+    // The fallback score for that slot is recomputed here with exact row/col.
+    if (useWave64DirectScore) {
+      int dimCount = 5;
+      auto dims = getExprs(nb, dimCount);
+      auto iE = dims[0], jE = dims[1], tidE = dims[2], byE = dims[3], bxE = dims[4];
 
-    auto oldSum = nb.create<mlir::affine::AffineLoadOp>(loc, regRowSum, mlir::ValueRange{iIvs[0]});
-    auto newSum = nb.create<mlir::arith::AddFOp>(loc, oldSum, normalized);
-    nb.create<mlir::affine::AffineStoreOp>(loc, newSum, regRowSum, mlir::ValueRange{iIvs[0]});
+      int64_t BSW_Q_m = cfg["BLOCK_SCATTER_WIDTH_Q"];
+      int64_t WSW_Q_m = cfg["WARP_SCATTER_WIDTH_Q"];
+      int64_t BLP_Y_m = cfg["BLOCK_LAYOUT_P_Y"];
+      int64_t WLP_Y_m = cfg["WARP_LAYOUT_P_Y"];
+      int64_t BLP_X_m = cfg["BLOCK_LAYOUT_P_X"];
+      int64_t WLP_X_m = cfg["WARP_LAYOUT_P_X"];
+      int64_t WARP_SZ_m = cfg["WARP_SIZE"];
+      int64_t BSW_K_m = cfg["BLOCK_SCATTER_WIDTH_K"];
+      int64_t WSW_K_m = cfg["WARP_SCATTER_WIDTH_K"];
+
+      auto warp_y_m = tools::mapUtils::wapr_y(tidE, WARP_SZ_m, BLP_X_m);
+      auto lane_y_m = tools::mapUtils::lane_y(tidE, WARP_SZ_m, WLP_X_m);
+      auto rowInBr_m = (iE.floorDiv(BSW_Q_m) * BLP_Y_m + warp_y_m) * WLP_Y_m * BSW_Q_m
+                     + ((iE % BSW_Q_m).floorDiv(WSW_Q_m) * WLP_Y_m + lane_y_m) * WSW_Q_m + iE % WSW_Q_m;
+      auto globalRow_m = byE + rowInBr_m;
+
+      auto warp_x_m = tools::mapUtils::wapr_x(tidE, WARP_SZ_m, BLP_X_m);
+      auto lane_x_m = tools::mapUtils::lane_x(tidE, WARP_SZ_m, WLP_X_m);
+      auto colInBc_m = (jE.floorDiv(BSW_K_m) * BLP_X_m + warp_x_m) * WLP_X_m * BSW_K_m
+                     + ((jE % BSW_K_m).floorDiv(WSW_K_m) * WLP_X_m + lane_x_m) * WSW_K_m + jE % WSW_K_m;
+      auto globalCol_m = bxE + colInBc_m;
+
+      auto rowMap_m = mlir::AffineMap::get(dimCount, 0, {globalRow_m}, nb.getContext());
+      auto colMap_m = mlir::AffineMap::get(dimCount, 0, {globalCol_m}, nb.getContext());
+      llvm::SmallVector<mlir::Value> maskOps{
+          iIvs[0], jIvs[0], threadIdx.getIVs()[0], byIdx, xBlockFors[0].getInductionVar()};
+      auto rowVal_m = nb.create<mlir::affine::AffineApplyOp>(loc, rowMap_m, maskOps);
+      auto colVal_m = nb.create<mlir::affine::AffineApplyOp>(loc, colMap_m, maskOps);
+      auto invalid_m = nb.create<mlir::arith::CmpIOp>(
+          loc, mlir::arith::CmpIPredicate::sgt, rowVal_m.getResult(), colVal_m.getResult());
+
+      auto zero_m = nb.create<mlir::arith::ConstantOp>(loc, nb.getFloatAttr(dtype, 0.0));
+      auto scoreIdx = nb.create<mlir::arith::ConstantIndexOp>(loc, 0);
+      llvm::SmallVector<mlir::Value> tilePIdx{iIvs[0], jIvs[0]};
+      auto pVal_m = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], tilePIdx);
+      nb.create<mlir::affine::AffineStoreOp>(loc, pVal_m, scoreAccWave64, mlir::ValueRange{scoreIdx});
+
+      auto setJ0Lane1 = [&]() {
+        auto d0 = nb.getAffineDimExpr(0);
+        auto d1 = nb.getAffineDimExpr(1);
+        llvm::SmallVector<mlir::AffineExpr> exprs{d0, (d1 % WLP_X_m) - 1};
+        llvm::SmallVector<bool, 2> flags{true, true};
+        return mlir::IntegerSet::get(/*dimCount*/2, /*symbolCount*/0, exprs, flags);
+      }();
+      auto slotIf = nb.create<mlir::affine::AffineIfOp>(
+          loc, setJ0Lane1,
+          llvm::SmallVector<mlir::Value>{jIvs[0], threadIdx.getIVs()[0]}, false);
+      mlir::OpBuilder thenB = mlir::OpBuilder::atBlockBegin(slotIf.getThenBlock());
+      thenB.create<mlir::affine::AffineStoreOp>(loc, zero_m, scoreAccWave64, mlir::ValueRange{scoreIdx});
+      auto rowInBrMap_m = mlir::AffineMap::get(dimCount, 0, {rowInBr_m}, thenB.getContext());
+      auto rowInBrVal_m =
+          thenB.create<mlir::affine::AffineApplyOp>(loc, rowInBrMap_m, maskOps);
+
+      llvm::SmallVector<int64_t> hlbs{0}, hubs{headDim}, hsteps{1};
+      auto [hForOps, hIvs] = createNestedLoops(thenB, hlbs, hubs, hsteps);
+      thenB.setInsertionPointToStart(hForOps.back().getBody());
+
+      auto kVal_m = thenB.create<mlir::affine::AffineLoadOp>(
+          loc, smKFull, mlir::ValueRange{hIvs[0], rowInBrVal_m.getResult()});
+      auto qVal_m = thenB.create<mlir::affine::AffineLoadOp>(
+          loc, smQFix, mlir::ValueRange{hIvs[0]});
+      auto prod_m = thenB.create<mlir::arith::MulFOp>(loc, kVal_m, qVal_m);
+      auto oldScore_m =
+          thenB.create<mlir::affine::AffineLoadOp>(loc, scoreAccWave64, mlir::ValueRange{scoreIdx});
+      auto newScore_m = thenB.create<mlir::arith::AddFOp>(loc, oldScore_m, prod_m);
+      thenB.create<mlir::affine::AffineStoreOp>(loc, newScore_m, scoreAccWave64, mlir::ValueRange{scoreIdx});
+
+      mlir::OpBuilder afterIf = getBuilder(slotIf, Position::after);
+      auto finalScore_m =
+          afterIf.create<mlir::affine::AffineLoadOp>(loc, scoreAccWave64, mlir::ValueRange{scoreIdx});
+      auto expVal_m = afterIf.create<mlir::math::ExpOp>(loc, finalScore_m);
+      auto normalized_m = afterIf.create<mlir::arith::DivFOp>(loc, expVal_m, factor);
+      auto selected_m =
+          afterIf.create<mlir::arith::SelectOp>(loc, invalid_m, zero_m, normalized_m);
+      auto oldSum_m =
+          afterIf.create<mlir::affine::AffineLoadOp>(loc, regRowSum, mlir::ValueRange{iIvs[0]});
+      auto newSum_m = afterIf.create<mlir::arith::AddFOp>(loc, oldSum_m, selected_m);
+      afterIf.create<mlir::affine::AffineStoreOp>(loc, newSum_m, regRowSum, mlir::ValueRange{iIvs[0]});
+    } else {
+      llvm::SmallVector<mlir::Value> tilePIdx{iIvs[0], jIvs[0]};
+      mlir::Value pVal = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], tilePIdx);
+      auto expVal = nb.create<mlir::math::ExpOp>(loc, pVal);
+      auto normalizedLocal = nb.create<mlir::arith::DivFOp>(loc, expVal, factor);
+      auto oldSum = nb.create<mlir::affine::AffineLoadOp>(loc, regRowSum, mlir::ValueRange{iIvs[0]});
+      auto newSum = nb.create<mlir::arith::AddFOp>(loc, oldSum, normalizedLocal);
+      nb.create<mlir::affine::AffineStoreOp>(loc, newSum, regRowSum, mlir::ValueRange{iIvs[0]});
+    }
   }
   LOG_DEBUG("===== normalize + accumulate regRowSum (Em/Denom hoisted) =======\n",module);
 
@@ -615,7 +745,6 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
     // Step 1: warp shuffle reduction across lane_x
     if (WLP_X > 1) {
-      auto i32Ty = wb.getI32Type();
       auto widthI32 = wb.create<mlir::arith::ConstantOp>(loc, wb.getI32IntegerAttr(WLP_X));
 
       for (int64_t dist = 1; dist < WLP_X; dist *= 2) {
@@ -627,9 +756,6 @@ void GemmNormColSumOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
           auto shfl = wb.create<mlir::gpu::ShuffleOp>(
               loc, val.getResult(), distI32, widthI32, mlir::gpu::ShuffleMode::DOWN);
           auto sum = wb.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
-
-          // auto added = wb.create<mlir::arith::AddFOp>(loc, val.getResult(), shfl.getResult(0));
-          // auto sum = wb.create<mlir::arith::SelectOp>(loc, shfl.getResult(1), added, val.getResult());
           wb.create<mlir::affine::AffineStoreOp>(
               loc, sum, regRowSum, mlir::ValueRange{rIdx});
         }
