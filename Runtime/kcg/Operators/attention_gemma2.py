@@ -38,6 +38,22 @@ def _causal_upper_mask(S, device, dtype):
     )
 
 
+def _precompute_em_denom(q, k, tanh_scale, device, dtype):
+    """Compute Gemma2 em/denom via PyTorch for standalone K2 benchmarking."""
+    scale = 1.0 / math.sqrt(float(q.shape[-1]))
+    S = q.shape[-2]
+    mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
+    with torch.no_grad():
+        scores = torch.matmul(torch.mul(q, scale), k)
+        y = torch.tanh(scores / tanh_scale) * tanh_scale
+        y = y + mask
+        m = y.max(dim=-1, keepdim=True).values
+        em = torch.exp(m)
+        sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
+        denom = sum_ex / em
+    return em, denom
+
+
 class Gemma2SplitOp(OpInterface):
     """Split Gemma2 attention into two codegen'd kernels:
 
@@ -321,3 +337,303 @@ class Gemma2SplitOp(OpInterface):
             b, bb, m, n = self.BaseArgs.getIntDatalist()
             dt = self.BaseArgs.getTorchDType()
             self.OutputTensor_Baseline = torch.empty(m, n, dtype=dt, device=dev_name(devId))
+
+
+class _Gemma2SingleKernelBase(OpInterface):
+    """Shared base for Gemma2K1Op / Gemma2K2Op."""
+
+    def __init__(self):
+        super().__init__()
+        self.TuningArgs = AttentionTuningArgs()
+        self.TuningArgs.kernelNamePrefix = "Gemma2"
+        self.BaseArgs = AttentionBaseArgs()
+        self.SetPlatform = None
+        self.SetKernelName = None
+        self.fastCompile = True
+        self._debug_dumped = False
+        self._compile_func = None
+
+    def _init_lib(self):
+        if self.SetPlatform is None:
+            spec = importlib.util.spec_from_file_location("deepgen", PathManager.kcg_lib_deepgen_path())
+            mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod)
+            self.SetKernelName = mod.set_kernel_name
+            self.SetPlatform = mod.set_platform
+            return mod
+        return None
+
+    def SetTuningArgs(self, tuningArgs):
+        self.TuningArgs.assignWithList(*tuningArgs)
+
+    def InitBaseArgs(self, args):
+        shape, dtypeInt = args
+        self.BaseArgs.intValues = [shape, dtypeInt]
+        ety = EnumKernelDType(dtypeInt)
+        self.TuningArgs = AttentionTuningArgs(ety)
+        self.TuningArgs.kernelNamePrefix = "Gemma2"
+
+    def _compile_single(self, deviceId, backendtype, arch, info, compile_func, n_dtypes):
+        _backend = {
+            EnumBackendType.CUDA.value: 1,
+            EnumBackendType.HIP.value: 2,
+            EnumBackendType.MLU.value: 3,
+            EnumBackendType.NPU.value: 4,
+        }.get(backendtype.value)
+        assert _backend is not None
+        self.SetPlatform(_backend, arch)
+        dataTypeInt = ToEnumIntDType(info.torchDataType)
+        self.InitBaseArgs([info.baseArgs, dataTypeInt])
+        shape, config = info.tsArgs
+        dtype_str = EnumKernelDType(dataTypeInt).name
+        dt = self.BaseArgs.getTorchDType()
+
+        kname = info.kernelName
+        self.SetKernelName(kname)
+        cfg = {kname: config[info.kernelName]}
+        res = compile_func(shape, cfg, dtype_str)
+        if not res:
+            raise RuntimeError(f"Kernel compilation failed for {kname}")
+
+        kconfig = KernelConfigs(res, kname, [dt] * n_dtypes, backendtype)
+        kconfig.m_gridDims = list(info.gridDims)
+        kconfig.m_blockDims = list(info.blockDims)
+        kconfig.operatorKind = EnumOperator.Attention
+        kconfig.shmBytes = info.shmBytes
+        return dataTypeInt, kconfig
+
+    def InitInputTensorsWithDatalist(self, devId):
+        self.GetBaselineInputTensor(devId)
+        self.GetBenchmarkInputTensor(devId)
+
+    def InitBaselineOutputTensor(self, devId):
+        pass
+
+
+class Gemma2K1Op(_Gemma2SingleKernelBase):
+    """Tune Gemma2 kernel 1 (GemmStats with softcap) independently."""
+
+    TANH_SCALE = Gemma2SplitOp.TANH_SCALE
+
+    def InitLibInterface(self):
+        mod = self._init_lib()
+        if mod:
+            self._compile_func = getattr(mod, "compile_gemma2_split_k1")
+
+    def GetBaselineInputTensor(self, devId):
+        if self.InputTensors_Baseline is None:
+            [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
+            ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
+            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            self.InputTensors_Baseline = [q, k]
+        return self.InputTensors_Baseline
+
+    def GetBenchmarkInputTensor(self, devId):
+        if self.InputTensors_Benchmark is None:
+            [q, k] = self.GetBaselineInputTensor(devId)
+            [b0, b1, m, _] = self.BaseArgs.intValues[0]
+            ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
+            qq = q.transpose(-1, -2).contiguous()
+            kk = k
+            em = torch.empty((b0, b1, m, 1), dtype=ety, device=dev_name(devId))
+            denom = torch.empty((b0, b1, m, 1), dtype=ety, device=dev_name(devId))
+            self.InputTensors_Benchmark = [qq, kk, em, denom]
+        return self.InputTensors_Benchmark
+
+    def Compile(self, deviceId, backendtype, arch, info, opt=None):
+        self.InitLibInterface()
+        dataTypeInt, kconfig = self._compile_single(
+            deviceId, backendtype, arch, info, self._compile_func, 4
+        )
+        dt = self.BaseArgs.getTorchDType()
+        sig = _gemma2_split_k1(
+            torch.randn(1, 3, 100, 100, dtype=dt),
+            torch.randn(1, 3, 100, 100, dtype=dt),
+            torch.randn(1, 3, 100, 1, dtype=dt),
+            torch.randn(1, 3, 100, 1, dtype=dt),
+        )
+        packed = CompiledKernel(
+            kconfig.backend, kconfig.binaryPath, kconfig.kernelFuncName,
+            kconfig.sharedMem(), sig, kconfig.gridDims(), kconfig.blockDims(), deviceId
+        )
+        return ([info.baseArgs, dataTypeInt], kconfig, packed)
+
+    def GetSignature(self, dtypes):
+        d = dtypes[0]
+        return _gemma2_split_k1(
+            torch.randn(1, 3, 100, 100, dtype=d),
+            torch.randn(1, 3, 100, 100, dtype=d),
+            torch.randn(1, 3, 100, 1, dtype=d),
+            torch.randn(1, 3, 100, 1, dtype=d),
+        )
+
+    def GetCompiledKernel(self, info, deviceId):
+        sig = self.GetSignature(info.dtypes)
+        return CompiledKernel(
+            info.backend, info.binaryPath, info.kernelFuncName,
+            info.sharedMem(), sig, info.gridDims(), info.blockDims(), deviceId
+        )
+
+    def Test_baseline(self, devId):
+        [q, k] = self.GetBaselineInputTensor(devId)
+        scale = 1.0 / math.sqrt(float(q.shape[-1]))
+        tanh_scale = self.TANH_SCALE
+        S = q.shape[-2]
+        device, dtype = q.device, q.dtype
+        mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
+
+        with torch.no_grad():
+            scores = torch.matmul(torch.mul(q, scale), k)
+            y = torch.tanh(scores / tanh_scale) * tanh_scale
+            y = y + mask
+            _ = torch.exp(y.max(dim=-1, keepdim=True).values)
+
+        ev_s = torch_ns.Event(enable_timing=True)
+        ev_e = torch_ns.Event(enable_timing=True)
+        ev_s.record()
+        scores = torch.matmul(torch.mul(q, scale), k)
+        y = torch.tanh(scores / tanh_scale) * tanh_scale
+        y = y + mask
+        m = y.max(dim=-1, keepdim=True).values
+        em = torch.exp(m)
+        sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
+        self.OutputTensor_Baseline = sum_ex / em
+        ev_e.record()
+        torch_ns.synchronize()
+        return (self.OutputTensor_Baseline, ev_s.elapsed_time(ev_e))
+
+    def Test_warmup(self, packedKernel, warmupCount, devId):
+        qq, kk, em, denom = self.GetBenchmarkInputTensor(devId)
+        for _ in range(warmupCount):
+            packedKernel.run(qq, kk, em, denom)
+
+    def Test_benchmark(self, packedKernel, benchmarkCount, devId):
+        qq, kk, em, denom = self.GetBenchmarkInputTensor(devId)
+        packedKernel.run(qq, kk, em, denom)
+        torch_ns.synchronize()
+        st = torch_ns.Event(enable_timing=True)
+        et = torch_ns.Event(enable_timing=True)
+        st.record()
+        packedKernel.run(qq, kk, em, denom)
+        et.record()
+        torch_ns.synchronize()
+        return (denom, st.elapsed_time(et))
+
+
+class Gemma2K2Op(_Gemma2SingleKernelBase):
+    """Tune Gemma2 kernel 2 (FlashAttnSplitK2 with softcap) independently."""
+
+    TANH_SCALE = Gemma2SplitOp.TANH_SCALE
+
+    def InitLibInterface(self):
+        mod = self._init_lib()
+        if mod:
+            self._compile_func = getattr(mod, "compile_gemma2_split_k2")
+
+    def GetBaselineInputTensor(self, devId):
+        if self.InputTensors_Baseline is None:
+            [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
+            ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
+            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            v = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            self.InputTensors_Baseline = [q, k, v]
+        return self.InputTensors_Baseline
+
+    def GetBenchmarkInputTensor(self, devId):
+        if self.InputTensors_Benchmark is None:
+            [q, k, v] = self.GetBaselineInputTensor(devId)
+            [b0, b1, m, n] = self.BaseArgs.intValues[0]
+            ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
+            em, denom = _precompute_em_denom(q, k, self.TANH_SCALE, q.device, ety)
+            qq = q.transpose(-1, -2).contiguous()
+            kk = k
+            d = torch.empty((b0, b1, m, n), dtype=ety, device=dev_name(devId))
+            self.InputTensors_Benchmark = [qq, kk, v, em, denom, d]
+        return self.InputTensors_Benchmark
+
+    def Compile(self, deviceId, backendtype, arch, info, opt=None):
+        self.InitLibInterface()
+        dataTypeInt, kconfig = self._compile_single(
+            deviceId, backendtype, arch, info, self._compile_func, 6
+        )
+        dt = self.BaseArgs.getTorchDType()
+        sig = _gemma2_split_k2(
+            torch.randn(1, 3, 100, 100, dtype=dt),
+            torch.randn(1, 3, 100, 100, dtype=dt),
+            torch.randn(1, 3, 100, 100, dtype=dt),
+            torch.randn(1, 3, 100, 1, dtype=dt),
+            torch.randn(1, 3, 100, 1, dtype=dt),
+            torch.empty(1, 3, 100, 100, dtype=dt),
+        )
+        packed = CompiledKernel(
+            kconfig.backend, kconfig.binaryPath, kconfig.kernelFuncName,
+            kconfig.sharedMem(), sig, kconfig.gridDims(), kconfig.blockDims(), deviceId
+        )
+        return ([info.baseArgs, dataTypeInt], kconfig, packed)
+
+    def GetSignature(self, dtypes):
+        d = dtypes[0]
+        return _gemma2_split_k2(
+            torch.randn(1, 3, 100, 100, dtype=d),
+            torch.randn(1, 3, 100, 100, dtype=d),
+            torch.randn(1, 3, 100, 100, dtype=d),
+            torch.randn(1, 3, 100, 1, dtype=d),
+            torch.randn(1, 3, 100, 1, dtype=d),
+            torch.empty(1, 3, 100, 100, dtype=d),
+        )
+
+    def GetCompiledKernel(self, info, deviceId):
+        sig = self.GetSignature(info.dtypes)
+        return CompiledKernel(
+            info.backend, info.binaryPath, info.kernelFuncName,
+            info.sharedMem(), sig, info.gridDims(), info.blockDims(), deviceId
+        )
+
+    def Test_baseline(self, devId):
+        [q, k, v] = self.GetBaselineInputTensor(devId)
+        scale = 1.0 / math.sqrt(float(q.shape[-1]))
+        tanh_scale = self.TANH_SCALE
+        S = q.shape[-2]
+        device, dtype = q.device, q.dtype
+        mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
+
+        scores = torch.matmul(torch.mul(q, scale), k)
+        y = torch.tanh(scores / tanh_scale) * tanh_scale
+        y = y + mask
+        m = y.max(dim=-1, keepdim=True).values
+        ex = torch.exp(y - m)
+        s = ex / ex.sum(dim=-1, keepdim=True)
+        _ = torch.matmul(s, v)
+
+        ev_s = torch_ns.Event(enable_timing=True)
+        ev_e = torch_ns.Event(enable_timing=True)
+        ev_s.record()
+        scores = torch.matmul(torch.mul(q, scale), k)
+        y = torch.tanh(scores / tanh_scale) * tanh_scale
+        y = y + mask
+        m = y.max(dim=-1, keepdim=True).values
+        ex = torch.exp(y - m)
+        s = ex / ex.sum(dim=-1, keepdim=True)
+        self.OutputTensor_Baseline = torch.matmul(s, v)
+        ev_e.record()
+        torch_ns.synchronize()
+        return (self.OutputTensor_Baseline, ev_s.elapsed_time(ev_e))
+
+    def Test_warmup(self, packedKernel, warmupCount, devId):
+        qq, kk, v, em, denom, d = self.GetBenchmarkInputTensor(devId)
+        for _ in range(warmupCount):
+            packedKernel.run(qq, kk, v, em, denom, d)
+
+    def Test_benchmark(self, packedKernel, benchmarkCount, devId):
+        qq, kk, v, em, denom, d = self.GetBenchmarkInputTensor(devId)
+        packedKernel.run(qq, kk, v, em, denom, d)
+        torch_ns.synchronize()
+        st = torch_ns.Event(enable_timing=True)
+        et = torch_ns.Event(enable_timing=True)
+        st.record()
+        packedKernel.run(qq, kk, v, em, denom, d)
+        et.record()
+        torch_ns.synchronize()
+        return (d, st.elapsed_time(et))
