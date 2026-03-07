@@ -285,7 +285,7 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
         shape = [1, 32, 4096, 64]
         if seqlen is not None:
             shape[2] = seqlen
-        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype)
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, [], torch_dtype, kernel_prefix="Gemma2")
     if OpTy is kcg_att_h2o.H2OSplitOp :
         import json, tempfile
         import kcg.tuning.attn_FP32_test as ns_attentiopn

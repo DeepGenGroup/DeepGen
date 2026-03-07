@@ -68,6 +68,7 @@ class AttentionTuningArgs(TuningArgsInterface) :
     def __init__(self, enumDType : EnumKernelDType = EnumKernelDType.float32):
         super().__init__()
         self.basearg = AttentionBaseArgs()
+        self.kernelNamePrefix = "Attention"
         self.Br = 0 
         self.Bc = 0 
         self.Hd = 0 
@@ -332,7 +333,7 @@ class AttentionTuningArgs(TuningArgsInterface) :
         return True
       
     def generateKernelName(self) -> str : 
-        ret = "kcg_Attention_"
+        ret = f"kcg_{self.kernelNamePrefix}_"
         ret += f"{self.basearg.argDict['shape']}".replace(' ','').replace(',','_')[1:-1]
         ret += f"_Br{ self.Br }"
         ret += f"Bc{ self.Bc }"

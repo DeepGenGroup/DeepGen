@@ -360,7 +360,8 @@ def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128], type_width : int = 4
     print(f"[Warn] no valid attention tuning cfg generated for shape={shape} from {cfgfilepath}", flush=True)
   return cfgs
 
-def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : torch.dtype = torch.float32) -> TsGeneratorType : 
+def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : torch.dtype = torch.float32,
+                 kernel_prefix: str = "Attention") -> TsGeneratorType : 
   # shape = [1, 32, 2048, 128]
   # batch(几个句子), seqLen（句子长度）, (hiddenDim(一个单词编码以后的向量长度) -> headnum * headDim),   
   kw = ConfigKeywords
@@ -401,6 +402,7 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : t
       }
     temp = AttentionTuningArgs(enum_dtype)
     temp.assignWithDict(valDict)
+    temp.kernelNamePrefix = kernel_prefix
     temp.basearg.argDict['shape'] = shape
     temp.basearg.argDict['dtype'] = enum_dtype
     kernelName = temp.generateKernelName()

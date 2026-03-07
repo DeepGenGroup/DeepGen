@@ -1,5 +1,6 @@
 import importlib
 import math
+import os
 import torch
 from kcg.Kernel import *
 from kcg.Operators.attention import (
@@ -63,6 +64,7 @@ class Gemma2SplitOp(OpInterface):
     def __init__(self):
         super().__init__()
         self.TuningArgs = AttentionTuningArgs()
+        self.TuningArgs.kernelNamePrefix = "Gemma2"
         self.BaseArgs = AttentionBaseArgs()
         self.CompileKernelK1 = None
         self.CompileKernelK2 = None
@@ -222,6 +224,7 @@ class Gemma2SplitOp(OpInterface):
         self.BaseArgs.intValues = [shape, dtypeInt]
         ety = EnumKernelDType(dtypeInt)
         self.TuningArgs = AttentionTuningArgs(ety)
+        self.TuningArgs.kernelNamePrefix = "Gemma2"
 
     def Test_warmup(self, packedKernel, warmupCount, devId):
         tensors = self.GetBenchmarkInputTensor(devId)
