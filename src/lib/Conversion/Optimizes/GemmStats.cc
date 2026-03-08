@@ -1,8 +1,59 @@
 #include "Conversion/Optimize.h"
 #include <cmath>
-#include <limits>
 
 namespace KernelCodeGen {
+
+GemmStatsOptimizer::~GemmStatsOptimizer() = default;
+
+static mlir::Value buildStableTanhViaExp(mlir::OpBuilder &builder,
+                                         mlir::Location loc,
+                                         mlir::Value x) {
+  auto ty = x.getType();
+  auto zero = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 0.0f));
+  auto one = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 1.0f));
+  auto negOne = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, -1.0f));
+  auto two = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 2.0f));
+
+  auto isNonNegative = builder.create<mlir::arith::CmpFOp>(
+      loc, mlir::arith::CmpFPredicate::OGE, x, zero);
+  auto negX = builder.create<mlir::arith::SubFOp>(loc, zero, x);
+  auto absX = builder.create<mlir::arith::SelectOp>(loc, isNonNegative, x, negX);
+  auto sign = builder.create<mlir::arith::SelectOp>(loc, isNonNegative, one, negOne);
+
+  auto twoAbsX = builder.create<mlir::arith::MulFOp>(loc, absX, two);
+  auto negTwoAbsX = builder.create<mlir::arith::SubFOp>(loc, zero, twoAbsX);
+  auto expNegTwoAbsX = builder.create<mlir::math::ExpOp>(loc, negTwoAbsX);
+  auto numer = builder.create<mlir::arith::SubFOp>(loc, one, expNegTwoAbsX);
+  auto denom = builder.create<mlir::arith::AddFOp>(loc, one, expNegTwoAbsX);
+  auto tanhAbs = builder.create<mlir::arith::DivFOp>(loc, numer, denom);
+  return builder.create<mlir::arith::MulFOp>(loc, sign, tanhAbs);
+}
+
+static mlir::Value buildBoundedTanhViaRationalApprox(mlir::OpBuilder &builder,
+                                                     mlir::Location loc,
+                                                     mlir::Value x) {
+  auto ty = x.getType();
+  auto one = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 1.0f));
+  auto negOne = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, -1.0f));
+  auto c15 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 15.0f));
+  auto c105 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 105.0f));
+  auto c420 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 420.0f));
+  auto c945 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 945.0f));
+
+  auto x2 = builder.create<mlir::arith::MulFOp>(loc, x, x);
+  auto x4 = builder.create<mlir::arith::MulFOp>(loc, x2, x2);
+  auto numerPoly1 = builder.create<mlir::arith::MulFOp>(loc, c105, x2);
+  auto numerPoly2 = builder.create<mlir::arith::AddFOp>(loc, c945, numerPoly1);
+  auto numerPoly = builder.create<mlir::arith::AddFOp>(loc, numerPoly2, x4);
+  auto numer = builder.create<mlir::arith::MulFOp>(loc, x, numerPoly);
+  auto denomPoly1 = builder.create<mlir::arith::MulFOp>(loc, c420, x2);
+  auto denomPoly2 = builder.create<mlir::arith::AddFOp>(loc, c945, denomPoly1);
+  auto denomPoly3 = builder.create<mlir::arith::MulFOp>(loc, c15, x4);
+  auto denom = builder.create<mlir::arith::AddFOp>(loc, denomPoly2, denomPoly3);
+  auto approx = builder.create<mlir::arith::DivFOp>(loc, numer, denom);
+  auto clampHi = builder.create<mlir::arith::MinNumFOp>(loc, approx, one);
+  return builder.create<mlir::arith::MaxNumFOp>(loc, clampHi, negOne);
+}
 
 // ======================================= global to sm =========================================
 std::array<int64_t, 7> GemmStatsOptimizer::getCfgDatas(const std::string& bufType) {
@@ -205,6 +256,107 @@ mlir::AffineMap GemmStatsOptimizer::getEmDenomWriteMap(mlir::OpBuilder& builder)
   return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
 }
 
+static mlir::AffineExpr getWave64XGroupExpr(
+    mlir::AffineExpr tidExpr,
+    const std::map<std::string, int64_t>& cfg);
+
+static mlir::AffineExpr getWave64RowInBlockExpr(
+    mlir::AffineExpr tidExpr,
+    mlir::AffineExpr blockRepExpr,
+    mlir::AffineExpr warpRepExpr,
+    mlir::AffineExpr widthExpr,
+    const std::map<std::string, int64_t>& cfg);
+
+static mlir::AffineExpr getWave64XGroupExpr(
+    mlir::AffineExpr tidExpr,
+    const std::map<std::string, int64_t>& cfg) {
+  auto warpX = tools::mapUtils::wapr_x(tidExpr, cfg.at("WARP_SIZE"), cfg.at("BLOCK_LAYOUT_P_X"));
+  auto laneX = tools::mapUtils::lane_x(tidExpr, cfg.at("WARP_SIZE"), cfg.at("WARP_LAYOUT_P_X"));
+  return warpX * cfg.at("WARP_LAYOUT_P_X") + laneX;
+}
+
+static mlir::AffineExpr getWave64RowInBlockExpr(
+    mlir::AffineExpr tidExpr,
+    mlir::AffineExpr blockRepExpr,
+    mlir::AffineExpr warpRepExpr,
+    mlir::AffineExpr widthExpr,
+    const std::map<std::string, int64_t>& cfg) {
+  auto warpY = tools::mapUtils::wapr_y(tidExpr, cfg.at("WARP_SIZE"), cfg.at("BLOCK_LAYOUT_P_X"));
+  auto laneY = tools::mapUtils::lane_y(tidExpr, cfg.at("WARP_SIZE"), cfg.at("WARP_LAYOUT_P_X"));
+  int64_t blockLayout = cfg.at("BLOCK_LAYOUT_P_Y");
+  int64_t warpLayout = cfg.at("WARP_LAYOUT_P_Y");
+  int64_t blockScatter = cfg.at("BLOCK_SCATTER_WIDTH_Q");
+  int64_t warpScatter = cfg.at("WARP_SCATTER_WIDTH_Q");
+  auto blockExpr = (blockRepExpr * blockLayout + warpY * blockScatter) * warpLayout;
+  auto warpLevel = warpRepExpr * warpLayout + laneY * warpScatter;
+  return blockExpr + warpLevel + widthExpr;
+}
+
+static mlir::AffineMap getWave64RowInBlockMap(
+    mlir::OpBuilder& builder,
+    const std::map<std::string, int64_t>& cfg) {
+  int dimCount = 4;  // {tid, blockrepeatq, warprepeatq, width}
+  llvm::SmallVector<mlir::AffineExpr> dims;
+  for (int i = 0; i < dimCount; ++i) {
+    dims.push_back(builder.getAffineDimExpr(i));
+  }
+  auto row = getWave64RowInBlockExpr(dims[0], dims[1], dims[2], dims[3], cfg);
+  llvm::SmallVector<mlir::AffineExpr> exprs{row};
+  return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+}
+
+static mlir::AffineMap getWave64RegIdxMap(
+    mlir::OpBuilder& builder,
+    const std::map<std::string, int64_t>& cfg) {
+  int dimCount = 3;  // {blockrepeatq, warprepeatq, width}
+  llvm::SmallVector<mlir::AffineExpr> dims;
+  for (int i = 0; i < dimCount; ++i) {
+    dims.push_back(builder.getAffineDimExpr(i));
+  }
+  auto regIdx = dims[0] * cfg.at("BLOCK_SCATTER_WIDTH_Q") +
+                dims[1] * cfg.at("WARP_SCATTER_WIDTH_Q") + dims[2];
+  llvm::SmallVector<mlir::AffineExpr> exprs{regIdx};
+  return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+}
+
+static mlir::AffineMap getWave64ReduceScratchMap(
+    mlir::OpBuilder& builder,
+    const std::map<std::string, int64_t>& cfg) {
+  int dimCount = 4;  // {tid, blockrepeatq, warprepeatq, width}
+  llvm::SmallVector<mlir::AffineExpr> dims;
+  for (int i = 0; i < dimCount; ++i) {
+    dims.push_back(builder.getAffineDimExpr(i));
+  }
+  int64_t blockPX = cfg.at("Bc") / cfg.at("PTc");
+  auto row = getWave64RowInBlockExpr(dims[0], dims[1], dims[2], dims[3], cfg);
+  auto slot = row * blockPX + getWave64XGroupExpr(dims[0], cfg);
+  llvm::SmallVector<mlir::AffineExpr> exprs{slot};
+  return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+}
+
+static mlir::AffineMap getWave64RowSlotMap(
+    mlir::OpBuilder& builder,
+    const std::map<std::string, int64_t>& cfg) {
+  int dimCount = 2;  // {row, xgroup}
+  llvm::SmallVector<mlir::AffineExpr> dims;
+  for (int i = 0; i < dimCount; ++i) {
+    dims.push_back(builder.getAffineDimExpr(i));
+  }
+  int64_t blockPX = cfg.at("Bc") / cfg.at("PTc");
+  auto slot = dims[0] * blockPX + dims[1];
+  llvm::SmallVector<mlir::AffineExpr> exprs{slot};
+  return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+}
+
+static mlir::AffineMap getWave64XGroupMap(
+    mlir::OpBuilder& builder,
+    const std::map<std::string, int64_t>& cfg) {
+  int dimCount = 1;  // {tid}
+  auto tid = builder.getAffineDimExpr(0);
+  llvm::SmallVector<mlir::AffineExpr> exprs{getWave64XGroupExpr(tid, cfg)};
+  return mlir::AffineMap::get(dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), builder.getContext());
+}
+
 // ==================================== parsing and tuning =====================================
 
 void GemmStatsOptimizer::computeTuneArgs() {
@@ -322,25 +474,8 @@ std::vector<mlir::affine::AffineForOp> GemmStatsOptimizer::reduceAndBraodcast(ml
   mlir::Value tid = this->threadIdx.getIVs()[0];
   mlir::OpBuilder builder = getBuilder(localtionOp, Position::after);
   auto warpLevelForOp = warpReduce(builder, ydim, width, regBufs, onlineSoftmax);
-  mlir::affine::AffineForOp blockLevelForOp;
-  // Wave64-safe path:
-  // The generic blockReduce stage may remap shared accesses in a backend-
-  // sensitive way. For this attention-split config, rows are already lane_x-
-  // grouped and fully reduced by warpReduce(width=blockPX). Keep a no-op
-  // placeholder loop to preserve downstream split/map pipeline shape.
-  if (cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32) {
-    auto nopBody = [&](mlir::OpBuilder &b, mlir::Location l, mlir::Value, mlir::ValueRange) {
-      b.create<mlir::affine::AffineYieldOp>(l);
-    };
-    blockLevelForOp = builder.create<mlir::affine::AffineForOp>(
-        builder.getUnknownLoc(), 0, ydim, 1, mlir::ValueRange{}, nopBody);
-    llvm::errs() << "[opt] GemmStats wave64: skip blockReduce (warpReduce-only safe path)\n";
-  } else {
-    blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
-  }
-  // Broadcast both rowMax and rowSum inside each lane_x group.
-  // Global em/denom writes are lane_x-collapsed, so regMax/regSum must be consistent.
-  auto bcForOp = warpBroadcast(builder, ydim, width, /*buf*/{regBufs[0], regBufs[1]}, /*index*/0);
+  auto blockLevelForOp = blockReduce(builder, ydim, width, tid, regBufs, smBufs, onlineSoftmax);
+  auto bcForOp = warpBroadcast(builder, ydim, width, {regBufs[0], regBufs[1]}, 0);
   return std::vector<mlir::affine::AffineForOp>{warpLevelForOp, blockLevelForOp, bcForOp};
 }
 
@@ -388,14 +523,25 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   auto dtypeQ = typeQ.getElementType();
   auto dtypeK = typeK.getElementType();
   auto dtypeMid = typeMid.getElementType();
+  bool wave64Path = cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32;
+  bool useWave64SharedReduce = wave64Path;
 
   std::vector<std::vector<int64_t>> smShapes{
-    {cfg.at("Slice1"), cfg.at("Br")}, {cfg.at("Slice1"), cfg.at("Bc")}, {cfg.at("Br")}
+    {cfg.at("Slice1"), cfg.at("Br")}, {cfg.at("Slice1"), cfg.at("Bc")}
   };
-  std::vector<mlir::Type> smType{dtypeQ, dtypeK, dtypeMid};
-  std::vector<std::string> smDescs{"smQ", "smK", "smFactor"};
+  std::vector<mlir::Type> smType{dtypeQ, dtypeK};
+  std::vector<std::string> smDescs{"smQ", "smK"};
+  if (!useWave64SharedReduce) {
+    smShapes.push_back({cfg.at("Br")});
+    smType.push_back(dtypeMid);
+    smDescs.push_back("smFactor");
+  }
   auto sm = Rewriter::allocBuffers(smShapes, smType, MemorySpace::shared, smDescs, blockIdx);
-  auto smQ = sm[0], smK = sm[1], smFactor = sm[2];
+  auto smQ = sm[0], smK = sm[1];
+  mlir::Value smFactor;
+  if (!useWave64SharedReduce) {
+    smFactor = sm[2];
+  }
 
   std::vector<std::vector<int64_t>> regShapes{
     {globLoadTotalWidthQ}, {globLoadTotalWidthK}, {cfg.at("PTr")}, {cfg.at("PTc")}
@@ -419,6 +565,17 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
   auto bIdx = Analyzer::getParallelIdx(this->blockIdx);
   auto tIdx = Analyzer::getParallelIdx(this->threadIdx);
+  mlir::Value sharedReduceMaxWave64, sharedReduceSumWave64;
+  if (useWave64SharedReduce) {
+    sharedReduceMaxWave64 = Rewriter::allocBuffers(
+        {{cfg["Br"] * blockPX}},
+        {dtypeMid},
+        MemorySpace::shared, {"sharedReduceMaxWave64"}, blockIdx)[0];
+    sharedReduceSumWave64 = Rewriter::allocBuffers(
+        {{cfg["Br"] * blockPX}},
+        {dtypeMid},
+        MemorySpace::shared, {"sharedReduceSumWave64"}, blockIdx)[0];
+  }
 
   // ====== Q PROLOGUE: load entire Q tile into smQFull[Hd×Br] before the key-block loop ======
   auto loadTileQMap = getGlobQKToTempQKMap(builder, "Q");
@@ -545,12 +702,7 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
       auto ld = sb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], ivs);
       mlir::Value val = ld;
-
-      if (doSoftcap) {
-        auto divided = sb.create<mlir::arith::MulFOp>(loc, val, invScaleConst);
-        auto tanhed = sb.create<mlir::math::TanhOp>(loc, divided);
-        val = sb.create<mlir::arith::MulFOp>(loc, tanhed, scaleConst);
-      }
+      mlir::affine::AffineApplyOp rowVal, colVal;
 
       if (doMask) {
         int dimCount = 5;
@@ -582,9 +734,19 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
         mlir::Value bx = xBlockFors[0].getInductionVar();
         llvm::SmallVector<mlir::Value> mapOps{ivs[0], ivs[1], tid, byIdx, bx};
 
-        auto rowVal = sb.create<mlir::affine::AffineApplyOp>(loc, rowMap, mapOps);
-        auto colVal = sb.create<mlir::affine::AffineApplyOp>(loc, colMap, mapOps);
+        rowVal = sb.create<mlir::affine::AffineApplyOp>(loc, rowMap, mapOps);
+        colVal = sb.create<mlir::affine::AffineApplyOp>(loc, colMap, mapOps);
+      }
 
+      if (doSoftcap) {
+        auto divided = sb.create<mlir::arith::MulFOp>(loc, val, invScaleConst);
+        auto tanhed = wave64Path
+            ? buildBoundedTanhViaRationalApprox(sb, loc, divided)
+            : buildStableTanhViaExp(sb, loc, divided);
+        val = sb.create<mlir::arith::MulFOp>(loc, tanhed, scaleConst);
+      }
+
+      if (doMask) {
         auto cmp = sb.create<mlir::arith::CmpIOp>(loc, mlir::arith::CmpIPredicate::sgt,
                                                     colVal.getResult(), rowVal.getResult());
         val = sb.create<mlir::arith::SelectOp>(loc, cmp, negInf, val);
@@ -595,16 +757,14 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  bool wave64NoBlockReduce = (cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32);
-
   // regMax/regSum initialization at thread scope (init once per thread BEFORE blockx loop)
   // This lets the online reduce accumulate across ALL blockx iterations.
   auto regMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["PTr"]}, threadIdx, MemorySpace::local);
   auto regMax = regMaxAndSum[0], regSum = regMaxAndSum[1];
   mlir::Value smMax, smSum;
-  if (!wave64NoBlockReduce) {
-    // Shared block-level buffers are only needed when blockReduce is enabled.
-    auto smMaxAndSum = Rewriter::createHierarchyInitBuf(initBufFor, {cfg["Br"]}, threadIdx, MemorySpace::shared);
+  if (!useWave64SharedReduce) {
+    auto smMaxAndSum =
+        Rewriter::createHierarchyInitBuf(initBufFor, {cfg["Br"]}, threadIdx, MemorySpace::shared);
     smMax = smMaxAndSum[0];
     smSum = smMaxAndSum[1];
   }
@@ -620,17 +780,118 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   Rewriter::cache_write(txds[0], sumBuf, regSum, sumAndMaxRegMap, {tyds[0].getInductionVar()});
   LOG_DEBUG("===== amend thread level load and store of max and sum =======\n",module);
 
-  // reduceAndBraodcast: AFTER blockx loop (not inside it!)
-  // Each thread has accumulated partial max/sum across all blockx iterations.
-  // Now combine across threads via warp/block reduce.
-  std::vector<mlir::Value> softmaxSmBufs;
-  if (!wave64NoBlockReduce) softmaxSmBufs = {smMax, smSum, smFactor};
-  auto softmaxForOps = reduceAndBraodcast(xBlockFors[0].getOperation(), {regMax, regSum}, softmaxSmBufs);
-  LOG_DEBUG("===== add warp level and block level ops of max and sum =======\n",module);
-
   mlir::Operation* emWriteAnchor = nullptr;
-  if (!wave64NoBlockReduce) {
-    // blockLevel reduce split and map patching
+  if (useWave64SharedReduce) {
+    llvm::errs() << "[opt] GemmStats wave64: replace warpReduce/blockReduce/warpBroadcast with shared row-reduce/broadcast\n";
+
+    auto wave64Builder = getBuilder(xBlockFors[0].getOperation(), Position::after);
+    auto wave64Loc = wave64Builder.getUnknownLoc();
+    auto tid = this->threadIdx.getIVs()[0];
+    auto wave64RowMap = getWave64RowInBlockMap(wave64Builder, cfg);
+    auto wave64RegIdxMap = getWave64RegIdxMap(wave64Builder, cfg);
+    auto wave64ScratchMap = getWave64ReduceScratchMap(wave64Builder, cfg);
+    auto wave64RowSlotMap = getWave64RowSlotMap(wave64Builder, cfg);
+
+    llvm::SmallVector<int64_t> lbs{0, 0, 0};
+    llvm::SmallVector<int64_t> ubs{blockRepeatQ, warpRepeatQ, cfg["WARP_SCATTER_WIDTH_Q"]};
+    llvm::SmallVector<int64_t> steps{1, 1, 1};
+
+    auto [storeForOps, storeIvs] = createNestedLoops(wave64Builder, lbs, ubs, steps);
+    wave64Builder.setInsertionPointToStart(storeForOps.back().getBody());
+    auto storeRegIdx =
+        wave64Builder.create<mlir::affine::AffineApplyOp>(wave64Loc, wave64RegIdxMap, storeIvs);
+    auto storeScratchIdx =
+        wave64Builder.create<mlir::affine::AffineApplyOp>(
+            wave64Loc, wave64ScratchMap, mlir::ValueRange{tid, storeIvs[0], storeIvs[1], storeIvs[2]});
+    auto storeMax =
+        wave64Builder.create<mlir::affine::AffineLoadOp>(
+            wave64Loc, regMax, mlir::ValueRange{storeRegIdx.getResult()});
+    auto storeSum =
+        wave64Builder.create<mlir::affine::AffineLoadOp>(
+            wave64Loc, regSum, mlir::ValueRange{storeRegIdx.getResult()});
+    wave64Builder.create<mlir::affine::AffineStoreOp>(
+        wave64Loc, storeMax.getResult(), sharedReduceMaxWave64, mlir::ValueRange{storeScratchIdx.getResult()});
+    wave64Builder.create<mlir::affine::AffineStoreOp>(
+        wave64Loc, storeSum.getResult(), sharedReduceSumWave64, mlir::ValueRange{storeScratchIdx.getResult()});
+
+    auto afterStore = getBuilder(storeForOps.front().getOperation(), Position::after);
+    auto stageBarrier = Rewriter::barrier(afterStore);
+    auto stageAnchor = stageBarrier.getOperation();
+    auto tidExpr = wave64Builder.getAffineDimExpr(0);
+    auto xGroupExpr = getWave64XGroupExpr(tidExpr, cfg);
+    auto xGroupMap = getWave64XGroupMap(wave64Builder, cfg);
+    for (int64_t offset = blockPX / 2; offset > 0; offset /= 2) {
+      auto stageBuilder = getBuilder(stageAnchor, Position::after);
+      auto activeExpr = stageBuilder.getAffineConstantExpr(offset - 1) - xGroupExpr;
+      auto activeSet = mlir::IntegerSet::get(
+          1, 0, llvm::ArrayRef<mlir::AffineExpr>({activeExpr}),
+          llvm::ArrayRef<bool>({false}));
+      auto stageIf = stageBuilder.create<mlir::affine::AffineIfOp>(
+          wave64Loc, activeSet, mlir::ValueRange{tid}, false);
+      auto bodyBuilder = mlir::OpBuilder::atBlockBegin(stageIf.getThenBlock());
+      auto [reduceForOps, reduceIvs] = createNestedLoops(bodyBuilder, lbs, ubs, steps);
+      bodyBuilder.setInsertionPointToStart(reduceForOps.back().getBody());
+      auto reduceRow =
+          bodyBuilder.create<mlir::affine::AffineApplyOp>(
+              wave64Loc, wave64RowMap, mlir::ValueRange{tid, reduceIvs[0], reduceIvs[1], reduceIvs[2]});
+      auto xGroupVal =
+          bodyBuilder.create<mlir::affine::AffineApplyOp>(wave64Loc, xGroupMap, mlir::ValueRange{tid});
+      auto partnerOffset =
+          bodyBuilder.create<mlir::arith::ConstantIndexOp>(wave64Loc, offset);
+      auto partnerXGroup =
+          bodyBuilder.create<mlir::arith::AddIOp>(wave64Loc, xGroupVal.getResult(), partnerOffset);
+      auto lhsSlot =
+          bodyBuilder.create<mlir::affine::AffineApplyOp>(
+              wave64Loc, wave64RowSlotMap,
+              mlir::ValueRange{reduceRow.getResult(), xGroupVal.getResult()});
+      auto rhsSlot =
+          bodyBuilder.create<mlir::affine::AffineApplyOp>(
+              wave64Loc, wave64RowSlotMap,
+              mlir::ValueRange{reduceRow.getResult(), partnerXGroup.getResult()});
+      auto lhsMax =
+          bodyBuilder.create<mlir::affine::AffineLoadOp>(
+              wave64Loc, sharedReduceMaxWave64, mlir::ValueRange{lhsSlot.getResult()});
+      auto lhsSum =
+          bodyBuilder.create<mlir::affine::AffineLoadOp>(
+              wave64Loc, sharedReduceSumWave64, mlir::ValueRange{lhsSlot.getResult()});
+      auto rhsMax =
+          bodyBuilder.create<mlir::affine::AffineLoadOp>(
+              wave64Loc, sharedReduceMaxWave64, mlir::ValueRange{rhsSlot.getResult()});
+      auto rhsSum =
+          bodyBuilder.create<mlir::affine::AffineLoadOp>(
+              wave64Loc, sharedReduceSumWave64, mlir::ValueRange{rhsSlot.getResult()});
+      auto newMax =
+          bodyBuilder.create<mlir::arith::MaxNumFOp>(wave64Loc, lhsMax, rhsMax);
+      auto lhsShift =
+          bodyBuilder.create<mlir::arith::SubFOp>(wave64Loc, lhsMax, newMax);
+      auto rhsShift =
+          bodyBuilder.create<mlir::arith::SubFOp>(wave64Loc, rhsMax, newMax);
+      auto lhsFactor =
+          bodyBuilder.create<mlir::math::ExpOp>(wave64Loc, lhsShift);
+      auto rhsFactor =
+          bodyBuilder.create<mlir::math::ExpOp>(wave64Loc, rhsShift);
+      auto lhsScaled =
+          bodyBuilder.create<mlir::arith::MulFOp>(wave64Loc, lhsSum, lhsFactor);
+      auto rhsScaled =
+          bodyBuilder.create<mlir::arith::MulFOp>(wave64Loc, rhsSum, rhsFactor);
+      auto newSum =
+          bodyBuilder.create<mlir::arith::AddFOp>(wave64Loc, lhsScaled, rhsScaled);
+      bodyBuilder.create<mlir::affine::AffineStoreOp>(
+          wave64Loc, newMax, sharedReduceMaxWave64, mlir::ValueRange{lhsSlot.getResult()});
+      bodyBuilder.create<mlir::affine::AffineStoreOp>(
+          wave64Loc, newSum, sharedReduceSumWave64, mlir::ValueRange{lhsSlot.getResult()});
+      auto afterStage = getBuilder(stageIf.getOperation(), Position::after);
+      auto barrier = Rewriter::barrier(afterStage);
+      stageAnchor = barrier.getOperation();
+    }
+    emWriteAnchor = stageAnchor;
+  } else {
+    // reduceAndBraodcast: AFTER blockx loop (not inside it!)
+    // Each thread has accumulated partial max/sum across all blockx iterations.
+    std::vector<mlir::Value> softmaxSmBufs{smMax, smSum, smFactor};
+    auto softmaxForOps = reduceAndBraodcast(xBlockFors[0].getOperation(), {regMax, regSum}, softmaxSmBufs);
+    LOG_DEBUG("===== add warp level and block level ops of max and sum =======\n",module);
+
     auto blForOps = Rewriter::split(softmaxForOps[1], widthsQ);
     auto blSmMap = getBlockLevelSmMap(builder);
     auto blRegMap = getBlockLevelRegMap(builder);
@@ -648,67 +909,80 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     Rewriter::cache_write(blForOps.back(), regMax, regMax, blRegMap, blRegOperands);
     emWriteAnchor = blForOps.front().getOperation();
     LOG_DEBUG("===== split block level forop and amend map of reg and sm =======\n",module);
-  } else {
-    // In wave64 safe path, blockReduce is skipped entirely, so keep write-back
-    // anchored after warpBroadcast to avoid injecting stale block-level remaps.
-    emWriteAnchor = softmaxForOps.back().getOperation();
-    llvm::errs() << "[opt] GemmStats wave64: skip block-level remap for smMax/smSum\n";
   }
 
   // ====== Write em and denom to global memory ======
-  {
-    auto emDenomMap = getEmDenomWriteMap(builder);
-    auto d0 = builder.getAffineDimExpr(0);
-    auto d1 = builder.getAffineDimExpr(1);
-    auto d2 = builder.getAffineDimExpr(2);
-    auto regIdxExpr = d0 * cfg["BLOCK_SCATTER_WIDTH_Q"] + d1 * cfg["WARP_SCATTER_WIDTH_Q"] + d2;
-    auto regIdxMap = mlir::AffineMap::get(3, 0, {regIdxExpr}, builder.getContext());
+  auto emDenomMap = getEmDenomWriteMap(builder);
+  auto d0 = builder.getAffineDimExpr(0);
+  auto d1 = builder.getAffineDimExpr(1);
+  auto d2 = builder.getAffineDimExpr(2);
+  auto regIdxExpr = d0 * cfg["BLOCK_SCATTER_WIDTH_Q"] + d1 * cfg["WARP_SCATTER_WIDTH_Q"] + d2;
+  auto regIdxMap = mlir::AffineMap::get(3, 0, {regIdxExpr}, builder.getContext());
 
-    mlir::OpBuilder emBuilder = getBuilder(emWriteAnchor, Position::after);
-    auto loc = emBuilder.getUnknownLoc();
+  mlir::OpBuilder emBuilder = getBuilder(emWriteAnchor, Position::after);
+  auto loc = emBuilder.getUnknownLoc();
 
-    // Guard write-back to avoid lane_x write races.
-    // For wave64 backends, keep all-lane write-back as a correctness fallback:
-    // regMax/regSum are already warpBroadcast-synchronized across lane_x, so
-    // duplicate stores write identical values.
-    int64_t WLP_X = cfg["WARP_LAYOUT_P_X"];
-    if (!wave64NoBlockReduce && WLP_X > 1) {
-      mlir::Value tid = this->threadIdx.getIVs()[0];
-      auto gd0 = emBuilder.getAffineDimExpr(0);
-      auto modExpr = gd0 % WLP_X;
-      auto intSet = mlir::IntegerSet::get(1, 0, {modExpr}, {true});
-      auto ifOp = emBuilder.create<mlir::affine::AffineIfOp>(
-          loc, intSet, mlir::ValueRange{tid}, false);
-      emBuilder.setInsertionPointToStart(ifOp.getThenBlock());
-    } else if (wave64NoBlockReduce) {
-      llvm::errs() << "[opt] GemmStats wave64: disable lane_x write guard for em/denom\n";
-    }
-
-    llvm::SmallVector<int64_t> lbs{0, 0, 0};
-    llvm::SmallVector<int64_t> ubs{blockRepeatQ, warpRepeatQ, cfg["WARP_SCATTER_WIDTH_Q"]};
-    llvm::SmallVector<int64_t> steps{1, 1, 1};
-    auto [writeForOps, writeIvs] = createNestedLoops(emBuilder, lbs, ubs, steps);
-    emBuilder.setInsertionPointToStart(writeForOps.back().getBody());
-
-    auto regIdx = emBuilder.create<mlir::affine::AffineApplyOp>(loc, regIdxMap, writeIvs);
-
-    // em = exp(regMax[regIdx])
-    auto maxVal = emBuilder.create<mlir::affine::AffineLoadOp>(loc, regMax, mlir::ValueRange{regIdx.getResult()});
-    auto emVal = emBuilder.create<mlir::math::ExpOp>(loc, maxVal);
-
-    // denom = regSum[regIdx]
-    auto sumVal = emBuilder.create<mlir::affine::AffineLoadOp>(loc, regSum, mlir::ValueRange{regIdx.getResult()});
-
-    // Build operands: {b1, b2, by, tid, blockRepQ, warpRepQ, width}
-    auto bivs = this->blockIdx.getIVs();
-    llvm::SmallVector<mlir::Value> emOperands(bivs.rbegin(), bivs.rend()-1);
-    emOperands.push_back(byIdx);
-    emOperands.push_back(tIdx[0]);
-    for (auto& iv : writeIvs) emOperands.push_back(iv);
-
-    emBuilder.create<mlir::affine::AffineStoreOp>(loc, emVal, EmOut, emDenomMap, emOperands);
-    emBuilder.create<mlir::affine::AffineStoreOp>(loc, sumVal, DenomOut, emDenomMap, emOperands);
+  int64_t WLP_X = cfg["WARP_LAYOUT_P_X"];
+  if (useWave64SharedReduce) {
+    mlir::Value tid = this->threadIdx.getIVs()[0];
+    auto d0 = emBuilder.getAffineDimExpr(0);
+    auto leaderExpr = getWave64XGroupExpr(d0, cfg);
+    auto intSet = mlir::IntegerSet::get(
+        1, 0, llvm::ArrayRef<mlir::AffineExpr>({leaderExpr}),
+        llvm::ArrayRef<bool>({true}));
+    auto ifOp = emBuilder.create<mlir::affine::AffineIfOp>(
+        loc, intSet, mlir::ValueRange{tid}, false);
+    emBuilder.setInsertionPointToStart(ifOp.getThenBlock());
+  } else if (WLP_X > 1) {
+    mlir::Value tid = this->threadIdx.getIVs()[0];
+    auto gd0 = emBuilder.getAffineDimExpr(0);
+    auto modExpr = gd0 % WLP_X;
+    auto intSet = mlir::IntegerSet::get(1, 0, {modExpr}, {true});
+    auto ifOp = emBuilder.create<mlir::affine::AffineIfOp>(
+        loc, intSet, mlir::ValueRange{tid}, false);
+    emBuilder.setInsertionPointToStart(ifOp.getThenBlock());
   }
+
+  llvm::SmallVector<int64_t> lbs{0, 0, 0};
+  llvm::SmallVector<int64_t> ubs{blockRepeatQ, warpRepeatQ, cfg["WARP_SCATTER_WIDTH_Q"]};
+  llvm::SmallVector<int64_t> steps{1, 1, 1};
+  auto [writeForOps, writeIvs] = createNestedLoops(emBuilder, lbs, ubs, steps);
+  emBuilder.setInsertionPointToStart(writeForOps.back().getBody());
+
+  mlir::Value maxVal;
+  mlir::Value sumVal;
+  if (useWave64SharedReduce) {
+    auto wave64RowMap = getWave64RowInBlockMap(emBuilder, cfg);
+    auto wave64RowSlotMap = getWave64RowSlotMap(emBuilder, cfg);
+    auto row =
+        emBuilder.create<mlir::affine::AffineApplyOp>(
+            loc, wave64RowMap, mlir::ValueRange{tIdx[0], writeIvs[0], writeIvs[1], writeIvs[2]});
+    auto zeroIdx =
+        emBuilder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    auto slot =
+        emBuilder.create<mlir::affine::AffineApplyOp>(
+            loc, wave64RowSlotMap, mlir::ValueRange{row.getResult(), zeroIdx});
+    maxVal =
+        emBuilder.create<mlir::affine::AffineLoadOp>(loc, sharedReduceMaxWave64, mlir::ValueRange{slot.getResult()});
+    sumVal =
+        emBuilder.create<mlir::affine::AffineLoadOp>(loc, sharedReduceSumWave64, mlir::ValueRange{slot.getResult()});
+  } else {
+    auto regIdx = emBuilder.create<mlir::affine::AffineApplyOp>(loc, regIdxMap, writeIvs);
+    maxVal =
+        emBuilder.create<mlir::affine::AffineLoadOp>(loc, regMax, mlir::ValueRange{regIdx.getResult()});
+    sumVal =
+        emBuilder.create<mlir::affine::AffineLoadOp>(loc, regSum, mlir::ValueRange{regIdx.getResult()});
+  }
+  auto emVal = emBuilder.create<mlir::math::ExpOp>(loc, maxVal);
+
+  auto bivs = this->blockIdx.getIVs();
+  llvm::SmallVector<mlir::Value> emOperands(bivs.rbegin(), bivs.rend()-1);
+  emOperands.push_back(byIdx);
+  emOperands.push_back(tIdx[0]);
+  for (auto& iv : writeIvs) emOperands.push_back(iv);
+
+  emBuilder.create<mlir::affine::AffineStoreOp>(loc, emVal, EmOut, emDenomMap, emOperands);
+  emBuilder.create<mlir::affine::AffineStoreOp>(loc, sumVal, DenomOut, emDenomMap, emOperands);
   LOG_DEBUG("===== write em and denom to global =======\n",module);
 
   // Cleanup: erase initBufFor, midBuf, sumBuf, maxBuf
@@ -727,6 +1001,7 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       threadParallelOp = p;
       return mlir::WalkResult::interrupt();
     }
+    return mlir::WalkResult::advance();
   });
   moveMemrefDefineAhead(threadParallelOp.getOperation());
   LOG_DEBUG("===== moveMemrefDefineAhead =======\n",module);

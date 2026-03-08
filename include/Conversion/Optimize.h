@@ -10,6 +10,7 @@
 namespace KernelCodeGen {
 
 struct Optimizer {
+  virtual ~Optimizer() = default;
   virtual bool applicable(mlir::func::FuncOp& funcOp, const std::map<std::string, int64_t>& config) = 0;
   virtual void applyOptimzer(mlir::func::FuncOp& funcOp) = 0;
 
@@ -162,6 +163,7 @@ struct GemmStatsOptimizer : Optimizer {
   GemmStatsOptimizer() {
     this->name = std::move(std::string("GemmStats"));
   }
+  ~GemmStatsOptimizer() override;
   virtual bool applicable(mlir::func::FuncOp& funcOp, const std::map<std::string, int64_t>& config) override;
   virtual void applyOptimzer(mlir::func::FuncOp& funcOp) override;
 
