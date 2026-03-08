@@ -108,9 +108,9 @@ class Gemma2SplitOp(OpInterface):
             assert len(shapeList) == 4
             [bs, hn, sl, hd] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
-            v = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
             self.InputTensors_Baseline = [q, k, v]
         return self.InputTensors_Baseline
 

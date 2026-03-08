@@ -4,6 +4,32 @@
 
 namespace KernelCodeGen {
 
+static mlir::Value buildBoundedTanhViaRationalApprox(mlir::OpBuilder &builder,
+                                                     mlir::Location loc,
+                                                     mlir::Value x) {
+  auto ty = x.getType();
+  auto one = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 1.0f));
+  auto negOne = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, -1.0f));
+  auto c15 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 15.0f));
+  auto c105 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 105.0f));
+  auto c420 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 420.0f));
+  auto c945 = builder.create<mlir::arith::ConstantOp>(loc, builder.getFloatAttr(ty, 945.0f));
+
+  auto x2 = builder.create<mlir::arith::MulFOp>(loc, x, x);
+  auto x4 = builder.create<mlir::arith::MulFOp>(loc, x2, x2);
+  auto numerPoly1 = builder.create<mlir::arith::MulFOp>(loc, c105, x2);
+  auto numerPoly2 = builder.create<mlir::arith::AddFOp>(loc, c945, numerPoly1);
+  auto numerPoly = builder.create<mlir::arith::AddFOp>(loc, numerPoly2, x4);
+  auto numer = builder.create<mlir::arith::MulFOp>(loc, x, numerPoly);
+  auto denomPoly1 = builder.create<mlir::arith::MulFOp>(loc, c420, x2);
+  auto denomPoly2 = builder.create<mlir::arith::AddFOp>(loc, c945, denomPoly1);
+  auto denomPoly3 = builder.create<mlir::arith::MulFOp>(loc, c15, x4);
+  auto denom = builder.create<mlir::arith::AddFOp>(loc, denomPoly2, denomPoly3);
+  auto approx = builder.create<mlir::arith::DivFOp>(loc, numer, denom);
+  auto clampHi = builder.create<mlir::arith::MinNumFOp>(loc, approx, one);
+  return builder.create<mlir::arith::MaxNumFOp>(loc, clampHi, negOne);
+}
+
 // ======================================= global to sm =========================================
 std::array<int64_t, 7> FlashAttnSplitK2Optimizer::getCfgDatas(const std::string& bufType) {
   int64_t blockTileY = cfg.at("Br"), blockTileX = cfg.at("Slice1");
@@ -635,6 +661,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     bool doSoftcap = cfg.count("SOFTCAP_TANH") && cfg.at("SOFTCAP_TANH");
     bool doMask = cfg.count("CAUSAL_MASK") && cfg.at("CAUSAL_MASK");
     if (doSoftcap || doMask) {
+      bool wave64Path = cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32;
       tyds = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, "ttileyDown");
       auto dtype = typeMid.getElementType();
       mlir::OpBuilder sb(tyds[0]);
@@ -658,7 +685,9 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
       if (doSoftcap) {
         auto divided = sb.create<mlir::arith::MulFOp>(loc, val, invScaleConst);
-        auto tanhed = sb.create<mlir::math::TanhOp>(loc, divided);
+        auto tanhed = wave64Path
+            ? buildBoundedTanhViaRationalApprox(sb, loc, divided)
+            : sb.create<mlir::math::TanhOp>(loc, divided).getResult();
         val = sb.create<mlir::arith::MulFOp>(loc, tanhed, scaleConst);
       }
 
