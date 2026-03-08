@@ -28,7 +28,8 @@ bool isIrDumpEnabled() {
 }
 
 std::string defaultIrDumpDir() {
-  return (std::filesystem::current_path() / "_TempIRCodes").string();
+  std::filesystem::path projectRoot = std::filesystem::path(BC_DUMP_PATH).parent_path();
+  return (projectRoot / "_TempIRCodes").string();
 }
 
 std::string sanitizePathToken(const std::string &token) {
