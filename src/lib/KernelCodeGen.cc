@@ -1,11 +1,108 @@
 #include "KernelCodeGen.h"
+#include <algorithm>
+#include <atomic>
+#include <cctype>
+#include <cstdlib>
 #include <dlfcn.h>
 #include <filesystem>
 #include <fstream>
 #include "mlir/Dialect/Affine/Passes.h"
 #include "mlir/Pass/PassManager.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
+#include "llvm/Support/raw_ostream.h"
 #include "config.h"
+
+namespace {
+
+std::atomic<uint64_t> gIrDumpSeq{0};
+
+bool isIrDumpEnabled() {
+  const char *enabledEnv = std::getenv("KCG_DUMP_IR");
+  if (!enabledEnv || !*enabledEnv) {
+    return false;
+  }
+  std::string value(enabledEnv);
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value == "1" || value == "true" || value == "on" || value == "yes";
+}
+
+std::string defaultIrDumpDir() {
+  return (std::filesystem::current_path() / "_TempIRCodes").string();
+}
+
+std::string sanitizePathToken(const std::string &token) {
+  std::string sanitized;
+  sanitized.reserve(token.size());
+  for (unsigned char c : token) {
+    if (std::isalnum(c) || c == '_' || c == '-' || c == '.') {
+      sanitized.push_back(static_cast<char>(c));
+    } else {
+      sanitized.push_back('_');
+    }
+  }
+  return sanitized.empty() ? std::string("module") : sanitized;
+}
+
+std::string getModuleDumpStem(mlir::ModuleOp module) {
+  std::string kernelName = "module";
+  module.walk([&](mlir::func::FuncOp funcOp) {
+    kernelName = funcOp.getName().str();
+    return mlir::WalkResult::interrupt();
+  });
+  return sanitizePathToken(kernelName);
+}
+
+void dumpModuleIRIfEnabled(mlir::ModuleOp module, const std::string &stage) {
+  if (!isIrDumpEnabled()) {
+    return;
+  }
+
+  const char *dumpDirEnv = std::getenv("KCG_DUMP_IR_DIR");
+  const std::string dumpDir =
+      (dumpDirEnv && *dumpDirEnv) ? std::string(dumpDirEnv) : defaultIrDumpDir();
+  std::error_code ec;
+  std::filesystem::create_directories(dumpDir, ec);
+  if (ec) {
+    llvm::errs() << "[ir-dump] create dir failed: " << dumpDir
+                 << " err=" << ec.message() << "\n";
+    return;
+  }
+
+  const uint64_t seq = ++gIrDumpSeq;
+  const std::string kernel = getModuleDumpStem(module);
+  const std::string tag = sanitizePathToken(stage);
+  const auto outPath = (std::filesystem::path(dumpDir) /
+                        (kernel + ".s" + std::to_string(seq) + "." + tag + ".mlir"))
+                           .string();
+  const auto latestPath =
+      (std::filesystem::path(dumpDir) / (kernel + ".latest." + tag + ".mlir")).string();
+
+  auto writeOne = [&](const std::string &path) -> bool {
+    std::error_code fec;
+    llvm::raw_fd_ostream os(path, fec);
+    if (fec) {
+      llvm::errs() << "[ir-dump] open failed: " << path << " err=" << fec.message()
+                   << "\n";
+      return false;
+    }
+    module.print(os);
+    os.flush();
+    return true;
+  };
+
+  bool wroteSeq = writeOne(outPath);
+  bool wroteLatest = writeOne(latestPath);
+  if (wroteSeq || wroteLatest) {
+    llvm::errs() << "[ir-dump] wrote " << outPath;
+    if (wroteLatest) {
+      llvm::errs() << " and " << latestPath;
+    }
+    llvm::errs() << "\n";
+  }
+}
+
+}  // namespace
 
 namespace KernelCodeGen {
 
@@ -78,6 +175,7 @@ std::vector<std::string> KernelCodeGenerator::createKernels(mlir::ModuleOp& mod,
     });
   }
 
+  dumpModuleIRIfEnabled(mod, "01_create");
   return noSupKernels;
 }
 
@@ -216,6 +314,7 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
     LOG_DEBUG("===== eraseSingleIterForOps =====\n", mod);
     kernel->setAttr(std::string("func.state"), builder.getStringAttr("gpu"));
   }
+  dumpModuleIRIfEnabled(mod, "02_mapping");
   return true;
 }
 
@@ -257,6 +356,7 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
     opt->applyOptimzer(funcOps[0]);
   }
   // std::cout << "[lib] ========= optimize ends " << std::endl;
+  dumpModuleIRIfEnabled(mod, "03_optimize");
   return true;
 }
 
@@ -271,6 +371,7 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
       llvm::errs() << "======== IR dump after failed pass ========\n";
       mod->print(llvm::errs());
       llvm::errs() << "\n======== end IR dump ========\n";
+      dumpModuleIRIfEnabled(mod, std::string("04_failed_") + tag);
       return false;
     }
     llvm::errs() << "[transform] OK: " << tag << "\n";
@@ -296,6 +397,7 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
   if (!runOne(createAffineUnrollPass(), "AffineUnroll")) return false;
   if (!runOne(mlir::createCSEPass(), "CSE")) return false;
   if (!runOne(mlir::createSymbolDCEPass(), "SymbolDCE")) return false;
+  dumpModuleIRIfEnabled(mod, "04_transform");
   return true;
 }
 
@@ -514,7 +616,8 @@ bool KernelCodeGenerator::lowering(mlir::ModuleOp& mod/*, OUT std::vector<int>& 
 */
   secondLowering(mod, context, target);
   LOG_DEBUG(" === after secondLowering =====\n",mod);
-  
+
+  dumpModuleIRIfEnabled(mod, "05_lowering");
   return true;
 }
 

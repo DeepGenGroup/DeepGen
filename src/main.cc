@@ -3,11 +3,16 @@
 #include <iostream>
 #include <string>
 #include <vector>
+#include <atomic>
+#include <cstdint>
+#include <filesystem>
+#include "config.h"
 #include "KernelCodeGen.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include "Common/Utils.h"
 #include "Python.h"
+#include "llvm/Support/raw_ostream.h"
 
 using namespace KernelCodeGen;
 using TuneConfig = std::map<std::string, std::map<std::string, int64_t>>;
@@ -17,38 +22,114 @@ KernelCodeGen::KernelCodeGenerator generator;
 
 std::string __GlobalKernelName = "attention1";
 
+namespace {
+std::atomic<uint64_t> gIrDumpSeq{0};
+
+std::string defaultIrDumpDir() {
+  std::filesystem::path projectRoot = std::filesystem::path(BC_DUMP_PATH).parent_path();
+  return (projectRoot / "_TempIRCodes").string();
+}
+
+std::string sanitizePathToken(const std::string& s) {
+  std::string out;
+  out.reserve(s.size());
+  for (char c : s) {
+    if ((c >= 'a' && c <= 'z') ||
+        (c >= 'A' && c <= 'Z') ||
+        (c >= '0' && c <= '9') ||
+        c == '_' || c == '-' || c == '.') {
+      out.push_back(c);
+    } else {
+      out.push_back('_');
+    }
+  }
+  return out.empty() ? std::string("unknown") : out;
+}
+
+void dumpModuleIRIfEnabled(mlir::ModuleOp module, const std::string& stage) {
+  const char* dumpDirEnv = std::getenv("KCG_DUMP_IR_DIR");
+  const std::string dumpDir = (dumpDirEnv && *dumpDirEnv) ? std::string(dumpDirEnv) : defaultIrDumpDir();
+  std::error_code ec;
+  std::filesystem::create_directories(dumpDir, ec);
+  if (ec) {
+    llvm::errs() << "[ir-dump] create dir failed: " << dumpDir << " err=" << ec.message() << "\n";
+    return;
+  }
+
+  const uint64_t seq = ++gIrDumpSeq;
+  const std::string kernel = sanitizePathToken(__GlobalKernelName);
+  const std::string tag = sanitizePathToken(stage);
+  const auto outPath = (std::filesystem::path(dumpDir) /
+      (kernel + ".s" + std::to_string(seq) + "." + tag + ".mlir")).string();
+  const auto latestPath = (std::filesystem::path(dumpDir) /
+      (kernel + ".latest." + tag + ".mlir")).string();
+
+  auto writeOne = [&](const std::string& path) -> bool {
+    std::error_code fec;
+    llvm::raw_fd_ostream os(path, fec);
+    if (fec) {
+      llvm::errs() << "[ir-dump] open failed: " << path << " err=" << fec.message() << "\n";
+      return false;
+    }
+    module.print(os);
+    os.flush();
+    return true;
+  };
+
+  bool wroteSeq = writeOne(outPath);
+  bool wroteLatest = writeOne(latestPath);
+  if (wroteSeq || wroteLatest) {
+    llvm::errs() << "[ir-dump] wrote " << outPath;
+    if (wroteLatest) {
+      llvm::errs() << " and " << latestPath;
+    }
+    llvm::errs() << "\n";
+  }
+}
+}  // namespace
+
 std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<KernelData> kds, std::vector<FuseKernelData> fkds={}) {
   // compile func
   mlir::ModuleOp module = generator.createModule();
   auto noSupKernels = generator.createKernels(module, kds);  // create kernels
   llvm::errs() << "[pipeline] createKernels done\n";
+  dumpModuleIRIfEnabled(module, "00_create");
   auto result = generator.fusing(module, fkds);  // fusing
   llvm::errs() << "[pipeline] fusing done\n";
+  dumpModuleIRIfEnabled(module, "01_fusing");
   result = generator.mapping(module, tileCfg);  // mpping
   llvm::errs() << "[pipeline] mapping done\n";
+  dumpModuleIRIfEnabled(module, "02_mapping");
   llvm::errs() << "[pipeline] about to optimize\n";
   if (!generator.optimize(module, tuneCfg)) {
     llvm::errs() << "[pipeline] optimize FAILED\n";
+    dumpModuleIRIfEnabled(module, "03_optimize_failed");
     return "";
   }
   llvm::errs() << "[pipeline] optimize done\n";
+  dumpModuleIRIfEnabled(module, "03_optimize");
   if (mlir::failed(module.verify())) {
     llvm::errs() << "[pipeline] ERROR: IR already broken after optimize!\n";
+    dumpModuleIRIfEnabled(module, "03_verify_failed");
     return "";
   }
   llvm::errs() << "[pipeline] verify OK after optimize\n";
   llvm::errs() << "[pipeline] about to transform\n";
   if (!generator.transform(module)) {
     llvm::errs() << "[pipeline] transform FAILED\n";
+    dumpModuleIRIfEnabled(module, "04_transform_failed");
     return "";
   }
   llvm::errs() << "[pipeline] transform done\n";
+  dumpModuleIRIfEnabled(module, "04_transform");
   llvm::errs() << "[pipeline] about to lowering\n";
   if (!generator.lowering_(module)) {
     llvm::errs() << "[pipeline] lowering FAILED\n";
+    dumpModuleIRIfEnabled(module, "05_lowering_failed");
     return "";
   }
   llvm::errs() << "[pipeline] lowering done\n";
+  dumpModuleIRIfEnabled(module, "05_lowering");
   auto path = generator.translate(module);
   llvm::errs() << "[pipeline] translate done\n";
   return path;
