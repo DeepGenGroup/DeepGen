@@ -49,6 +49,13 @@ def _h2o_split_k3(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return _h2o_split_k3_kernel(q, k, v, em, denom, out)
 
 
+def _make_qkv(bs, hn, sl, hd, dtype, device):
+    q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    return q, k, v
+
+
 class H2OSplitOp(OpInterface):
     """Split H2O attention into three codegen'd kernels:
 
@@ -108,9 +115,7 @@ class H2OSplitOp(OpInterface):
             assert len(shapeList) == 4
             [bs, hn, sl, hd] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
-            v = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            q, k, v = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k, v]
         return self.InputTensors_Baseline
 
@@ -469,8 +474,7 @@ class H2OK1Op(_H2OSingleKernelBase):
         if self.InputTensors_Baseline is None:
             [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
             ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            q, k, _ = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k]
         return self.InputTensors_Baseline
 
@@ -564,8 +568,7 @@ class H2OK2Op(_H2OSingleKernelBase):
         if self.InputTensors_Baseline is None:
             [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
             ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            q, k, _ = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k]
         return self.InputTensors_Baseline
 
@@ -665,9 +668,7 @@ class H2OK3Op(_H2OSingleKernelBase):
         if self.InputTensors_Baseline is None:
             [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
             ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
-            v = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            q, k, v = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k, v]
         return self.InputTensors_Baseline
 

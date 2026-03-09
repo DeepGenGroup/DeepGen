@@ -393,8 +393,34 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
         import kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace(_shape(2048), cfgPath, [], torch_dtype)
     if OpTy is kcg_att_split.AttentionSplitOp :
+        import json
         import kcg.tuning.attn_FP32_test as ns_attentiopn
-        return ns_attentiopn.getTuneSpace(_shape(2048), cfgPath, [], torch_dtype)
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        tmp_cfg = _dump_subcfg(full_cfg, "k2")
+        return ns_attentiopn.getTuneSpace(_shape(2048), tmp_cfg, [], torch_dtype)
+    if OpTy is kcg_att_split.AttentionK1Op:
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+
+        shape = _shape(4096)
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        enum_dtype = ToEnumIntDType(torch_dtype)
+        type_width = sizeof(enum_dtype)
+        sub_cfg = full_cfg["k1"] if "k1" in full_cfg else full_cfg
+        cfgs = _get_gemmstats_like_cfgs(sub_cfg, shape, type_width)
+        if len(cfgs) == 0:
+            print(f"[Warn] no valid AttentionK1 tuning cfg generated for shape={shape} from {cfgPath}", flush=True)
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, cfgs, torch_dtype, kernel_prefix="AttentionK1")
+    if OpTy is kcg_att_split.AttentionK2Op:
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        tmp_cfg = _dump_subcfg(full_cfg, "k2")
+        return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype, kernel_prefix="AttentionK2")
     if OpTy is kcg_att_gemma2.Gemma2SplitOp :
         import json
         import kcg.tuning.attn_FP32_test as ns_attentiopn
@@ -502,6 +528,8 @@ _opty_map = {
     "attn_v1": kcg_att.AttentionOp,
     "attn_v2": kcg_att_v2.AttentionV2Op,
     "attn_split": kcg_att_split.AttentionSplitOp,
+    "attn_k1": kcg_att_split.AttentionK1Op,
+    "attn_k2": kcg_att_split.AttentionK2Op,
     "gemma2_split": kcg_att_gemma2.Gemma2SplitOp,
     "gemma2_k1": kcg_att_gemma2.Gemma2K1Op,
     "gemma2_k2": kcg_att_gemma2.Gemma2K2Op,
@@ -537,7 +565,7 @@ def _extract_int_flag(argv: List[str], flag_name: str) -> Tuple[List[str], Optio
     return out, value
 
 def getInputs() :
-    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|gemma2_split|gemma2_k1|gemma2_k2|h2o_split|h2o_k1|h2o_k2|h2o_k3)] [devId(int)] [dtype(float32|float16)] [--seqlen int]"
+    helpmsg = "Usage : cfgFile result_json_path start maxCount checktflops(1,0) checkAcc(float) [opty(matmul|attn_v1|attn_v2|attn_split|attn_k1|attn_k2|gemma2_split|gemma2_k1|gemma2_k2|h2o_split|h2o_k1|h2o_k2|h2o_k3)] [devId(int)] [dtype(float32|float16)] [--seqlen int]"
     argv = sys.argv[1:]
     try:
         argv, seqlen = _extract_int_flag(argv, "--seqlen")

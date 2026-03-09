@@ -16,7 +16,7 @@ import torch
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
 from kcg.Kernel import *
 from kcg.Operators.attention_h2o import (
-    _h2o_split_k1, _h2o_split_k2, _h2o_split_k3, _causal_upper_mask,
+    _h2o_split_k1, _h2o_split_k2, _h2o_split_k3, _causal_upper_mask, _make_qkv,
 )
 
 
@@ -192,9 +192,7 @@ def main():
     B, H, S, D = shape3
     device = dev_name(dev_id)
 
-    q_base = torch.ones((B, H, S, D), dtype=dt, device=device)
-    k_base = torch.ones((B, H, D, S), dtype=dt, device=device)
-    v_base = torch.ones((B, H, S, D), dtype=dt, device=device)
+    q_base, k_base, v_base = _make_qkv(B, H, S, D, dt, device)
     qq = q_base.transpose(-1, -2).contiguous()
     kk = k_base
     em = torch.empty((B, H, S, 1), dtype=dt, device=device)

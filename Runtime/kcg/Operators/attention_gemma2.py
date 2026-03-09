@@ -30,6 +30,13 @@ def _gemma2_split_k2(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
     return _gemma2_split_k2_kernel(q, k, v, em, denom, out)
 
 
+def _make_qkv(bs, hn, sl, hd, dtype, device):
+    q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    return q, k, v
+
+
 def _causal_upper_mask(S, device, dtype):
     return torch.where(
         torch.triu(torch.ones((S, S), device=device, dtype=torch.bool), diagonal=1),
@@ -108,9 +115,7 @@ class Gemma2SplitOp(OpInterface):
             assert len(shapeList) == 4
             [bs, hn, sl, hd] = shapeList
             ety = ToTorchType(EnumKernelDType(dtypeInt))
-            q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
-            v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            q, k, v = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k, v]
         return self.InputTensors_Baseline
 
@@ -424,8 +429,7 @@ class Gemma2K1Op(_Gemma2SingleKernelBase):
         if self.InputTensors_Baseline is None:
             [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
             ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
+            q, k, _ = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k]
         return self.InputTensors_Baseline
 
@@ -535,9 +539,7 @@ class Gemma2K2Op(_Gemma2SingleKernelBase):
         if self.InputTensors_Baseline is None:
             [bs, hn, sl, hd] = self.BaseArgs.intValues[0]
             ety = ToTorchType(EnumKernelDType(self.BaseArgs.intValues[1]))
-            q = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
-            k = torch.ones((bs, hn, hd, sl), dtype=ety, device=dev_name(devId))
-            v = torch.ones((bs, hn, sl, hd), dtype=ety, device=dev_name(devId))
+            q, k, v = _make_qkv(bs, hn, sl, hd, ety, dev_name(devId))
             self.InputTensors_Baseline = [q, k, v]
         return self.InputTensors_Baseline
 
