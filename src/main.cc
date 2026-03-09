@@ -25,6 +25,17 @@ std::string __GlobalKernelName = "attention1";
 namespace {
 std::atomic<uint64_t> gIrDumpSeq{0};
 
+bool isIrDumpEnabled() {
+  const char* enabledEnv = std::getenv("KCG_DUMP_IR");
+  if (!enabledEnv || !*enabledEnv) {
+    return false;
+  }
+  std::string value(enabledEnv);
+  std::transform(value.begin(), value.end(), value.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return value == "1" || value == "true" || value == "on" || value == "yes";
+}
+
 std::string defaultIrDumpDir() {
   std::filesystem::path projectRoot = std::filesystem::path(BC_DUMP_PATH).parent_path();
   return (projectRoot / "_TempIRCodes").string();
@@ -47,6 +58,10 @@ std::string sanitizePathToken(const std::string& s) {
 }
 
 void dumpModuleIRIfEnabled(mlir::ModuleOp module, const std::string& stage) {
+  if (!isIrDumpEnabled()) {
+    return;
+  }
+
   const char* dumpDirEnv = std::getenv("KCG_DUMP_IR_DIR");
   const std::string dumpDir = (dumpDirEnv && *dumpDirEnv) ? std::string(dumpDirEnv) : defaultIrDumpDir();
   std::error_code ec;
