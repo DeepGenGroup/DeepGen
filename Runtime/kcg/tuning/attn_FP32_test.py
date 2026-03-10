@@ -155,19 +155,28 @@ class CreateAttnConfig:
       rep_o_y = (old[2][2] // old[5][4]) * (old[5][4] // old[5][6])  # (otr / bswp) * (bswp / wswp)
       rep_o_x = (old[2][3] // old[5][5]) * (old[5][5] // old[5][7])  # (otc / bswv) * (bswv / wswv)
       # NOTE:
-      # This heuristic is used as a coarse pruning step. Using warp_size(64 on DCU)
-      # here over-prunes valid layouts for current H2O tuning spaces and can make
-      # the tune-space empty. Keep the legacy 32-lane normalization for pruning.
-      best_rep_p_y = (old[4][2] * old[2][0] * (4 // self.type_width)) // 32  # wly * ptr * (fp32w / typew) / 32
-      best_rep_p_x = (old[4][3] * old[2][1] * (4 // self.type_width)) // 32  # wlx * ptc * (fp32w / typew) / 32
-      best_rep_o_y = (old[5][2] * old[2][2] * (4 // self.type_width)) // 32  # wly * otr * (fp32w / typew) / 32
-      best_rep_o_x = (old[5][3] * old[2][3] * (4 // self.type_width)) // 32  # wlx * otc * (fp32w / typew) / 32
-      best_rep_p_y = 1 if best_rep_p_y == 0 else best_rep_p_y
-      best_rep_p_x = 1 if best_rep_p_x == 0 else best_rep_p_x
-      best_rep_o_y = 1 if best_rep_o_y == 0 else best_rep_o_y
-      best_rep_o_x = 1 if best_rep_o_x == 0 else best_rep_o_x
-      # print(rep_p_y, best_rep_p_y, rep_p_x, best_rep_p_x, rep_o_y, best_rep_o_y, rep_o_x, best_rep_o_x)
-      if rep_p_y == best_rep_p_y and rep_p_x == best_rep_p_x and rep_o_y == best_rep_o_y and rep_o_x == best_rep_o_x:
+      # This is only a coarse pruning heuristic. On warp64 targets, using only
+      # warp_size normalization can collapse fp32 spaces too aggressively, while
+      # using only legacy 32-lane normalization can prune every fp16 candidate.
+      # Accept either target so warp64 keeps legacy-compatible fp32 layouts and
+      # still admits warp-aware fp16 layouts.
+      lane_norms = [32]
+      if self.cfg["WARP_SIZE"][0] != 32:
+        lane_norms = [self.cfg["WARP_SIZE"][0], 32]
+      keep = False
+      for lane_norm in lane_norms:
+        best_rep_p_y = (old[4][2] * old[2][0] * (4 // self.type_width)) // lane_norm  # wly * ptr * (fp32w / typew) / lane_norm
+        best_rep_p_x = (old[4][3] * old[2][1] * (4 // self.type_width)) // lane_norm  # wlx * ptc * (fp32w / typew) / lane_norm
+        best_rep_o_y = (old[5][2] * old[2][2] * (4 // self.type_width)) // lane_norm  # wly * otr * (fp32w / typew) / lane_norm
+        best_rep_o_x = (old[5][3] * old[2][3] * (4 // self.type_width)) // lane_norm  # wlx * otc * (fp32w / typew) / lane_norm
+        best_rep_p_y = 1 if best_rep_p_y == 0 else best_rep_p_y
+        best_rep_p_x = 1 if best_rep_p_x == 0 else best_rep_p_x
+        best_rep_o_y = 1 if best_rep_o_y == 0 else best_rep_o_y
+        best_rep_o_x = 1 if best_rep_o_x == 0 else best_rep_o_x
+        if rep_p_y == best_rep_p_y and rep_p_x == best_rep_p_x and rep_o_y == best_rep_o_y and rep_o_x == best_rep_o_x:
+          keep = True
+          break
+      if keep:
         result.append(old)
     return result
 
@@ -342,11 +351,6 @@ class CreateConfig:
     results = self.h(results)
     return results
 
-
-# spec = importlib.util.spec_from_file_location("attention", "/home/xushilong/DeepGen/bin/libdeepgen.so")
-# mod = importlib.util.module_from_spec(spec)
-# spec.loader.exec_module(mod)
-# compile_kernel_FA = mod.compile_attn
 
 def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128], type_width : int = 4) -> List:
   # cfgfilepath = str(PathManager.project_dir()) + "/TuningConfigs/attn_llama2.json"
