@@ -353,6 +353,103 @@ def _get_gemmstats_like_cfgs(cfg_dict, shape: List[int], type_width: int):
                                                                 ))
     return results
 
+
+def _get_gemmnormcolsum_like_cfgs(cfg_dict, shape: List[int], type_width: int):
+    """Build an H2O-K2 tune space using only the real P-side constraints."""
+    hd = shape[3]
+    cfg = dict(cfg_dict)
+    cfg["Hd"] = [hd]
+    warp_size = cfg["WARP_SIZE"][0]
+    block_layout_px = 1
+    wave64_fixcol_elems = hd if warp_size > 32 else 0
+    results = []
+
+    for ptr in cfg["PTr"]:
+        for ptc in cfg["PTc"]:
+            for br in cfg["Br"]:
+                for bc in cfg["Bc"]:
+                    if br > shape[2] or bc > shape[2]:
+                        continue
+                    if br % ptr != 0 or bc % ptc != 0:
+                        continue
+                    thread_num = (br // ptr) * (bc // ptc)
+                    if thread_num <= 0 or thread_num > 256:
+                        continue
+
+                    by = br // ptr
+                    bx = bc // ptc
+                    p_layouts = []
+                    for bly in cfg["BLOCK_LAYOUT_P_Y"]:
+                        for wly in cfg["WARP_LAYOUT_P_Y"]:
+                            for wlx in cfg["WARP_LAYOUT_P_X"]:
+                                if wly * wlx != warp_size:
+                                    continue
+                                if wlx != bx:
+                                    continue
+                                if bly * wly != by:
+                                    continue
+                                p_layouts.append((bly, block_layout_px, wly, wlx))
+                    if not p_layouts:
+                        continue
+
+                    # Canonical fake O-side params so kernel naming stays stable,
+                    # while the tune space is driven only by GemmNormColSum knobs.
+                    otr = ptr
+                    if (hd * ptc) % bc != 0:
+                        continue
+                    otc = (hd * ptc) // bc
+                    if otc <= 0:
+                        continue
+
+                    for s1 in cfg["Slice1"]:
+                        ldtw_q = br * s1 / thread_num
+                        ldtw_k = bc * s1 / thread_num
+                        for glwq in cfg["GLOB_LOAD_WIDTH_Q"]:
+                            if ldtw_q < glwq:
+                                continue
+                            for glwk in cfg["GLOB_LOAD_WIDTH_K"]:
+                                if ldtw_k < glwk:
+                                    continue
+                                for bly_p, blx_p, wly_p, wlx_p in p_layouts:
+                                    for bswq in cfg["BLOCK_SCATTER_WIDTH_Q"]:
+                                        if bswq > ptr:
+                                            continue
+                                        for bswk in cfg["BLOCK_SCATTER_WIDTH_K"]:
+                                            if bswk > ptc:
+                                                continue
+                                            for wswq in cfg["WARP_SCATTER_WIDTH_Q"]:
+                                                if wswq > bswq:
+                                                    continue
+                                                for wswk in cfg["WARP_SCATTER_WIDTH_K"]:
+                                                    if wswk > bswk:
+                                                        continue
+                                                    fake_bswv = min(bswk, otc)
+                                                    fake_wswv = min(wswk, fake_bswv)
+                                                    for spp in cfg["SHARED_PREFETCH_P"]:
+                                                        # GemmNormColSum uses smK + smQ, optional smKFull,
+                                                        # optional prefetch smQ, plus a wave64 fix-column buffer.
+                                                        smem_elems = br * s1 + bc * s1 + wave64_fixcol_elems
+                                                        if s1 != hd:
+                                                            smem_elems += hd * br
+                                                        if spp == 1:
+                                                            smem_elems += bc * s1
+                                                        smem_bytes = smem_elems * type_width
+                                                        if smem_bytes > 65536:
+                                                            continue
+                                                        for rpp in cfg["REG_PREFETCH_P"]:
+                                                            for unroll in cfg["UNROLL_NUM"]:
+                                                                results.append((
+                                                                    thread_num,
+                                                                    (br, bc, hd, s1, 4),
+                                                                    (ptr, ptc, otr, otc),
+                                                                    (glwq, glwk, 4),
+                                                                    (bly_p, blx_p, wly_p, wlx_p, bswq, bswk, wswq, wswk),
+                                                                    (bly_p, blx_p, wly_p, wlx_p, bswq, fake_bswv, wswq, fake_wswv),
+                                                                    (unroll, warp_size, cfg["LOAD_CONTINUOUS_P"][0], 1, spp, rpp, 0, 0, 0),
+                                                                    smem_bytes,
+                                                                ))
+    return results
+
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32, seqlen: Optional[int] = None) -> TsGeneratorType :
     def _shape(default_seqlen: int) -> List[int]:
         shape = [1, 32, default_seqlen, 64]
@@ -457,24 +554,41 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
             full_cfg = json.load(f)
         tmp_cfg = _dump_subcfg(full_cfg, "k3")
         return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype)
-    if OpTy in (kcg_att_h2o.H2OK1Op, kcg_att_h2o.H2OK2Op, kcg_att_h2o.H2OK3Op):
+    if OpTy is kcg_att_h2o.H2OK1Op:
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+
+        shape = _shape(4096)
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        enum_dtype = ToEnumIntDType(torch_dtype)
+        type_width = sizeof(enum_dtype)
+        sub_cfg = full_cfg["k1"] if "k1" in full_cfg else full_cfg
+        cfgs = _get_gemmstats_like_cfgs(sub_cfg, shape, type_width)
+        if len(cfgs) == 0:
+            print(f"[Warn] no valid H2OK1 tuning cfg generated for shape={shape} from {cfgPath}", flush=True)
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, cfgs, torch_dtype, kernel_prefix="H2OK1")
+    if OpTy is kcg_att_h2o.H2OK2Op:
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+
+        shape = _shape(4096)
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        enum_dtype = ToEnumIntDType(torch_dtype)
+        type_width = sizeof(enum_dtype)
+        sub_cfg = full_cfg["k2"] if "k2" in full_cfg else full_cfg
+        cfgs = _get_gemmnormcolsum_like_cfgs(sub_cfg, shape, type_width)
+        if len(cfgs) == 0:
+            print(f"[Warn] no valid H2OK2 tuning cfg generated for shape={shape} from {cfgPath}", flush=True)
+        return ns_attentiopn.getTuneSpace(shape, cfgPath, cfgs, torch_dtype, kernel_prefix="H2OK2")
+    if OpTy is kcg_att_h2o.H2OK3Op:
         import json
         import kcg.tuning.attn_FP32_test as ns_attentiopn
         with open(cfgPath, 'r') as f:
             full_cfg = json.load(f)
-        sub_key = {kcg_att_h2o.H2OK1Op: "k1", kcg_att_h2o.H2OK2Op: "k2", kcg_att_h2o.H2OK3Op: "k3"}[OpTy]
-        tmp_cfg = _dump_subcfg(full_cfg, sub_key, fill_o_defaults=True)
-        tag = sub_key.upper()
-        def _rename_gen(gen, t):
-            for info in gen:
-                old_name = info.kernelName
-                new_name = old_name.replace("kcg_Attention_", f"kcg_H2O{t}_")
-                info.kernelName = new_name
-                shape, config = info.tsArgs
-                config[new_name] = config.pop(old_name)
-                info.tsArgs = [shape, config]
-                yield info
-        return _rename_gen(ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype), tag)
+        tmp_cfg = _dump_subcfg(full_cfg, "k3")
+        return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype, kernel_prefix="H2OK3")
     assert False, f'[Error] getTuningSpace : Invalid OpTy:{OpTy.__name__}'
     
 
