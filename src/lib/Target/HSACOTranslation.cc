@@ -86,6 +86,9 @@
 #include <iterator>
 #include <fstream>
 #include <iostream>
+#include <cerrno>
+#include <system_error>
+#include <unistd.h>
 #include "Target/LLVMIRTranslation.h"
 #include <cstdio>
 // #ifdef USE_CUDA
@@ -95,6 +98,63 @@ using namespace mlir;
 
 namespace KernelCodeGen
 {
+
+namespace {
+
+std::filesystem::path getHsacoWorkRoot() {
+    std::error_code ec;
+
+    std::filesystem::path dumpRoot = BC_DUMP_PATH;
+    if (!dumpRoot.empty()) {
+        auto candidate = dumpRoot / "hsaco_tmp";
+        std::filesystem::create_directories(candidate, ec);
+        if (!ec) {
+            return candidate;
+        }
+        llvm::errs() << "[hsaco] create work dir failed: " << candidate
+                     << " err=" << ec.message() << '\n';
+        ec.clear();
+    }
+
+    auto fallback = std::filesystem::temp_directory_path(ec);
+    if (ec) {
+        llvm::errs() << "[hsaco] temp_directory_path failed: " << ec.message() << '\n';
+        return std::filesystem::current_path();
+    }
+    fallback /= "kcg_hsaco_tmp";
+    std::filesystem::create_directories(fallback, ec);
+    if (ec) {
+        llvm::errs() << "[hsaco] create fallback dir failed: " << fallback
+                     << " err=" << ec.message() << '\n';
+        return fallback.parent_path();
+    }
+    return fallback;
+}
+
+std::string createUniqueKernelStem(const std::filesystem::path &workRoot) {
+    std::error_code ec;
+    std::filesystem::create_directories(workRoot, ec);
+    if (ec) {
+        llvm::errs() << "[hsaco] prepare work dir failed: " << workRoot
+                     << " err=" << ec.message() << '\n';
+        return "";
+    }
+
+    std::string pattern = (workRoot / "kcg_kernel-XXXXXX").string();
+    std::vector<char> tmpl(pattern.begin(), pattern.end());
+    tmpl.push_back('\0');
+    int fd = ::mkstemp(tmpl.data());
+    if (fd == -1) {
+        auto err = std::error_code(errno, std::generic_category());
+        llvm::errs() << "[hsaco] mkstemp failed: " << pattern
+                     << " err=" << err.message() << '\n';
+        return "";
+    }
+    ::close(fd);
+    return std::string(tmpl.data());
+}
+
+} // namespace
 
 std::unique_ptr<llvm::TargetMachine>
 initialize_module(llvm::Module *module, const std::string &triple,
@@ -175,16 +235,16 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
                             const std::string &features)
 {
     auto machine = initialize_module(module, triple, proc, features);
-    std::string dump_path = BC_DUMP_PATH;
 
-    // create unique dir for kernel's binary and hsaco
+    // Emit every intermediate into a dedicated writable temp area instead of
+    // relying on the current working directory. This avoids occasional path
+    // collisions/permission issues when multiple runs happen near each other.
     std::error_code ec;
-    llvm::SmallString<128> fsrc;
-    llvm::sys::fs::createTemporaryFile("kcg_kernel", "", fsrc);
-    llvm::FileRemover remover(fsrc);
-    std::filesystem::path kernel_dir{fsrc.data()};
-
-    std::string kernel_name{fsrc};
+    std::string kernel_name = createUniqueKernelStem(getHsacoWorkRoot());
+    if (kernel_name.empty()) {
+        return "";
+    }
+    llvm::FileRemover remover(kernel_name);
 
     // Save GCN ISA binary.
     std::filesystem::path isa_binary(kernel_name + ".o");
@@ -194,12 +254,13 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     // else
     isabin_path = isa_binary.string();
     std::unique_ptr<llvm::raw_fd_ostream> isabin_fs(
-        new llvm::raw_fd_ostream(isabin_path, ec, llvm::sys::fs::OF_Text));
+        new llvm::raw_fd_ostream(isabin_path, ec, llvm::sys::fs::OF_None));
     if (ec)
     {
         llvm::errs() << isabin_path
                         << " was not created. error code: " << ec.category().name()
                         << ':' << ec.value() << '\n';
+        return "";
     }
 
     // Write out bitcode
@@ -210,12 +271,13 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     // else
     bitcode_path = bitcode_filename.string();
     std::unique_ptr<llvm::raw_fd_ostream> bitecode_fs(
-        new llvm::raw_fd_ostream(bitcode_path, ec, llvm::sys::fs::OF_Text));
+        new llvm::raw_fd_ostream(bitcode_path, ec, llvm::sys::fs::OF_None));
     if (ec)
     {
         llvm::errs() << bitcode_path
                         << " was not created. error code: " << ec.category().name()
                         << ':' << ec.value() << '\n';
+        return "";
     }
 
     llvm::WriteBitcodeToFile(*module, *bitecode_fs);
@@ -225,6 +287,8 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     machine->addPassesToEmitFile(pass, *isabin_fs, nullptr,
                                     llvm::CodeGenFileType::ObjectFile);
     pass.run(*module);
+    isabin_fs->close();
+    bitecode_fs->close();
 
     // module->print(llvm::outs(), nullptr);
 
@@ -267,9 +331,15 @@ std::string generate_hsaco(llvm::Module *module, const std::string &triple,
     {
         llvm::errs() << "ld.lld execute fail: " << '\n'
                         << error_message << "Code: " << lld_result << '\n';
+        std::error_code rmEc;
+        std::filesystem::remove(hsaco_path, rmEc);
+        return "";
     }
-    isabin_fs->close();
-    bitecode_fs->close();
+    if (!std::filesystem::exists(hsaco_path)) {
+        llvm::errs() << "[hsaco] link finished but output is missing: "
+                     << hsaco_path << '\n';
+        return "";
+    }
     if (remove(bitcode_path.c_str()) == 0) {
 #ifdef KCG_DEBUG
         std::cout << "file deleted: " << bitcode_path << std::endl;
@@ -330,14 +400,16 @@ std::string generateAmdgcnAndHsacoFromLLIRFile(
     std::string amdgcn = std::get<0>(ret);
     std::string hsacoPath = std::get<1>(ret);
 
-    std::string amdgcnPath{"/home/xushilong/DeepGen/_TempCodes/rocmshuffle/testgcn.s"};
-    std::ofstream outasm(amdgcnPath);
-    if (outasm.is_open()) {
-        outasm << amdgcn;
-        outasm.close();
-        // std::cout << "write amdgcn success!" << std::endl;
-    } else {
-        // std::cout << "write amdgcn error!" << std::endl;
+    std::error_code ec;
+    auto amdgcnDir = std::filesystem::path(BC_DUMP_PATH).parent_path() / "_TempCodes" / "rocmshuffle";
+    std::filesystem::create_directories(amdgcnDir, ec);
+    if (!ec) {
+        auto amdgcnPath = amdgcnDir / "testgcn.s";
+        std::ofstream outasm(amdgcnPath);
+        if (outasm.is_open()) {
+            outasm << amdgcn;
+            outasm.close();
+        }
     }
     // std::cout << "amdgcnpath=" << amdgcnPath << std::endl;
     // std::cout << "hsacopath=" << hsacoPath << std::endl;

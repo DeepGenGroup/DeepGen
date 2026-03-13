@@ -1,5 +1,6 @@
 import time
 import glob
+import traceback
 import uuid
 from typing import Generator, List, Optional, Tuple
 import multiprocessing
@@ -35,18 +36,23 @@ def init_cuda(_devId : List) :
         torch_ns.empty_cache()
 
 def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , deviceId:int, backendtype : EnumBackendType, arch : str , index : int, opt : CompileOption, task_id : str = "") :
-    op = OpTy()
-    result = op.Compile(deviceId, backendtype, arch, info, opt)
-    pklName = f"{PathManager.pikle_dir()}/{deviceId}/{task_id}/kfg_{index}.pkl"
-    if len(result) == 5:
-        ba, kernlCfg, compiledKernel, k1Cfg, k2Cfg = result
-        serialize_to_file(pklName, (ba, kernlCfg, k1Cfg, k2Cfg))
-    elif len(result) == 4:
-        ba, kernlCfg, compiledKernel, k1Cfg = result
-        serialize_to_file(pklName, (ba, kernlCfg, k1Cfg))
-    else:
-        ba, kernlCfg, compiledKernel = result
-        serialize_to_file(pklName, (ba, kernlCfg))
+    try:
+        op = OpTy()
+        result = op.Compile(deviceId, backendtype, arch, info, opt)
+        pklName = f"{PathManager.pikle_dir()}/{deviceId}/{task_id}/kfg_{index}.pkl"
+        if len(result) == 5:
+            ba, kernlCfg, compiledKernel, k1Cfg, k2Cfg = result
+            serialize_to_file(pklName, (ba, kernlCfg, k1Cfg, k2Cfg))
+        elif len(result) == 4:
+            ba, kernlCfg, compiledKernel, k1Cfg = result
+            serialize_to_file(pklName, (ba, kernlCfg, k1Cfg))
+        else:
+            ba, kernlCfg, compiledKernel = result
+            serialize_to_file(pklName, (ba, kernlCfg))
+    except BaseException as e:
+        kernel_name = getattr(info, "kernelName", f"cfg_{index}")
+        print(f"[compile-skip] {kernel_name} compile failed: {e}", flush=True)
+        traceback.print_exc()
 
 
 g_index : int = 0
