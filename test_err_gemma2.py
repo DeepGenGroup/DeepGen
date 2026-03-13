@@ -78,8 +78,10 @@ def gemma2_p77_noexp2(q, k, scale8=8.0, tanh_scale=50.0):
     类比 Gemma2_p77：
       y = ...
       m = max(y)
+      em = exp(m)
+      scores = (Q / 8) @ K
       denom = sum(exp(y)) / exp(m)      # 先 sum 再除
-    return (m, denom)   # 类比 (max, reduce_sum(tmp))
+    return (em, denom)
     """
     B, S, H, D = q.shape
     device, dtype = q.device, q.dtype
@@ -89,7 +91,7 @@ def gemma2_p77_noexp2(q, k, scale8=8.0, tanh_scale=50.0):
 
     mask = causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
-    scores = torch.matmul(qh, kh) / scale8
+    scores = torch.matmul(qh / scale8, kh)
     y = torch.tanh(scores / tanh_scale) * tanh_scale
     y = y + mask
 
@@ -97,14 +99,14 @@ def gemma2_p77_noexp2(q, k, scale8=8.0, tanh_scale=50.0):
     em = torch.exp(m)
     sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
     denom = sum_ex / em
-    return m, denom
+    return em, denom
 
-def gemma2_p69_noexp2(q, v, k, m, denom, scale8=8.0, tanh_scale=50.0):
+def gemma2_p69_noexp2(q, v, k, em, denom, scale8=8.0, tanh_scale=50.0):
     """
     类比 Gemma2_p69（recompute y）：
-      p = exp(y) / (exp(m) * denom)
-      out = p @ V
-    return (m, exp(m), out)  # 类比返回一些中间量 + out
+      scores = (Q / 8) @ K
+      out = (exp(y) @ V) / (em * denom)
+    return (em, out)
     """
     B, S, H, D = q.shape
     device, dtype = q.device, q.dtype
@@ -115,15 +117,12 @@ def gemma2_p69_noexp2(q, v, k, m, denom, scale8=8.0, tanh_scale=50.0):
 
     mask = causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
-    scores = torch.matmul(qh, kh) / scale8
+    scores = torch.matmul(qh / scale8, kh)
     y = torch.tanh(scores / tanh_scale) * tanh_scale
     y = y + mask
 
-    em = torch.exp(m)
-    p = torch.exp(y) / (em * denom)
-
-    out = torch.matmul(p, vh).permute(0, 2, 1, 3)
-    return m, em, out
+    out = (torch.matmul(torch.exp(y), vh) / (em * denom)).permute(0, 2, 1, 3)
+    return em, out
 
 def report(tag, a, b):
     diff = (a - b).abs()
@@ -146,8 +145,8 @@ def main():
         y_before = gemma2_before_preprocess(q, k, v)
         y_trans  = gemma2_transformed_noexp2(q, k, v)
 
-        m, denom = gemma2_p77_noexp2(q, k)
-        m2, em2, y_split = gemma2_p69_noexp2(q, v, k, m, denom)
+        em, denom = gemma2_p77_noexp2(q, k)
+        em2, y_split = gemma2_p69_noexp2(q, v, k, em, denom)
 
     report("transformed_vs_before", y_trans, y_before)
     report("split_vs_transformed ", y_split, y_trans)

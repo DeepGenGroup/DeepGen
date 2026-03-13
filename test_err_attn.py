@@ -41,9 +41,9 @@ def kernel1_em_denom_sum_then_div(q, k, scale=8.0):
       em    = exp(max(scores))
       denom = sum(exp(scores)) / em      # 先 sum 再除
     """
-    qh = q.permute(0, 2, 1, 3)
+    qh = q.permute(0, 2, 1, 3) / scale
     kh = k.permute(0, 2, 3, 1)
-    scores = torch.matmul(qh, kh) / scale
+    scores = torch.matmul(qh, kh)
 
     m = scores.max(dim=-1, keepdim=True).values
     em = torch.exp(m)
@@ -55,16 +55,15 @@ def kernel1_em_denom_sum_then_div(q, k, scale=8.0):
 def kernel2_use_em_denom_sum_then_div(q, k, v, em, denom, scale=8.0):
     """
     kernel2:
-      p = (exp(scores)/em) / denom
-        = exp(scores) / (em * denom)
+      out = matmul(exp(scores)/em, v) / denom
     """
-    qh = q.permute(0, 2, 1, 3)
+    qh = q.permute(0, 2, 1, 3) / scale
     kh = k.permute(0, 2, 3, 1)
     vh = v.permute(0, 2, 1, 3)
 
-    scores = torch.matmul(qh, kh) / scale
-    p = torch.exp(scores) / (em * denom)
-    out = torch.matmul(p, vh)
+    scores = torch.matmul(qh, kh)
+    p = torch.exp(scores) / em
+    out = torch.matmul(p, vh) / denom
     return out.permute(0, 2, 1, 3)
 
 
