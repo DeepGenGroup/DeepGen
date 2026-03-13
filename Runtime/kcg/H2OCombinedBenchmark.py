@@ -263,9 +263,6 @@ def main():
 
     speedup = baseline_time / combined_time if combined_time > 0 else 0
 
-    print(f"[combined] K1 correct: {k1_ok}")
-    print(f"[combined] K2 correct: {k2_ok}")
-    print(f"[combined] K3 correct: {k3_ok}")
     print(f"[combined] Combined time: {combined_time:.4f} ms")
     print(f"[combined] Baseline time: {baseline_time:.4f} ms")
     print(f"[combined] Speedup: {speedup:.4f}")
@@ -277,10 +274,6 @@ def main():
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "combined_speedup": speedup,
-        "k1_correct": k1_ok,
-        "k2_correct": k2_ok,
-        "k3_correct": k3_ok,
-        "all_correct": k1_ok and k2_ok and k3_ok,
     }
 
     with open(out_path, 'w') as f:

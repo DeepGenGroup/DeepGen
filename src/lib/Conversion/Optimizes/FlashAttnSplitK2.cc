@@ -734,7 +734,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== NORMALIZE tileP using Em/Denom (replaces softmax steps 2-3) =====
+  // ===== PREPARE tmp = exp(tileP) / Em before matmul2 =====
   {
     tyds = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, "ttileyDown");
     auto dtype = typeMid.getElementType();
@@ -748,7 +748,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto pVal = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], normIvs);
     auto expVal = nb.create<mlir::math::ExpOp>(loc, pVal);
 
-    // Build affine map to compute global row for Em/Denom load.
+    // Build affine map to compute global row for Em load.
     // Decompose flat row index into block/warp scatter and combine with thread position.
     int batchCount = (int)bIdx.size() - 1;
     int emMapDims = batchCount + 3; // batch dims + by + tid + flat_i
@@ -790,13 +790,10 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     emOps.push_back(normIvs[0]);
 
     auto emVal = nb.create<mlir::affine::AffineLoadOp>(loc, Em, emMap, emOps);
-    auto denomVal = nb.create<mlir::affine::AffineLoadOp>(loc, Denom, emMap, emOps);
-
-    auto factor = nb.create<mlir::arith::MulFOp>(loc, emVal, denomVal);
-    auto normalized = nb.create<mlir::arith::DivFOp>(loc, expVal, factor);
-    nb.create<mlir::affine::AffineStoreOp>(loc, normalized, tileP[0], normIvs);
+    auto tmpVal = nb.create<mlir::arith::DivFOp>(loc, expVal, emVal);
+    nb.create<mlir::affine::AffineStoreOp>(loc, tmpVal, tileP[0], normIvs);
   }
-  LOG_DEBUG("===== normalize tileP with Em/Denom =======\n",module);
+  LOG_DEBUG("===== prepare tmp=exp(tileP)/Em =======\n",module);
 
   // ===== i. tileP to smP (with shuffle/split-k logic) =====
   // With BroadcastNorm fusing to 2 yloops, there's only 1 ttileyDown (matmul1's store-back).
@@ -944,7 +941,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== Store tileO to global O =====
+  // ===== Store tileO to global O, then divide each output row by Denom =====
   // For useSplitKPV: first reduce tileO across lane_x via warp shuffle,
   // then only lane_x==0 writes. Both must happen AFTER xBlockFor completes.
   {
@@ -984,12 +981,6 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
           loc, intSet, mlir::ValueRange{tid}, false);
       writeBuilder.setInsertionPointToStart(ifOp.getThenBlock());
     }
-
-    llvm::SmallVector<int64_t> lbs{0, 0}, ubs{cfg["OTr"], cfg["OTc"]}, steps{1, 1};
-    auto [oLoops, oIvs] = createNestedLoops(writeBuilder, lbs, ubs, steps);
-    writeBuilder.setInsertionPointToStart(oLoops.back().getBody());
-
-    auto oVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, tileO[0], oIvs);
 
     // Global index for O store.
     // For normal path (SPLITK_PV=0), use the same O-layout decomposition as getTileOToGlobOMap:
@@ -1040,6 +1031,35 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       colE = (tidE % this->blockOX) * cfg["OTc"] + jE;
     }
 
+    llvm::SmallVector<int64_t> lbs{0, 0}, ubs{cfg["OTr"], cfg["OTc"]}, steps{1, 1};
+    auto [oLoops, oIvs] = createNestedLoops(writeBuilder, lbs, ubs, steps);
+
+    auto bivs = this->blockIdx.getIVs();
+    llvm::SmallVector<mlir::Value> baseStoreOps(bivs.rbegin(), bivs.rend()-1);
+    baseStoreOps.push_back(byIdx);
+    baseStoreOps.push_back(this->threadIdx.getIVs()[0]);
+
+    auto denomRank = typeDenom.getRank();
+    llvm::SmallVector<mlir::AffineExpr> denomExprs;
+    for (int i = 0; i < batchCount; i++) denomExprs.push_back(dims[i]);
+    denomExprs.push_back(rowE);
+    while ((int)denomExprs.size() < denomRank) {
+      denomExprs.push_back(writeBuilder.getAffineConstantExpr(0));
+    }
+    auto denomMap = mlir::AffineMap::get(
+        dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(denomExprs), writeBuilder.getContext());
+
+    writeBuilder.setInsertionPointToStart(oLoops.front().getBody());
+    auto zeroIdx = writeBuilder.create<mlir::arith::ConstantIndexOp>(loc, 0);
+    llvm::SmallVector<mlir::Value> denomOps(baseStoreOps.begin(), baseStoreOps.end());
+    denomOps.push_back(oIvs[0]);
+    denomOps.push_back(zeroIdx);
+    auto denomVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, Denom, denomMap, denomOps);
+
+    writeBuilder.setInsertionPointToStart(oLoops.back().getBody());
+    auto oVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, tileO[0], oIvs);
+    auto normalizedO = writeBuilder.create<mlir::arith::DivFOp>(loc, oVal, denomVal);
+
     llvm::SmallVector<mlir::AffineExpr> globExprs;
     for (int i = 0; i < batchCount; i++) globExprs.push_back(dims[i]);
     globExprs.push_back(rowE);
@@ -1048,14 +1068,11 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto globMap = mlir::AffineMap::get(dimCount, 0,
         llvm::ArrayRef<mlir::AffineExpr>(globExprs), writeBuilder.getContext());
 
-    auto bivs = this->blockIdx.getIVs();
-    llvm::SmallVector<mlir::Value> stOps(bivs.rbegin(), bivs.rend()-1);
-    stOps.push_back(byIdx);
-    stOps.push_back(this->threadIdx.getIVs()[0]);
+    llvm::SmallVector<mlir::Value> stOps(baseStoreOps.begin(), baseStoreOps.end());
     stOps.push_back(oIvs[0]);
     stOps.push_back(oIvs[1]);
 
-    writeBuilder.create<mlir::affine::AffineStoreOp>(loc, oVal, O, globMap, stOps);
+    writeBuilder.create<mlir::affine::AffineStoreOp>(loc, normalizedO, O, globMap, stOps);
 
     // NOTE:
     // For the non-SPLITK path we now use a decomposed O-layout mapping where the
