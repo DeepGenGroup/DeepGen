@@ -74,8 +74,8 @@ class Gemma2SplitOp(OpInterface):
         Signature: (Q_t[B,H,D,S], K[B,H,D,S], em_out[B,H,S,1], denom_out[B,H,S,1])
         C++ entry: compile_gemma2_split_k1
 
-      Kernel 2 (output): GEMM(Q@K^T) + softcap + mask + normalize with em before P@V,
-        then divide by denom after P@V -> O
+      Kernel 2 (output): GEMM(Q@K^T) + softcap + mask + matmul(exp(y), V),
+        then divide by (em * denom) after P@V -> O
         Signature: (Q_t[B,H,D,S], K[B,H,D,S], V[B,H,S,D], em[B,H,S,1], denom[B,H,S,1], O[B,H,S,D])
         C++ entry: compile_gemma2_split_k2
 
