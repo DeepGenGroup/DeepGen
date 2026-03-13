@@ -146,6 +146,10 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   llvm::errs() << "[pipeline] lowering done\n";
   dumpModuleIRIfEnabled(module, "05_lowering");
   auto path = generator.translate(module);
+  if (path.empty()) {
+    llvm::errs() << "[pipeline] translate FAILED\n";
+    return "";
+  }
   llvm::errs() << "[pipeline] translate done\n";
   return path;
 }
@@ -454,7 +458,7 @@ std::string gemma2_split_k1(std::vector<int64_t> shape, const TuneConfig& config
 
 std::string gemma2_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
   // Gemma2 split kernel 2: GEMM(Q@K^T) + softcap(tanh) + causal mask
-  //   + matmul(exp(y), V)
+  //   + GEMM(exp(y), V)
   //   + post-matmul divide by (em * denom)
   //   → O
   auto attn = config.at(__GlobalKernelName);
@@ -632,7 +636,8 @@ std::string h2o_split_k2(std::vector<int64_t> shape, const TuneConfig& config, c
 }
 
 std::string h2o_split_k3(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
-  // H2O split kernel 3: GEMM(Q@K^T) + causal mask + broadcast normalize(em,denom) + GEMM(P@V) → O
+  // H2O split kernel 3: scale-Q GEMM(Q@K^T) + causal mask
+  //   + GEMM(exp(scores) @ V) + post-matmul divide by (em * denom) → O
   auto attn = config.at(__GlobalKernelName);
   TileConfig tileConfig = {
     {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
@@ -681,6 +686,7 @@ std::string h2o_split_k3(std::vector<int64_t> shape, const TuneConfig& config, c
   TuneConfig configK3 = config;
   configK3[__GlobalKernelName]["SCALE_Q"] = 1;
   configK3[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  configK3[__GlobalKernelName]["POST_MATMUL_EM_DENOM"] = 1;
   return compile_kernel(configK3, tileConfig, kds, fkds);
 }
 
@@ -953,12 +959,12 @@ static PyMethodDef DeepgenMethods[] = {
     {"set_platform", set_platform, METH_VARARGS, "Set target platform and architecture"},
     {"set_kernel_name", set_kernel_name, METH_VARARGS, "Set global kernel name"},
     {"compile_attn_split_k1", py_compile_attn_split_k1, METH_VARARGS, "Compile split attention kernel 1 (GEMM + reduce -> em, denom)"},
-    {"compile_attn_split_k2", py_compile_attn_split_k2, METH_VARARGS, "Compile split attention kernel 2 (GEMM + broadcast norm + GEMM -> O)"},
+    {"compile_attn_split_k2", py_compile_attn_split_k2, METH_VARARGS, "Compile split attention kernel 2 (scale-Q GEMM + mask + GEMM(exp(scores),V) + post divide by em*denom -> O)"},
     {"compile_gemma2_split_k1", py_compile_gemma2_split_k1, METH_VARARGS, "Compile Gemma2 split kernel 1 (GEMM + softcap + mask + reduce -> k1 outputs em, denom)"},
-    {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + post-matmul divide by em*denom + GEMM -> O)"},
+    {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + GEMM(exp(y),V) + post divide by em*denom -> O)"},
     {"compile_h2o_split_k1", py_compile_h2o_split_k1, METH_VARARGS, "Compile H2O split kernel 1 (GEMM + mask + reduce -> em, denom)"},
     {"compile_h2o_split_k2", py_compile_h2o_split_k2, METH_VARARGS, "Compile H2O split kernel 2 (GEMM + mask + normalize + col reduce -> row_sum)"},
-    {"compile_h2o_split_k3", py_compile_h2o_split_k3, METH_VARARGS, "Compile H2O split kernel 3 (GEMM + mask + broadcast norm + GEMM -> O)"},
+    {"compile_h2o_split_k3", py_compile_h2o_split_k3, METH_VARARGS, "Compile H2O split kernel 3 (scale-Q GEMM + mask + GEMM(exp(scores),V) + post divide by em*denom -> O)"},
     {NULL, NULL, 0, NULL}
 };
 
