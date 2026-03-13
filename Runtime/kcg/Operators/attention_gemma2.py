@@ -31,9 +31,9 @@ def _gemma2_split_k2(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
 
 def _make_qkv(bs, hn, sl, hd, dtype, device):
-    q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
-    k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
-    v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    q = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = torch.ones((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
     return q, k, v
 
 

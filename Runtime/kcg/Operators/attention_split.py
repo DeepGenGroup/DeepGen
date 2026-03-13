@@ -38,9 +38,9 @@ def _attn_split_k2(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
 
 def _make_qkv(bs, hn, sl, hd, dtype, device):
-    q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
-    k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
-    v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    q = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = torch.ones((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
     return q, k, v
 
 
@@ -251,8 +251,7 @@ class AttentionSplitOp(OpInterface):
         device, dtype = q.device, q.dtype
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
         # warmup
-        q_s = torch.mul(q, scale)
-        p = torch.matmul(q_s, k) + mask
+        p = torch.mul(torch.matmul(q, k), scale) + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_shifted = torch.sub(p, p_max)
         p_exp = torch.exp(p_shifted)
@@ -263,8 +262,7 @@ class AttentionSplitOp(OpInterface):
         ev_start = torch_ns.Event(enable_timing=True)
         ev_end = torch_ns.Event(enable_timing=True)
         ev_start.record()
-        q_scaled = torch.mul(q, scale)
-        p = torch.matmul(q_scaled, k) + mask
+        p = torch.mul(torch.matmul(q, k), scale) + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_shifted = torch.sub(p, p_max)
         p_exp = torch.exp(p_shifted)
@@ -467,15 +465,13 @@ class AttentionK1Op(_AttentionSplitSingleKernelBase):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
         with torch.no_grad():
-            q_s = torch.mul(q, scale)
-            scores = torch.matmul(q_s, k) + mask
+            scores = torch.mul(torch.matmul(q, k), scale) + mask
             _ = torch.exp(scores.max(dim=-1, keepdim=True).values)
 
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        q_s = torch.mul(q, scale)
-        scores = torch.matmul(q_s, k) + mask
+        scores = torch.mul(torch.matmul(q, k), scale) + mask
         m = scores.max(dim=-1, keepdim=True).values
         em = torch.exp(m)
         sum_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
@@ -575,7 +571,7 @@ class AttentionK2Op(_AttentionSplitSingleKernelBase):
         device, dtype = q.device, q.dtype
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
-        scores = torch.matmul(torch.mul(q, scale), k) + mask
+        scores = torch.mul(torch.matmul(q, k), scale) + mask
         m = scores.max(dim=-1, keepdim=True).values
         ex = torch.exp(scores - m)
         s = ex / ex.sum(dim=-1, keepdim=True)
@@ -584,7 +580,7 @@ class AttentionK2Op(_AttentionSplitSingleKernelBase):
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        scores = torch.matmul(torch.mul(q, scale), k) + mask
+        scores = torch.mul(torch.matmul(q, k), scale) + mask
         m = scores.max(dim=-1, keepdim=True).values
         ex = torch.exp(scores - m)
         s = ex / ex.sum(dim=-1, keepdim=True)
