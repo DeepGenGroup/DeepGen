@@ -178,12 +178,28 @@ def main():
         return CompiledKernel(kc.backend, kc.binaryPath, kc.kernelFuncName,
                               kc.sharedMem(), sig, kc.gridDims(), kc.blockDims(), target_dev)
 
-    sig_k1 = lambda: _h2o_split_k1(torch.randn(1,3,100,100), torch.randn(1,3,100,100),
-                                     torch.randn(1,3,100,1), torch.randn(1,3,100,1))
-    sig_k2 = lambda: _h2o_split_k2(torch.randn(1,3,100,100), torch.randn(1,3,100,100),
-                                     torch.randn(1,3,100,1), torch.randn(1,3,100,1), torch.randn(1,3,100))
-    sig_k3 = lambda: _h2o_split_k3(torch.randn(1,3,100,100), torch.randn(1,3,100,100), torch.randn(1,3,100,100),
-                                     torch.randn(1,3,100,1), torch.randn(1,3,100,1), torch.empty(1,3,100,100))
+    def _make_sig_qkv():
+        return _make_qkv(1, 3, 100, 100, dt, 'cpu')
+
+    def sig_k1():
+        q_sig, k_sig, _ = _make_sig_qkv()
+        return _h2o_split_k1(
+            q_sig, k_sig,
+            torch.randn(1, 3, 100, 1, dtype=dt), torch.randn(1, 3, 100, 1, dtype=dt))
+
+    def sig_k2():
+        q_sig, k_sig, _ = _make_sig_qkv()
+        return _h2o_split_k2(
+            k_sig, q_sig,
+            torch.randn(1, 3, 100, 1, dtype=dt), torch.randn(1, 3, 100, 1, dtype=dt),
+            torch.randn(1, 3, 100, dtype=dt))
+
+    def sig_k3():
+        q_sig, k_sig, v_sig = _make_sig_qkv()
+        return _h2o_split_k3(
+            q_sig, k_sig, v_sig,
+            torch.randn(1, 3, 100, 1, dtype=dt), torch.randn(1, 3, 100, 1, dtype=dt),
+            torch.empty(1, 3, 100, 100, dtype=dt))
 
     kernel1 = make_kernel(res1, k1_name, shape1, cfg1, 4, sig_k1)
     kernel2 = make_kernel(res2, k2_name, shape2, cfg2, 5, sig_k2)
@@ -204,8 +220,7 @@ def main():
     scale = 1.0 / math.sqrt(float(D))
     mask = _causal_upper_mask(S, device, dt).unsqueeze(0).unsqueeze(0)
     with torch.no_grad():
-        q_s = q_base * scale
-        scores = torch.matmul(q_s, k_base) + mask
+        scores = torch.matmul(q_base, k_base) * scale + mask
         m_val = scores.max(dim=-1, keepdim=True).values
         ref_em = torch.exp(m_val)
         sum_ex = torch.exp(scores).sum(dim=-1, keepdim=True)

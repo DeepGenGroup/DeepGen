@@ -521,6 +521,8 @@ void FlashAttnSplitK2Optimizer::moveMemrefDefineAhead(mlir::Operation* threadPar
 void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   mlir::ModuleOp module = mlir::dyn_cast<mlir::ModuleOp>(funcOp->getParentOp());
   mlir::OpBuilder builder(module);
+  bool postMatmulEmDenom =
+      cfg.count("POST_MATMUL_EM_DENOM") && cfg.at("POST_MATMUL_EM_DENOM");
 
   // ===== a. tileP + tileO bufferize, k split/reorder =====
   std::vector<mlir::affine::AffineForOp> tilePLoops{yTileForOps[0], xTileForOps[0]};
@@ -734,10 +736,11 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== PREPARE pre-matmul normalization: tmp = exp(tileP) / Em =====
+  // ===== PREPARE matmul2 lhs =====
+  // Default path:      tmp = exp(tileP) / Em
+  // H2O post-norm path: tmp = exp(tileP), delay /Em to the final O write-back
   {
     tyds = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, "ttileyDown");
-    auto dtype = typeMid.getElementType();
     mlir::OpBuilder nb(tyds[0]);
     auto loc = nb.getUnknownLoc();
 
@@ -748,52 +751,60 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto pVal = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], normIvs);
     auto expVal = nb.create<mlir::math::ExpOp>(loc, pVal);
 
-    // Build affine map to compute the global row for Em load.
-    // This keeps the k2 contract explicit: Em is consumed directly before matmul2.
-    int batchCount = (int)bIdx.size() - 1;
-    int emMapDims = batchCount + 3; // batch dims + by + tid + flat_i
-    auto emDimExprs = getExprs(nb, emMapDims);
-    auto byExpr = emDimExprs[batchCount];
-    auto tidExpr = emDimExprs[batchCount + 1];
-    auto flatIExpr = emDimExprs[batchCount + 2];
+    if (postMatmulEmDenom) {
+      nb.create<mlir::affine::AffineStoreOp>(loc, expVal, tileP[0], normIvs);
+    } else {
+      // Build affine map to compute the global row for Em load.
+      // This keeps the default split-k2 contract explicit: Em is consumed before matmul2.
+      int batchCount = (int)bIdx.size() - 1;
+      int emMapDims = batchCount + 3; // batch dims + by + tid + flat_i
+      auto emDimExprs = getExprs(nb, emMapDims);
+      auto byExpr = emDimExprs[batchCount];
+      auto tidExpr = emDimExprs[batchCount + 1];
+      auto flatIExpr = emDimExprs[batchCount + 2];
 
-    auto warp_y_e = tools::mapUtils::wapr_y(tidExpr, cfg["WARP_SIZE"], cfg["BLOCK_LAYOUT_P_X"]);
-    auto lane_y_e = tools::mapUtils::lane_y(tidExpr, cfg["WARP_SIZE"], cfg["WARP_LAYOUT_P_X"]);
+      auto warp_y_e = tools::mapUtils::wapr_y(tidExpr, cfg["WARP_SIZE"], cfg["BLOCK_LAYOUT_P_X"]);
+      auto lane_y_e = tools::mapUtils::lane_y(tidExpr, cfg["WARP_SIZE"], cfg["WARP_LAYOUT_P_X"]);
 
-    int64_t BSW_Q_n = cfg["BLOCK_SCATTER_WIDTH_Q"];
-    int64_t WSW_Q_n = cfg["WARP_SCATTER_WIDTH_Q"];
-    auto blockRepQ_e = flatIExpr.floorDiv(BSW_Q_n);
-    auto warpRepQ_e = (flatIExpr % BSW_Q_n).floorDiv(WSW_Q_n);
-    auto scatterQ_e = flatIExpr % WSW_Q_n;
+      int64_t BSW_Q_n = cfg["BLOCK_SCATTER_WIDTH_Q"];
+      int64_t WSW_Q_n = cfg["WARP_SCATTER_WIDTH_Q"];
+      auto blockRepQ_e = flatIExpr.floorDiv(BSW_Q_n);
+      auto warpRepQ_e = (flatIExpr % BSW_Q_n).floorDiv(WSW_Q_n);
+      auto scatterQ_e = flatIExpr % WSW_Q_n;
 
-    auto rowInBr = (blockRepQ_e * cfg["BLOCK_LAYOUT_P_Y"] + warp_y_e) * cfg["WARP_LAYOUT_P_Y"] * BSW_Q_n
-                   + (warpRepQ_e * cfg["WARP_LAYOUT_P_Y"] + lane_y_e) * WSW_Q_n + scatterQ_e;
+      auto rowInBr = (blockRepQ_e * cfg["BLOCK_LAYOUT_P_Y"] + warp_y_e) * cfg["WARP_LAYOUT_P_Y"] * BSW_Q_n
+                     + (warpRepQ_e * cfg["WARP_LAYOUT_P_Y"] + lane_y_e) * WSW_Q_n + scatterQ_e;
 
-    auto emRank = typeEm.getRank();
-    llvm::SmallVector<mlir::AffineExpr> emResults;
-    for (int i = 0; i < batchCount; i++) {
-      emResults.push_back(emDimExprs[i]);
+      auto emRank = typeEm.getRank();
+      llvm::SmallVector<mlir::AffineExpr> emResults;
+      for (int i = 0; i < batchCount; i++) {
+        emResults.push_back(emDimExprs[i]);
+      }
+      emResults.push_back(byExpr + rowInBr);
+      while ((int)emResults.size() < emRank) {
+        emResults.push_back(nb.getAffineConstantExpr(0));
+      }
+      auto emMap = mlir::AffineMap::get(emMapDims, 0,
+                       llvm::ArrayRef<mlir::AffineExpr>(emResults), nb.getContext());
+
+      llvm::SmallVector<mlir::Value> emOps;
+      for (int i = 0; i < batchCount; i++) {
+        emOps.push_back(bIdx[i]);
+      }
+      emOps.push_back(byIdx);
+      emOps.push_back(threadIdx.getIVs()[0]);
+      emOps.push_back(normIvs[0]);
+
+      auto emVal = nb.create<mlir::affine::AffineLoadOp>(loc, Em, emMap, emOps);
+      auto tmpVal = nb.create<mlir::arith::DivFOp>(loc, expVal, emVal);
+      nb.create<mlir::affine::AffineStoreOp>(loc, tmpVal, tileP[0], normIvs);
     }
-    emResults.push_back(byExpr + rowInBr);
-    while ((int)emResults.size() < emRank) {
-      emResults.push_back(nb.getAffineConstantExpr(0));
-    }
-    auto emMap = mlir::AffineMap::get(emMapDims, 0,
-                     llvm::ArrayRef<mlir::AffineExpr>(emResults), nb.getContext());
-
-    llvm::SmallVector<mlir::Value> emOps;
-    for (int i = 0; i < batchCount; i++) {
-      emOps.push_back(bIdx[i]);
-    }
-    emOps.push_back(byIdx);
-    emOps.push_back(threadIdx.getIVs()[0]);
-    emOps.push_back(normIvs[0]);
-
-    auto emVal = nb.create<mlir::affine::AffineLoadOp>(loc, Em, emMap, emOps);
-    auto tmpVal = nb.create<mlir::arith::DivFOp>(loc, expVal, emVal);
-    nb.create<mlir::affine::AffineStoreOp>(loc, tmpVal, tileP[0], normIvs);
   }
-  LOG_DEBUG("===== prepare pre-matmul tmp=exp(tileP)/Em =======\n",module);
+  if (postMatmulEmDenom) {
+    LOG_DEBUG("===== prepare pre-matmul lhs=exp(tileP), defer /Em =======\n",module);
+  } else {
+    LOG_DEBUG("===== prepare pre-matmul tmp=exp(tileP)/Em =======\n",module);
+  }
 
   // ===== i. tileP to smP (with shuffle/split-k logic) =====
   // With BroadcastNorm fusing to 2 yloops, there's only 1 ttileyDown (matmul1's store-back).
@@ -941,7 +952,9 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== Store tileO to global O, then apply the final post-matmul divide by Denom =====
+  // ===== Store tileO to global O, then apply the final post-matmul normalization =====
+  // Default path: O /= Denom
+  // H2O path:     O /= (Em * Denom)
   // For useSplitKPV: first reduce tileO across lane_x via warp shuffle,
   // then only lane_x==0 writes. Both must happen AFTER xBlockFor completes.
   {
@@ -1039,26 +1052,34 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     baseStoreOps.push_back(byIdx);
     baseStoreOps.push_back(this->threadIdx.getIVs()[0]);
 
-    auto denomRank = typeDenom.getRank();
-    llvm::SmallVector<mlir::AffineExpr> denomExprs;
-    for (int i = 0; i < batchCount; i++) denomExprs.push_back(dims[i]);
-    denomExprs.push_back(rowE);
-    while ((int)denomExprs.size() < denomRank) {
-      denomExprs.push_back(writeBuilder.getAffineConstantExpr(0));
-    }
-    auto denomMap = mlir::AffineMap::get(
-        dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(denomExprs), writeBuilder.getContext());
+    auto buildRowNormMap = [&](int rank) {
+      llvm::SmallVector<mlir::AffineExpr> exprs;
+      for (int i = 0; i < batchCount; i++) exprs.push_back(dims[i]);
+      exprs.push_back(rowE);
+      while ((int)exprs.size() < rank) {
+        exprs.push_back(writeBuilder.getAffineConstantExpr(0));
+      }
+      return mlir::AffineMap::get(
+          dimCount, 0, llvm::ArrayRef<mlir::AffineExpr>(exprs), writeBuilder.getContext());
+    };
+    auto denomMap = buildRowNormMap(typeDenom.getRank());
 
     writeBuilder.setInsertionPointToStart(oLoops.front().getBody());
     auto zeroIdx = writeBuilder.create<mlir::arith::ConstantIndexOp>(loc, 0);
-    llvm::SmallVector<mlir::Value> denomOps(baseStoreOps.begin(), baseStoreOps.end());
-    denomOps.push_back(oIvs[0]);
-    denomOps.push_back(zeroIdx);
-    auto denomVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, Denom, denomMap, denomOps);
+    llvm::SmallVector<mlir::Value> rowNormOps(baseStoreOps.begin(), baseStoreOps.end());
+    rowNormOps.push_back(oIvs[0]);
+    rowNormOps.push_back(zeroIdx);
+    auto denomVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, Denom, denomMap, rowNormOps);
+    mlir::Value normFactor = denomVal;
+    if (postMatmulEmDenom) {
+      auto emMap = buildRowNormMap(typeEm.getRank());
+      auto emVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, Em, emMap, rowNormOps);
+      normFactor = writeBuilder.create<mlir::arith::MulFOp>(loc, emVal, denomVal);
+    }
 
     writeBuilder.setInsertionPointToStart(oLoops.back().getBody());
     auto oVal = writeBuilder.create<mlir::affine::AffineLoadOp>(loc, tileO[0], oIvs);
-    auto normalizedO = writeBuilder.create<mlir::arith::DivFOp>(loc, oVal, denomVal);
+    auto normalizedO = writeBuilder.create<mlir::arith::DivFOp>(loc, oVal, normFactor);
 
     llvm::SmallVector<mlir::AffineExpr> globExprs;
     for (int i = 0; i < batchCount; i++) globExprs.push_back(dims[i]);

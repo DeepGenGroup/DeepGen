@@ -64,7 +64,7 @@ def h2o_k1(q, k, scale8=8.0):
     """
     qh = q.permute(0, 2, 1, 3)
     kh = k.permute(0, 2, 3, 1)
-    scores = torch.matmul(qh, kh) / scale8
+    scores = torch.matmul(qh / scale8, kh)
 
     m = scores.max(dim=-1, keepdim=True).values
     em = torch.exp(m)
@@ -83,7 +83,7 @@ def h2o_k2(q, k, em, expr1, scale8=8.0):
     """
     qh = q.permute(0, 2, 1, 3)
     kh = k.permute(0, 2, 3, 1)
-    scores = torch.matmul(qh, kh) / scale8
+    scores = torch.matmul(qh / scale8, kh)
 
     # 这里 w = exp(scores)，所以 expr2 = w / em = exp(scores) / em
     expr2 = torch.exp(scores) / em
@@ -95,18 +95,14 @@ def h2o_k2(q, k, em, expr1, scale8=8.0):
 def h2o_k3(q, k, v, em, expr1, scale8=8.0):
     """
     Kernel3：使用 em 和 expr1，从头算到 out
-      expr2 = w / em
-      p = expr2 / expr1
-      out = p @ V
+      out = (w @ V) / (em * expr1)
     """
     qh = q.permute(0, 2, 1, 3)
     kh = k.permute(0, 2, 3, 1)
     vh = v.permute(0, 2, 1, 3)              # [B,H,S,D]
-    scores = torch.matmul(qh, kh) / scale8
+    scores = torch.matmul(qh / scale8, kh)
 
-    expr2 = torch.exp(scores) / em
-    p = expr2 / expr1
-    out = torch.matmul(p, vh).permute(0, 2, 1, 3)  # [B,S,H,D]
+    out = (torch.matmul(torch.exp(scores), vh) / (em * expr1)).permute(0, 2, 1, 3)  # [B,S,H,D]
     return out
 
 

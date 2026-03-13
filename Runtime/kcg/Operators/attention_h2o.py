@@ -76,7 +76,8 @@ class H2OSplitOp(OpInterface):
         Signature: (K[B,H,D,S], Q_t[B,H,D,S], em[B,H,S,1], denom[B,H,S,1], row_sum[B,H,S])
         C++ entry: compile_h2o_split_k2
 
-      Kernel 3 (output): GEMM(Q@K^T) + causal mask + normalize(em,denom) + GEMM(P@V) -> O
+      Kernel 3 (output): scale-Q GEMM(Q@K^T) + causal mask
+        then GEMM(exp(scores)@V) and post-divide by (em * denom) -> O
         Signature: (Q_t[B,H,D,S], K[B,H,D,S], V[B,H,S,D], em[B,H,S,1], denom[B,H,S,1], O[B,H,S,D])
         C++ entry: compile_h2o_split_k3
 
@@ -304,8 +305,7 @@ class H2OSplitOp(OpInterface):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
         # warmup
-        q_s = torch.mul(q, scale)
-        p = torch.matmul(q_s, k) + mask
+        p = torch.matmul(q, k) * scale + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_shifted = torch.sub(p, p_max)
         p_exp = torch.exp(p_shifted)
@@ -317,8 +317,7 @@ class H2OSplitOp(OpInterface):
         ev_start = torch_ns.Event(enable_timing=True)
         ev_end = torch_ns.Event(enable_timing=True)
         ev_start.record()
-        q_scaled = torch.mul(q, scale)
-        p = torch.matmul(q_scaled, k) + mask
+        p = torch.matmul(q, k) * scale + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_shifted = torch.sub(p, p_max)
         p_exp = torch.exp(p_shifted)
@@ -384,8 +383,7 @@ def _precompute_em_denom(q, k, device, dtype):
     S = q.shape[-2]
     mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
     with torch.no_grad():
-        q_scaled = torch.mul(q, scale)
-        scores = torch.matmul(q_scaled, k) + mask
+        scores = torch.matmul(q, k) * scale + mask
         m = scores.max(dim=-1, keepdim=True).values
         em = torch.exp(m)
         sum_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
@@ -521,14 +519,12 @@ class H2OK1Op(_H2OSingleKernelBase):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
         # warmup
         with torch.no_grad():
-            q_s = torch.mul(q, scale)
-            scores = torch.matmul(q_s, k) + mask
+            scores = torch.matmul(q, k) * scale + mask
             _ = torch.exp(scores.max(dim=-1, keepdim=True).values)
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        q_s = torch.mul(q, scale)
-        scores = torch.matmul(q_s, k) + mask
+        scores = torch.matmul(q, k) * scale + mask
         m = scores.max(dim=-1, keepdim=True).values
         em = torch.exp(m)
         sum_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
@@ -616,8 +612,7 @@ class H2OK2Op(_H2OSingleKernelBase):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
         # warmup
         with torch.no_grad():
-            q_s = torch.mul(q, scale)
-            scores = torch.matmul(q_s, k) + mask
+            scores = torch.matmul(q, k) * scale + mask
             em = torch.exp(scores.max(dim=-1, keepdim=True).values)
             s_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
             denom = s_ex / em
@@ -626,8 +621,7 @@ class H2OK2Op(_H2OSingleKernelBase):
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        q_s = torch.mul(q, scale)
-        scores = torch.matmul(q_s, k) + mask
+        scores = torch.matmul(q, k) * scale + mask
         em = torch.exp(scores.max(dim=-1, keepdim=True).values)
         s_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
         denom = s_ex / em
@@ -657,7 +651,7 @@ class H2OK2Op(_H2OSingleKernelBase):
 
 # ====================== H2O K3 standalone ======================
 class H2OK3Op(_H2OSingleKernelBase):
-    """Tune H2O kernel 3 (FlashAttnSplitK2: Q@K^T + normalize + P@V -> out) independently."""
+    """Tune H2O kernel 3 (FlashAttnSplitK2: Q@K^T -> exp(scores)@V, then /(em*denom) -> out) independently."""
 
     def InitLibInterface(self):
         mod = self._init_lib()
@@ -715,8 +709,7 @@ class H2OK3Op(_H2OSingleKernelBase):
         device, dtype = q.device, q.dtype
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
         # warmup
-        q_s = torch.mul(q, scale)
-        p = torch.matmul(q_s, k) + mask
+        p = torch.matmul(q, k) * scale + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_exp = torch.exp(torch.sub(p, p_max))
         s = torch.div(p_exp, torch.sum(p_exp, dim=-1, keepdim=True))
@@ -724,8 +717,7 @@ class H2OK3Op(_H2OSingleKernelBase):
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        q_s = torch.mul(q, scale)
-        p = torch.matmul(q_s, k) + mask
+        p = torch.matmul(q, k) * scale + mask
         p_max = torch.max(p, dim=-1, keepdim=True).values
         p_exp = torch.exp(torch.sub(p, p_max))
         s = torch.div(p_exp, torch.sum(p_exp, dim=-1, keepdim=True))

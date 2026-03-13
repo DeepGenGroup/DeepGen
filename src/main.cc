@@ -343,8 +343,8 @@ std::string attention_split_k1(std::vector<int64_t> shape, const TuneConfig& con
 }
 
 std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
-  // Split attention kernel 2: scale-Q GEMM(Q@K^T) + causal mask + tmp=exp(scores)/em
-  //                           + GEMM(tmp@V) + row divide by denom → O
+  // Split attention kernel 2: scale-Q GEMM(Q@K^T) + causal mask + exp(scores)
+  //                           + GEMM(exp(scores)@V) + row divide by (em * denom) → O
   auto attn = config.at(__GlobalKernelName);
   TileConfig tileConfig = {
     {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
@@ -377,9 +377,9 @@ std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& con
     "matmul2", "Matmul", {sha1, shb1, shc1}, {dtype, dtype, dtype}, {false, false}, 1
   };
 
-  // No middle operator — just 2 matmuls fused via midBuf (scores/tmp).
+  // No middle operator — just 2 matmuls fused via midBuf (scores/exp(scores)).
   // em/denom are extra func args with empty index maps.
-  // The optimizer applies exp/em on tileP, then row-divides O by denom.
+  // The optimizer applies exp on tileP, then row-divides O by (em * denom).
   FuseKernelData fkd = {
     __GlobalKernelName, "FlashAttnSplitK2", {"matmul1", "matmul2"},
     {kd1.shapes[0], kd1.shapes[1], kd2.shapes[1], sh_em, sh_denom, kd2.shapes[2]},
@@ -396,6 +396,7 @@ std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& con
   TuneConfig configK2 = config;
   configK2[__GlobalKernelName]["SCALE_Q"] = 1;
   configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  configK2[__GlobalKernelName]["POST_MATMUL_EM_DENOM"] = 1;
   return compile_kernel(configK2, tileConfig, kds, fkds);
 }
 
