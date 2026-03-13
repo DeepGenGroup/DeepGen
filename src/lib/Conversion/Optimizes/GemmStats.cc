@@ -911,7 +911,7 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     LOG_DEBUG("===== split block level forop and amend map of reg and sm =======\n",module);
   }
 
-  // ====== Write em and denom to global memory ======
+  // ====== Write k1 outputs to global memory: em = exp(row_max), denom = sum(exp(y - row_max)) ======
   auto emDenomMap = getEmDenomWriteMap(builder);
   auto d0 = builder.getAffineDimExpr(0);
   auto d1 = builder.getAffineDimExpr(1);
@@ -983,7 +983,7 @@ void GemmStatsOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
 
   emBuilder.create<mlir::affine::AffineStoreOp>(loc, emVal, EmOut, emDenomMap, emOperands);
   emBuilder.create<mlir::affine::AffineStoreOp>(loc, sumVal, DenomOut, emDenomMap, emOperands);
-  LOG_DEBUG("===== write em and denom to global =======\n",module);
+  LOG_DEBUG("===== write k1 outputs: em and denom =======\n",module);
 
   // Cleanup: erase initBufFor, midBuf, sumBuf, maxBuf
   this->initBufFor.erase();

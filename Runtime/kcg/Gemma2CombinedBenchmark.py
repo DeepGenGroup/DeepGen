@@ -10,7 +10,10 @@ import os
 import re
 import json
 import math
+import time
 import importlib
+
+import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -119,18 +122,61 @@ def make_kernel(binary_path, kname, shape, cfg, n_dtypes, sig_func, backend, dt,
 
 
 def baseline(q, k, v):
+    """Reference using the original baseline ordering: return `(out, em, denom)`."""
     scale = 1.0 / math.sqrt(float(q.shape[-1]))
     S = q.shape[-2]
     mask = _causal_upper_mask(S, q.device, q.dtype).unsqueeze(0).unsqueeze(0)
-    scores = torch.matmul(q * scale, k)
+    scores = torch.matmul(q, k) * scale
     y = torch.tanh(scores / TANH_SCALE) * TANH_SCALE
     y = y + mask
-    m = y.max(dim=-1, keepdim=True).values
-    p_exp = torch.exp(y - m)
-    p_sum = p_exp.sum(dim=-1, keepdim=True)
-    s = p_exp / p_sum
-    out = torch.matmul(s, v)
-    return out, torch.exp(m), p_exp.sum(dim=-1, keepdim=True)
+    row_max = y.max(dim=-1, keepdim=True).values
+    em = torch.exp(row_max)
+    p_scaled = torch.exp(y - row_max)
+    denom = p_scaled.sum(dim=-1, keepdim=True)
+    p = p_scaled / denom
+    out = torch.matmul(p, v)
+    return out, em, denom
+
+
+def load_top_result(path, tag):
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{tag} result file not found: {path}")
+    with open(path) as f:
+        obj = json.load(f)
+    results = obj.get("testResult", [])
+    if not results:
+        raise RuntimeError(f"{tag} result file has no testResult entries: {path}")
+    return results[0]
+
+
+def measure_sequence(steps, rounds=7):
+    for step in steps:
+        step()
+    torch_ns.synchronize()
+    times = []
+    for _ in range(rounds):
+        torch_ns.synchronize()
+        st = time.perf_counter()
+        for step in steps:
+            step()
+        torch_ns.synchronize()
+        et = time.perf_counter()
+        times.append((et - st) * 1000.0)
+    return float(np.median(times))
+
+
+def measure_baseline(q, k, v, rounds=7):
+    baseline(q, k, v)
+    torch_ns.synchronize()
+    times = []
+    for _ in range(rounds):
+        torch_ns.synchronize()
+        st = time.perf_counter()
+        baseline(q, k, v)
+        torch_ns.synchronize()
+        et = time.perf_counter()
+        times.append((et - st) * 1000.0)
+    return float(np.median(times))
 
 
 def main():
@@ -151,10 +197,8 @@ def main():
         torch_ns.init()
         torch_ns.empty_cache()
 
-    with open(k1_path) as f:
-        k1_top = json.load(f)["testResult"][0]
-    with open(k2_path) as f:
-        k2_top = json.load(f)["testResult"][0]
+    k1_top = load_top_result(k1_path, "K1")
+    k2_top = load_top_result(k2_path, "K2")
 
     print(f"[combined] K1 best: {k1_top['name']} (speedup={k1_top['speedup']:.3f}, time={k1_top['time']:.4f}ms)")
     print(f"[combined] K2 best: {k2_top['name']} (speedup={k2_top['speedup']:.3f}, time={k2_top['time']:.4f}ms)")
@@ -202,45 +246,30 @@ def main():
     with torch.no_grad():
         ref_out, ref_em, ref_denom = baseline(q, k, v)
 
-    kernel1.run(qq, kk, em, denom)
-    kernel2.run(qq, kk, v, em, denom, out)
-    torch_ns.synchronize()
+    steps = [
+        lambda: kernel1.run(qq, kk, em, denom),
+        lambda: kernel2.run(qq, kk, v, em, denom, out),
+    ]
 
-    st = torch_ns.Event(enable_timing=True)
-    et = torch_ns.Event(enable_timing=True)
-    st.record()
-    kernel1.run(qq, kk, em, denom)
-    kernel2.run(qq, kk, v, em, denom, out)
-    et.record()
-    torch_ns.synchronize()
-    combined_time = st.elapsed_time(et)
+    combined_time = measure_sequence(steps)
+    baseline_time = measure_baseline(q, k, v)
 
-    import numpy as np
-
-    def _run_baseline():
-        return baseline(q, k, v)
-
-    _run_baseline()
-    torch_ns.synchronize()
-    base_times = []
-    for _ in range(7):
-        bst = torch_ns.Event(enable_timing=True)
-        bet = torch_ns.Event(enable_timing=True)
-        bst.record()
-        _run_baseline()
-        bet.record()
-        torch_ns.synchronize()
-        base_times.append(bst.elapsed_time(bet))
-    baseline_time = float(np.median(base_times))
-
+    out_ok = bool(torch.allclose(out, ref_out, rtol=1e-3, atol=1e-3))
+    em_ok = bool(torch.allclose(em, ref_em, rtol=1e-3, atol=1e-3))
+    denom_ok = bool(torch.allclose(denom, ref_denom, rtol=1e-3, atol=1e-3))
     speedup = baseline_time / combined_time if combined_time > 0 else 0.0
 
     result = {
         "k1_name": k1_top["name"],
         "k2_name": k2_top["name"],
+        "combined_mode": "direct_k1_k2",
+        "timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
-        "speedup": speedup
+        "speedup": speedup,
+        "out_match": out_ok,
+        "em_match": em_ok,
+        "denom_match": denom_ok,
     }
     with open(out_path, "w+") as f:
         json.dump(result, f, indent=2)

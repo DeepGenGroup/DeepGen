@@ -31,9 +31,9 @@ def _gemma2_split_k2(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
 
 def _make_qkv(bs, hn, sl, hd, dtype, device):
-    q = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
-    k = torch.ones((bs, hn, hd, sl), dtype=dtype, device=device)
-    v = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
+    q = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = 0.1 * torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = 0.1 * torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
     return q, k, v
 
 
@@ -46,18 +46,18 @@ def _causal_upper_mask(S, device, dtype):
 
 
 def _precompute_em_denom(q, k, tanh_scale, device, dtype):
-    """Compute Gemma2 em/denom via PyTorch for standalone K2 benchmarking."""
+    """Compute Gemma2 k1 outputs `(em, denom)` via PyTorch for standalone K2 benchmarking."""
     scale = 1.0 / math.sqrt(float(q.shape[-1]))
     S = q.shape[-2]
     mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
     with torch.no_grad():
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        em = torch.exp(m)
-        sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
-        denom = sum_ex / em
+        row_max = y.max(dim=-1, keepdim=True).values
+        em = torch.exp(row_max)
+        exp_scaled = torch.exp(y - row_max)
+        denom = exp_scaled.sum(dim=-1, keepdim=True)
     return em, denom
 
 
@@ -74,7 +74,8 @@ class Gemma2SplitOp(OpInterface):
         Signature: (Q_t[B,H,D,S], K[B,H,D,S], em_out[B,H,S,1], denom_out[B,H,S,1])
         C++ entry: compile_gemma2_split_k1
 
-      Kernel 2 (output): GEMM(Q@K^T) + softcap + mask + normalize(em,denom) + GEMM(P@V) -> O
+      Kernel 2 (output): GEMM(Q@K^T) + softcap + mask + normalize with em before P@V,
+        then divide by denom after P@V -> O
         Signature: (Q_t[B,H,D,S], K[B,H,D,S], V[B,H,S,D], em[B,H,S,1], denom[B,H,S,1], O[B,H,S,D])
         C++ entry: compile_gemma2_split_k2
 
@@ -256,7 +257,7 @@ class Gemma2SplitOp(OpInterface):
             packedKernel.run(qq, kk, v, em, denom, d)
 
     def Test_baseline(self, devId):
-        """Gemma2-style baseline: scores → tanh softcap → causal mask → softmax → P@V"""
+        """Gemma2-style baseline: scores → tanh softcap → causal mask → softmax → P@V."""
         [q, k, v] = self.GetBaselineInputTensor(devId)
         scale = 1.0 / math.sqrt(float(q.shape[-1]))
         tanh_scale = self.TANH_SCALE
@@ -265,31 +266,33 @@ class Gemma2SplitOp(OpInterface):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
         # warmup
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        ex = torch.exp(y - m)
-        s = ex / ex.sum(dim=-1, keepdim=True)
-        _ = torch.matmul(s, v)
+        row_max = y.max(dim=-1, keepdim=True).values
+        p_scaled = torch.exp(y - row_max)
+        denom = p_scaled.sum(dim=-1, keepdim=True)
+        p = p_scaled / denom
+        _ = torch.matmul(p, v)
 
         # timed
         ev_start = torch_ns.Event(enable_timing=True)
         ev_end = torch_ns.Event(enable_timing=True)
         ev_start.record()
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        ex = torch.exp(y - m)
-        s = ex / ex.sum(dim=-1, keepdim=True)
-        self.OutputTensor_Baseline = torch.matmul(s, v)
+        row_max = y.max(dim=-1, keepdim=True).values
+        p_scaled = torch.exp(y - row_max)
+        denom = p_scaled.sum(dim=-1, keepdim=True)
+        p = p_scaled / denom
+        self.OutputTensor_Baseline = torch.matmul(p, v)
         ev_end.record()
         torch_ns.synchronize()
         return (self.OutputTensor_Baseline, ev_start.elapsed_time(ev_end))
 
     def _compute_em_denom_pytorch(self, qq, kk, em, denom):
-        """Fallback: compute em/denom via PyTorch when kernel1 is not available."""
+        """Fallback: compute k1 outputs `(em, denom)` via PyTorch when kernel1 is not available."""
         [q, k, _] = self.GetBaselineInputTensor(em.device.index)
         scale = 1.0 / math.sqrt(float(q.shape[-1]))
         tanh_scale = self.TANH_SCALE
@@ -298,13 +301,13 @@ class Gemma2SplitOp(OpInterface):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
         with torch.no_grad():
-            scores = torch.matmul(torch.mul(q, scale), k)
+            scores = torch.matmul(q, k) * scale
             y = torch.tanh(scores / tanh_scale) * tanh_scale
             y = y + mask
-            m = y.max(dim=-1, keepdim=True).values
-            em.copy_(torch.exp(m))
-            sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
-            denom.copy_(sum_ex / em)
+            row_max = y.max(dim=-1, keepdim=True).values
+            em.copy_(torch.exp(row_max))
+            exp_scaled = torch.exp(y - row_max)
+            denom.copy_(exp_scaled.sum(dim=-1, keepdim=True))
 
     def Test_benchmark(self, packedKernel, benchmarkCount, devId):
         tensors = self.GetBenchmarkInputTensor(devId)
@@ -488,7 +491,7 @@ class Gemma2K1Op(_Gemma2SingleKernelBase):
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
         with torch.no_grad():
-            scores = torch.matmul(torch.mul(q, scale), k)
+            scores = torch.matmul(q, k) * scale
             y = torch.tanh(scores / tanh_scale) * tanh_scale
             y = y + mask
             _ = torch.exp(y.max(dim=-1, keepdim=True).values)
@@ -496,13 +499,12 @@ class Gemma2K1Op(_Gemma2SingleKernelBase):
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        em = torch.exp(m)
-        sum_ex = torch.exp(y).sum(dim=-1, keepdim=True)
-        self.OutputTensor_Baseline = sum_ex / em
+        row_max = y.max(dim=-1, keepdim=True).values
+        exp_scaled = torch.exp(y - row_max)
+        self.OutputTensor_Baseline = exp_scaled.sum(dim=-1, keepdim=True)
         ev_e.record()
         torch_ns.synchronize()
         return (self.OutputTensor_Baseline, ev_s.elapsed_time(ev_e))
@@ -601,24 +603,26 @@ class Gemma2K2Op(_Gemma2SingleKernelBase):
         device, dtype = q.device, q.dtype
         mask = _causal_upper_mask(S, device, dtype).unsqueeze(0).unsqueeze(0)
 
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        ex = torch.exp(y - m)
-        s = ex / ex.sum(dim=-1, keepdim=True)
-        _ = torch.matmul(s, v)
+        row_max = y.max(dim=-1, keepdim=True).values
+        p_scaled = torch.exp(y - row_max)
+        denom = p_scaled.sum(dim=-1, keepdim=True)
+        p = p_scaled / denom
+        _ = torch.matmul(p, v)
 
         ev_s = torch_ns.Event(enable_timing=True)
         ev_e = torch_ns.Event(enable_timing=True)
         ev_s.record()
-        scores = torch.matmul(torch.mul(q, scale), k)
+        scores = torch.matmul(q, k) * scale
         y = torch.tanh(scores / tanh_scale) * tanh_scale
         y = y + mask
-        m = y.max(dim=-1, keepdim=True).values
-        ex = torch.exp(y - m)
-        s = ex / ex.sum(dim=-1, keepdim=True)
-        self.OutputTensor_Baseline = torch.matmul(s, v)
+        row_max = y.max(dim=-1, keepdim=True).values
+        p_scaled = torch.exp(y - row_max)
+        denom = p_scaled.sum(dim=-1, keepdim=True)
+        p = p_scaled / denom
+        self.OutputTensor_Baseline = torch.matmul(p, v)
         ev_e.record()
         torch_ns.synchronize()
         return (self.OutputTensor_Baseline, ev_s.elapsed_time(ev_e))

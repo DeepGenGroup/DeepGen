@@ -734,7 +734,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== PREPARE tmp = exp(tileP) / Em before matmul2 =====
+  // ===== PREPARE pre-matmul normalization: tmp = exp(tileP) / Em =====
   {
     tyds = collectOpsInfuncOp<mlir::affine::AffineForOp>(funcOp, FORDESC, "ttileyDown");
     auto dtype = typeMid.getElementType();
@@ -748,8 +748,8 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto pVal = nb.create<mlir::affine::AffineLoadOp>(loc, tileP[0], normIvs);
     auto expVal = nb.create<mlir::math::ExpOp>(loc, pVal);
 
-    // Build affine map to compute global row for Em load.
-    // Decompose flat row index into block/warp scatter and combine with thread position.
+    // Build affine map to compute the global row for Em load.
+    // This keeps the k2 contract explicit: Em is consumed directly before matmul2.
     int batchCount = (int)bIdx.size() - 1;
     int emMapDims = batchCount + 3; // batch dims + by + tid + flat_i
     auto emDimExprs = getExprs(nb, emMapDims);
@@ -793,7 +793,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     auto tmpVal = nb.create<mlir::arith::DivFOp>(loc, expVal, emVal);
     nb.create<mlir::affine::AffineStoreOp>(loc, tmpVal, tileP[0], normIvs);
   }
-  LOG_DEBUG("===== prepare tmp=exp(tileP)/Em =======\n",module);
+  LOG_DEBUG("===== prepare pre-matmul tmp=exp(tileP)/Em =======\n",module);
 
   // ===== i. tileP to smP (with shuffle/split-k logic) =====
   // With BroadcastNorm fusing to 2 yloops, there's only 1 ttileyDown (matmul1's store-back).
@@ -941,7 +941,7 @@ void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     }
   }
 
-  // ===== Store tileO to global O, then divide each output row by Denom =====
+  // ===== Store tileO to global O, then apply the final post-matmul divide by Denom =====
   // For useSplitKPV: first reduce tileO across lane_x via warp shuffle,
   // then only lane_x==0 writes. Both must happen AFTER xBlockFor completes.
   {

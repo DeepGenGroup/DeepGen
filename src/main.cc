@@ -400,7 +400,7 @@ std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& con
 }
 
 std::string gemma2_split_k1(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
-  // Gemma2 split kernel 1: GEMM(Q@K^T) + softcap(tanh) + causal mask + online reduce → em, denom
+  // Gemma2 split kernel 1: GEMM(Q@K^T) + softcap(tanh) + causal mask + online reduce → k1 outputs (em, denom)
   auto attn = config.at(__GlobalKernelName);
   TileConfig tileConfig = {
     {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
@@ -452,7 +452,10 @@ std::string gemma2_split_k1(std::vector<int64_t> shape, const TuneConfig& config
 }
 
 std::string gemma2_split_k2(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
-  // Gemma2 split kernel 2: GEMM(Q@K^T) + softcap(tanh) + causal mask + broadcast normalize(em,denom) + GEMM(P@V) → O
+  // Gemma2 split kernel 2: GEMM(Q@K^T) + softcap(tanh) + causal mask
+  //   + pre-matmul normalize by em
+  //   + post-matmul divide by denom
+  //   → O
   auto attn = config.at(__GlobalKernelName);
   TileConfig tileConfig = {
     {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
@@ -949,8 +952,8 @@ static PyMethodDef DeepgenMethods[] = {
     {"set_kernel_name", set_kernel_name, METH_VARARGS, "Set global kernel name"},
     {"compile_attn_split_k1", py_compile_attn_split_k1, METH_VARARGS, "Compile split attention kernel 1 (GEMM + reduce -> em, denom)"},
     {"compile_attn_split_k2", py_compile_attn_split_k2, METH_VARARGS, "Compile split attention kernel 2 (GEMM + broadcast norm + GEMM -> O)"},
-    {"compile_gemma2_split_k1", py_compile_gemma2_split_k1, METH_VARARGS, "Compile Gemma2 split kernel 1 (GEMM + softcap + mask + reduce -> em, denom)"},
-    {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + broadcast norm + GEMM -> O)"},
+    {"compile_gemma2_split_k1", py_compile_gemma2_split_k1, METH_VARARGS, "Compile Gemma2 split kernel 1 (GEMM + softcap + mask + reduce -> k1 outputs em, denom)"},
+    {"compile_gemma2_split_k2", py_compile_gemma2_split_k2, METH_VARARGS, "Compile Gemma2 split kernel 2 (GEMM + softcap + mask + em-pre / denom-post normalization + GEMM -> O)"},
     {"compile_h2o_split_k1", py_compile_h2o_split_k1, METH_VARARGS, "Compile H2O split kernel 1 (GEMM + mask + reduce -> em, denom)"},
     {"compile_h2o_split_k2", py_compile_h2o_split_k2, METH_VARARGS, "Compile H2O split kernel 2 (GEMM + mask + normalize + col reduce -> row_sum)"},
     {"compile_h2o_split_k3", py_compile_h2o_split_k3, METH_VARARGS, "Compile H2O split kernel 3 (GEMM + mask + broadcast norm + GEMM -> O)"},
