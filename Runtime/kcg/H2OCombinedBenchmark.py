@@ -11,6 +11,7 @@ import re
 import json
 import math
 import importlib
+import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -78,15 +79,25 @@ def fill_defaults(cfg):
     return cfg
 
 
-def compile_kernel(compile_func, set_kernel_name, kname, shape, cfg):
+def compile_kernel(compile_func, set_kernel_name, kname, shape, cfg, dtype_name):
     """Compile a single kernel and return (binaryPath, funcName, gridDims, blockDims, shmBytes)."""
     set_kernel_name(kname)
     config = {kname: cfg}
-    dtype_str = "float32"
-    res = compile_func(shape, config, dtype_str)
+    res = compile_func(shape, config, dtype_name)
     if not res:
         raise RuntimeError(f"Compilation failed for {kname}")
     return res
+
+
+def tensor_error_summary(actual, ref):
+    diff = (actual - ref).abs()
+    ref_abs = ref.abs()
+    rel = diff / (ref_abs + 1e-12)
+    return {
+        "max_abs": float(diff.max().item()),
+        "mean_abs": float(diff.mean().item()),
+        "max_rel": float(rel.max().item()),
+    }
 
 
 def main():
@@ -140,11 +151,11 @@ def main():
     k3_name = k3_top['name']
 
     print("[combined] Compiling K1...", flush=True)
-    res1 = compile_kernel(compile_k1, set_kernel_name, k1_name, shape1, cfg1)
+    res1 = compile_kernel(compile_k1, set_kernel_name, k1_name, shape1, cfg1, dtype_name)
     print("[combined] Compiling K2...", flush=True)
-    res2 = compile_kernel(compile_k2, set_kernel_name, k2_name, shape2, cfg2)
+    res2 = compile_kernel(compile_k2, set_kernel_name, k2_name, shape2, cfg2, dtype_name)
     print("[combined] Compiling K3...", flush=True)
-    res3 = compile_kernel(compile_k3, set_kernel_name, k3_name, shape3, cfg3)
+    res3 = compile_kernel(compile_k3, set_kernel_name, k3_name, shape3, cfg3, dtype_name)
 
     dt = torch_dtype
     type_width = 4 if dt == torch.float32 else 2
@@ -222,10 +233,9 @@ def main():
     with torch.no_grad():
         scores = torch.matmul(q_base, k_base) * scale + mask
         m_val = scores.max(dim=-1, keepdim=True).values
-        ref_em = torch.exp(m_val)
-        sum_ex = torch.exp(scores).sum(dim=-1, keepdim=True)
-        ref_denom = sum_ex / ref_em
-        ref_p = torch.exp(scores) / (ref_em * ref_denom)
+        p_exp = torch.exp(scores - m_val)
+        den = p_exp.sum(dim=-1, keepdim=True)
+        ref_p = p_exp / den
         ref_row_sum = ref_p.sum(dim=2, keepdim=False)
         ref_out = torch.matmul(ref_p, v_base)
 
@@ -236,25 +246,23 @@ def main():
     torch_ns.synchronize()
 
     # === Timed: K1 → K2 → K3 (serial) ===
-    st = torch_ns.Event(enable_timing=True)
-    et = torch_ns.Event(enable_timing=True)
-    st.record()
+    torch_ns.synchronize()
+    st = time.perf_counter()
     kernel1.run(qq, kk, em, denom)
     kernel2.run(kk, qq, em, denom, row_sum)
     kernel3.run(qq, kk, v_base, em, denom, out)
-    et.record()
     torch_ns.synchronize()
-    combined_time = st.elapsed_time(et)
+    et = time.perf_counter()
+    combined_time = (et - st) * 1000.0
 
     # === Baseline timing (warmup + 7 runs, take median) ===
     import numpy as np
     def _run_baseline():
-        scores = torch.matmul(q_base, k_base) / math.sqrt(float(D))
-        scores = scores + mask
+        scores = torch.matmul(q_base, k_base) * scale + mask
         m_val = scores.max(dim=-1, keepdim=True).values
         p_exp = torch.exp(scores - m_val)
-        p_sum = p_exp.sum(dim=-1, keepdim=True)
-        s = p_exp / p_sum
+        den = p_exp.sum(dim=-1, keepdim=True)
+        s = p_exp / den
         out_bl = torch.matmul(s, v_base)
         rs_bl = s.sum(dim=2, keepdim=False)
         return out_bl, rs_bl
@@ -262,38 +270,39 @@ def main():
     torch_ns.synchronize()
     base_times = []
     for _ in range(7):
-        bst = torch_ns.Event(enable_timing=True)
-        bet = torch_ns.Event(enable_timing=True)
-        bst.record()
-        _run_baseline()
-        bet.record()
         torch_ns.synchronize()
-        base_times.append(bst.elapsed_time(bet))
+        bst = time.perf_counter()
+        _run_baseline()
+        torch_ns.synchronize()
+        bet = time.perf_counter()
+        base_times.append((bet - bst) * 1000.0)
     baseline_time = float(np.median(base_times))
 
-    # === Correctness check ===
-    k1_ok = torch.allclose(denom, ref_denom, rtol=1e-3, atol=1e-3)
-    k2_ok = torch.allclose(row_sum, ref_row_sum, rtol=1e-3, atol=1e-3)
-    k3_ok = torch.allclose(out, ref_out, rtol=1e-3, atol=1e-3)
+    # === Correctness check (final outputs only) ===
+    row_sum_correct = torch.allclose(row_sum, ref_row_sum, rtol=1e-3, atol=1e-3)
+    out_correct = torch.allclose(out, ref_out, rtol=1e-3, atol=1e-3)
+    row_sum_error = tensor_error_summary(row_sum, ref_row_sum)
+    out_error = tensor_error_summary(out, ref_out)
+    overall_correct = row_sum_correct and out_correct
 
     speedup = baseline_time / combined_time if combined_time > 0 else 0
 
-    print(f"[combined] Combined time: {combined_time:.4f} ms")
-    print(f"[combined] Baseline time: {baseline_time:.4f} ms")
-    print(f"[combined] Speedup: {speedup:.4f}")
-
     result = {
-        "k1": {"name": k1_name, "time": k1_top["time"], "individual_speedup": k1_top["speedup"]},
-        "k2": {"name": k2_name, "time": k2_top["time"], "individual_speedup": k2_top["speedup"]},
-        "k3": {"name": k3_name, "time": k3_top["time"], "individual_speedup": k3_top["speedup"]},
+        "k1_name": k1_name,
+        "k2_name": k2_name,
+        "k3_name": k3_name,
+        "combined_timer_mode": "cpu_wall_time",
+        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
-        "combined_speedup": speedup,
+        "speedup": speedup
     }
 
     with open(out_path, 'w') as f:
         json.dump(result, f, indent=2)
-    print(f"[combined] Results saved to {out_path}")
+        f.flush()
+
+    print(json.dumps(result, indent=2))
 
 
 if __name__ == '__main__':

@@ -11,6 +11,7 @@ import re
 import json
 import math
 import importlib
+import time
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -119,13 +120,24 @@ def baseline(q, k, v):
     scale = 1.0 / math.sqrt(float(q.shape[-1]))
     S = q.shape[-2]
     mask = _causal_upper_mask(S, q.device, q.dtype).unsqueeze(0).unsqueeze(0)
-    scores = torch.matmul(q * scale, k) + mask
+    scores = torch.matmul(q, k) * scale + mask
     m = scores.max(dim=-1, keepdim=True).values
     p_exp = torch.exp(scores - m)
     p_sum = p_exp.sum(dim=-1, keepdim=True)
     s = p_exp / p_sum
     out = torch.matmul(s, v)
     return out, torch.exp(m), p_sum
+
+
+def tensor_error_summary(actual, ref):
+    diff = (actual - ref).abs()
+    ref_abs = ref.abs()
+    rel = diff / (ref_abs + 1e-12)
+    return {
+        "max_abs": float(diff.max().item()),
+        "mean_abs": float(diff.mean().item()),
+        "max_rel": float(rel.max().item()),
+    }
 
 
 def main():
@@ -201,20 +213,19 @@ def main():
     out = torch.empty((B, H, S, D), dtype=dt, device=device)
 
     with torch.no_grad():
-        ref_out, ref_em, ref_denom = baseline(q, k, v)
+        ref_out, _, _ = baseline(q, k, v)
 
     kernel1.run(qq, kk, em, denom)
     kernel2.run(qq, kk, v, em, denom, out)
     torch_ns.synchronize()
 
-    st = torch_ns.Event(enable_timing=True)
-    et = torch_ns.Event(enable_timing=True)
-    st.record()
+    torch_ns.synchronize()
+    st = time.perf_counter()
     kernel1.run(qq, kk, em, denom)
     kernel2.run(qq, kk, v, em, denom, out)
-    et.record()
     torch_ns.synchronize()
-    combined_time = st.elapsed_time(et)
+    et = time.perf_counter()
+    combined_time = (et - st) * 1000.0
 
     import numpy as np
 
@@ -225,13 +236,12 @@ def main():
     torch_ns.synchronize()
     base_times = []
     for _ in range(7):
-        bst = torch_ns.Event(enable_timing=True)
-        bet = torch_ns.Event(enable_timing=True)
-        bst.record()
-        _run_baseline()
-        bet.record()
         torch_ns.synchronize()
-        base_times.append(bst.elapsed_time(bet))
+        bst = time.perf_counter()
+        _run_baseline()
+        torch_ns.synchronize()
+        bet = time.perf_counter()
+        base_times.append((bet - bst) * 1000.0)
     baseline_time = float(np.median(base_times))
 
     speedup = baseline_time / combined_time if combined_time > 0 else 0.0
@@ -239,6 +249,8 @@ def main():
     result = {
         "k1_name": k1_top["name"],
         "k2_name": k2_top["name"],
+        "combined_timer_mode": "cpu_wall_time",
+        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "speedup": speedup

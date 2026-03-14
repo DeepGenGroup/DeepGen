@@ -138,6 +138,17 @@ def baseline(q, k, v):
     return out, em, denom
 
 
+def tensor_error_summary(actual, ref):
+    diff = (actual - ref).abs()
+    ref_abs = ref.abs()
+    rel = diff / (ref_abs + 1e-12)
+    return {
+        "max_abs": float(diff.max().item()),
+        "mean_abs": float(diff.mean().item()),
+        "max_rel": float(rel.max().item()),
+    }
+
+
 def load_top_result(path, tag):
     if not os.path.exists(path):
         raise FileNotFoundError(f"{tag} result file not found: {path}")
@@ -244,7 +255,7 @@ def main():
     out = torch.empty((B, H, S, D), dtype=dt, device=device)
 
     with torch.no_grad():
-        ref_out, ref_em, ref_denom = baseline(q, k, v)
+        ref_out, _, _ = baseline(q, k, v)
 
     steps = [
         lambda: kernel1.run(qq, kk, em, denom),
@@ -260,7 +271,8 @@ def main():
         "k1_name": k1_top["name"],
         "k2_name": k2_top["name"],
         "combined_mode": "direct_k1_k2",
-        "timer_mode": "cpu_wall_time",
+        "combined_timer_mode": "cpu_wall_time",
+        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "speedup": speedup
