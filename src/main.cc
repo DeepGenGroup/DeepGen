@@ -401,6 +401,7 @@ std::string attention_split_k2(std::vector<int64_t> shape, const TuneConfig& con
   configK2[__GlobalKernelName]["SCALE_Q"] = 1;
   configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
   configK2[__GlobalKernelName]["POST_MATMUL_EM_DENOM"] = 1;
+  configK2[__GlobalKernelName]["DISABLE_POST_MATMUL_EM_DENOM_ON_WAVE64"] = 1;
   return compile_kernel(configK2, tileConfig, kds, fkds);
 }
 
@@ -511,6 +512,7 @@ std::string gemma2_split_k2(std::vector<int64_t> shape, const TuneConfig& config
   configK2[__GlobalKernelName]["SOFTCAP_TANH"] = 1;
   configK2[__GlobalKernelName]["CAUSAL_MASK"] = 1;
   configK2[__GlobalKernelName]["POST_MATMUL_EM_DENOM"] = 1;
+  configK2[__GlobalKernelName]["DISABLE_POST_MATMUL_EM_DENOM_ON_WAVE64"] = 1;
   return compile_kernel(configK2, tileConfig, kds, fkds);
 }
 
@@ -687,6 +689,7 @@ std::string h2o_split_k3(std::vector<int64_t> shape, const TuneConfig& config, c
   configK3[__GlobalKernelName]["SCALE_Q"] = 1;
   configK3[__GlobalKernelName]["CAUSAL_MASK"] = 1;
   configK3[__GlobalKernelName]["POST_MATMUL_EM_DENOM"] = 1;
+  configK3[__GlobalKernelName]["DISABLE_POST_MATMUL_EM_DENOM_ON_WAVE64"] = 1;
   return compile_kernel(configK3, tileConfig, kds, fkds);
 }
 

@@ -521,8 +521,16 @@ void FlashAttnSplitK2Optimizer::moveMemrefDefineAhead(mlir::Operation* threadPar
 void FlashAttnSplitK2Optimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   mlir::ModuleOp module = mlir::dyn_cast<mlir::ModuleOp>(funcOp->getParentOp());
   mlir::OpBuilder builder(module);
+  bool wave64Path = cfg.count("WARP_SIZE") && cfg.at("WARP_SIZE") > 32;
   bool postMatmulEmDenom =
       cfg.count("POST_MATMUL_EM_DENOM") && cfg.at("POST_MATMUL_EM_DENOM");
+  bool disablePostMatmulEmDenomOnWave64 =
+      cfg.count("DISABLE_POST_MATMUL_EM_DENOM_ON_WAVE64") &&
+      cfg.at("DISABLE_POST_MATMUL_EM_DENOM_ON_WAVE64");
+  if (wave64Path && postMatmulEmDenom && disablePostMatmulEmDenomOnWave64) {
+    postMatmulEmDenom = false;
+    llvm::errs() << "[opt] wave64: disable POST_MATMUL_EM_DENOM by config, fallback to pre-matmul /Em\n";
+  }
 
   // ===== a. tileP + tileO bufferize, k split/reorder =====
   std::vector<mlir::affine::AffineForOp> tilePLoops{yTileForOps[0], xTileForOps[0]};
