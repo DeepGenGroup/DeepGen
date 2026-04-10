@@ -11,7 +11,7 @@ import re
 import json
 import math
 import importlib
-import time
+import statistics
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -140,6 +140,24 @@ def tensor_error_summary(actual, ref):
     }
 
 
+def measure_gpu_time(run_once):
+    start = torch_ns.Event(enable_timing=True)
+    end = torch_ns.Event(enable_timing=True)
+    torch_ns.synchronize()
+    start.record()
+    run_once()
+    end.record()
+    torch_ns.synchronize()
+    return float(start.elapsed_time(end))
+
+
+def measure_gpu_median(run_once, rounds=7):
+    run_once()
+    torch_ns.synchronize()
+    times = [measure_gpu_time(run_once) for _ in range(rounds)]
+    return float(statistics.median(times))
+
+
 def main():
     if len(sys.argv) < 6:
         print("Usage: python AttentionSplitCombinedBenchmark.py k1.json k2.json combined_out.json devId dtype")
@@ -219,38 +237,22 @@ def main():
     kernel2.run(qq, kk, v, em, denom, out)
     torch_ns.synchronize()
 
-    torch_ns.synchronize()
-    st = time.perf_counter()
-    kernel1.run(qq, kk, em, denom)
-    kernel2.run(qq, kk, v, em, denom, out)
-    torch_ns.synchronize()
-    et = time.perf_counter()
-    combined_time = (et - st) * 1000.0
+    def _run_combined():
+        kernel1.run(qq, kk, em, denom)
+        kernel2.run(qq, kk, v, em, denom, out)
 
-    import numpy as np
+    combined_time = measure_gpu_median(_run_combined, rounds=7)
 
     def _run_baseline():
         return baseline(q, k, v)
 
-    _run_baseline()
-    torch_ns.synchronize()
-    base_times = []
-    for _ in range(7):
-        torch_ns.synchronize()
-        bst = time.perf_counter()
-        _run_baseline()
-        torch_ns.synchronize()
-        bet = time.perf_counter()
-        base_times.append((bet - bst) * 1000.0)
-    baseline_time = float(np.median(base_times))
+    baseline_time = measure_gpu_median(_run_baseline, rounds=7)
 
     speedup = baseline_time / combined_time if combined_time > 0 else 0.0
 
     result = {
         "k1_name": k1_top["name"],
         "k2_name": k2_top["name"],
-        "combined_timer_mode": "cpu_wall_time",
-        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "speedup": speedup

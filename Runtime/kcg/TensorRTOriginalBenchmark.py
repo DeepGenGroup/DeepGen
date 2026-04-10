@@ -19,6 +19,7 @@ import json
 import math
 import statistics
 import time
+from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence, Tuple
 
 import torch
@@ -29,6 +30,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Benchmark the original Attention / H2O / Gemma2 formulas with TensorRT."
     )
+    parser.set_defaults(disable_tensor_core=True)
     parser.add_argument("--op", choices=("attn", "h2o", "gemma2", "all"), default="all")
     parser.add_argument("--device", default="cuda")
     parser.add_argument("--dtype", choices=("float32", "float16"), default="float16")
@@ -39,7 +41,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--iters", type=int, default=20)
     parser.add_argument("--timer", choices=("cpu_wall", "cuda_event"), default="cpu_wall")
-    parser.add_argument("--disable-tensor-core", action="store_true")
+    parser.add_argument(
+        "--disable-tensor-core",
+        dest="disable_tensor_core",
+        action="store_true",
+        help="Disable Tensor Core / TF32 paths (default).",
+    )
+    parser.add_argument(
+        "--enable-tensor-core",
+        dest="disable_tensor_core",
+        action="store_false",
+        help="Enable Tensor Core / TF32 paths.",
+    )
     parser.add_argument("--input-init", choices=("ones", "randn"), default="randn")
     parser.add_argument("--input-scale", type=float, default=0.1)
     parser.add_argument("--tanh-scale", type=float, default=50.0)
@@ -378,8 +391,12 @@ def trt_build_engine_from_onnx(
 
     network = builder.create_network(1 << int(trt.NetworkDefinitionCreationFlag.STRONGLY_TYPED))
     parser = trt.OnnxParser(network, trt_logger)
-    onnx_buf = onnx_model.SerializeToString()
-    if not parser.parse(onnx_buf):
+    if isinstance(onnx_model, (str, Path)):
+        ok = parser.parse_from_file(str(onnx_model))
+    else:
+        onnx_buf = onnx_model.SerializeToString()
+        ok = parser.parse(onnx_buf)
+    if not ok:
         errs = []
         for i in range(parser.num_errors):
             errs.append(str(parser.get_error(i)))

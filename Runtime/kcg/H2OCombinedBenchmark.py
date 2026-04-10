@@ -11,7 +11,7 @@ import re
 import json
 import math
 import importlib
-import time
+import statistics
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -98,6 +98,24 @@ def tensor_error_summary(actual, ref):
         "mean_abs": float(diff.mean().item()),
         "max_rel": float(rel.max().item()),
     }
+
+
+def measure_gpu_time(run_once):
+    start = torch_ns.Event(enable_timing=True)
+    end = torch_ns.Event(enable_timing=True)
+    torch_ns.synchronize()
+    start.record()
+    run_once()
+    end.record()
+    torch_ns.synchronize()
+    return float(start.elapsed_time(end))
+
+
+def measure_gpu_median(run_once, rounds=7):
+    run_once()
+    torch_ns.synchronize()
+    times = [measure_gpu_time(run_once) for _ in range(rounds)]
+    return float(statistics.median(times))
 
 
 def main():
@@ -246,17 +264,14 @@ def main():
     torch_ns.synchronize()
 
     # === Timed: K1 → K2 → K3 (serial) ===
-    torch_ns.synchronize()
-    st = time.perf_counter()
-    kernel1.run(qq, kk, em, denom)
-    kernel2.run(kk, qq, em, denom, row_sum)
-    kernel3.run(qq, kk, v_base, em, denom, out)
-    torch_ns.synchronize()
-    et = time.perf_counter()
-    combined_time = (et - st) * 1000.0
+    def _run_combined():
+        kernel1.run(qq, kk, em, denom)
+        kernel2.run(kk, qq, em, denom, row_sum)
+        kernel3.run(qq, kk, v_base, em, denom, out)
+
+    combined_time = measure_gpu_median(_run_combined, rounds=1)
 
     # === Baseline timing (warmup + 7 runs, take median) ===
-    import numpy as np
     def _run_baseline():
         scores = torch.matmul(q_base, k_base) * scale + mask
         m_val = scores.max(dim=-1, keepdim=True).values
@@ -266,17 +281,8 @@ def main():
         out_bl = torch.matmul(s, v_base)
         rs_bl = s.sum(dim=2, keepdim=False)
         return out_bl, rs_bl
-    _run_baseline()
-    torch_ns.synchronize()
-    base_times = []
-    for _ in range(7):
-        torch_ns.synchronize()
-        bst = time.perf_counter()
-        _run_baseline()
-        torch_ns.synchronize()
-        bet = time.perf_counter()
-        base_times.append((bet - bst) * 1000.0)
-    baseline_time = float(np.median(base_times))
+
+    baseline_time = measure_gpu_median(_run_baseline, rounds=7)
 
     # === Correctness check (final outputs only) ===
     row_sum_correct = torch.allclose(row_sum, ref_row_sum, rtol=1e-3, atol=1e-3)
@@ -291,8 +297,6 @@ def main():
         "k1_name": k1_name,
         "k2_name": k2_name,
         "k3_name": k3_name,
-        "combined_timer_mode": "cpu_wall_time",
-        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "speedup": speedup

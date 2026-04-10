@@ -50,9 +50,9 @@ def _h2o_split_k3(q: torch.Tensor, k: torch.Tensor, v: torch.Tensor,
 
 
 def _make_qkv(bs, hn, sl, hd, dtype, device):
-    q = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
-    k = torch.ones((bs, hn, hd, sl), dtype=dtype, device=device)
-    v = torch.ones((bs, hn, sl, hd), dtype=dtype, device=device)
+    q = torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
+    k = torch.rand((bs, hn, hd, sl), dtype=dtype, device=device)
+    v = torch.rand((bs, hn, sl, hd), dtype=dtype, device=device)
     return q, k, v
 
 

@@ -332,6 +332,8 @@ bool KernelCodeGenerator::optimize(mlir::ModuleOp& mod, const std::map<std::stri
       opts[KernelType] = std::make_unique<MatmulOptimizer>();
     } else if (KernelType == "FlashAttn") {
       opts[KernelType] = std::make_unique<FlashAttnOptimizer>();
+    } else if (KernelType == "FlashAttnOrigin") {
+      opts[KernelType] = std::make_unique<FlashAttnOriginOptimizer>();
     } else if (KernelType == "GemmStats") {
       opts[KernelType] = std::make_unique<GemmStatsOptimizer>();
     } else if (KernelType == "FlashAttnSplitK2") {

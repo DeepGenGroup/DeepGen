@@ -4,7 +4,7 @@ set -e
 DEV=7
 DTYPE=float32
 SEQLEN=${SEQLEN:-2048}
-PROJECT_DIR=/home/bizefeng/DeepGen
+PROJECT_DIR=/home/xushilong/DeepGen
 CFG=${PROJECT_DIR}/TuningConfigs/h2o_tuning.json
 
 cd ${PROJECT_DIR}/Runtime

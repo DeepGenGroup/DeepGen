@@ -7,10 +7,13 @@ import multiprocessing
 from kcg.Kernel import *
 import kcg.Operators.matmul as kcg_mm
 import kcg.Operators.attention as kcg_att
+import kcg.Operators.attention_origin as kcg_att_origin
 import kcg.Operators.attention_v2 as kcg_att_v2
 import kcg.Operators.attention_split as kcg_att_split
 import kcg.Operators.attention_gemma2 as kcg_att_gemma2
+import kcg.Operators.attention_gemma2_origin as kcg_att_gemma2_origin
 import kcg.Operators.attention_h2o as kcg_att_h2o
+import kcg.Operators.attention_h2o_origin as kcg_att_h2o_origin
 import numpy as np
 
 ctx = multiprocessing.get_context('spawn')
@@ -98,6 +101,8 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
     # wait all procs end
     for pp in procs :
         pp.join()
+        if pp.exitcode != 0:
+            raise RuntimeError(f"compile subprocess failed, exitcode={pp.exitcode}")
     procs.clear()
     return iterationEnds
 
@@ -227,6 +232,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             result = {"testResult" : maxSppedups}
             json.dump(result,f,indent=2)
             f.flush()
+        print(f"[result-json] wrote {save_to} with {len(maxSppedups)} entries", flush=True)
     return
 
 g_time0 = Value('d',0.0)
@@ -242,9 +248,12 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     global g_findAvaialbleCase
     name_format = f"{PathManager.pikle_dir()}/{devId}/{task_id}/*.pkl"
     pkls = glob.glob(name_format)
+    print(f"[benchmark] discovered {len(pkls)} serialized kernels under {name_format}", flush=True)
     p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls, checkTflops, checkAcc))
     p.start()
     p.join()
+    if p.exitcode != 0:
+        raise RuntimeError(f"benchmark subprocess failed, exitcode={p.exitcode}")
     # process terminated. clean undealed pkls
     # if p.is_alive():
     #     p.terminate()
@@ -463,10 +472,15 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
             shape[2] = seqlen
         return shape
 
-    def _dump_subcfg(full_cfg, sub_key: str, fill_o_defaults: bool = False) -> str:
+    def _dump_subcfg(full_cfg, sub_key: Optional[str], fill_o_defaults: bool = False,
+                     overrides: Optional[dict] = None) -> str:
         import json, tempfile
 
-        sub_cfg = full_cfg[sub_key] if sub_key in full_cfg else full_cfg
+        if sub_key is not None and sub_key in full_cfg:
+            sub_cfg = full_cfg[sub_key]
+        else:
+            sub_cfg = full_cfg
+        sub_cfg = dict(sub_cfg)
         if fill_o_defaults:
             o_defaults = {
                 "Slice2": [4], "OTr": [4], "OTc": [8], "GLOB_LOAD_WIDTH_V": [4],
@@ -477,14 +491,24 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
                 "LOAD_CONTINUOUS_O": [1], "REG_PREFETCH_O": [0],
                 "SHUFFLE_P": [0], "SPLITK_PV": [0],
             }
-            sub_cfg = dict(sub_cfg)
             for k, v in o_defaults.items():
                 sub_cfg.setdefault(k, v)
+        if overrides:
+            for k, v in overrides.items():
+                sub_cfg[k] = v
         tmp = tempfile.NamedTemporaryFile(mode='w', suffix='.json', delete=False)
         json.dump(sub_cfg, tmp)
         tmp.flush()
         tmp.close()
         return tmp.name
+
+    origin_fixed_cfg = {
+        "SHARED_PREFETCH_P": [0],
+        "REG_PREFETCH_P": [0],
+        "REG_PREFETCH_O": [0],
+        "SHUFFLE_P": [0],
+        "SPLITK_PV": [0],
+    }
 
     if OpTy is kcg_mm.MatmulOp :
         import kcg.tuning.NewCfgTest as ns_mm
@@ -492,6 +516,13 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
     if OpTy is kcg_att.AttentionOp :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace(_shape(2048), cfgPath, [], torch_dtype)
+    if OpTy is kcg_att_origin.AttentionOriginOp :
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        tmp_cfg = _dump_subcfg(full_cfg, None, overrides=origin_fixed_cfg)
+        return ns_attentiopn.getTuneSpace(_shape(2048), tmp_cfg, [], torch_dtype, kernel_prefix="AttentionOrigin")
     if OpTy is kcg_att_v2.AttentionV2Op :
         import kcg.tuning.attn_FP32_test as ns_attentiopn
         return ns_attentiopn.getTuneSpace(_shape(2048), cfgPath, [], torch_dtype)
@@ -531,6 +562,13 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
             full_cfg = json.load(f)
         tmp_cfg = _dump_subcfg(full_cfg, "k2")
         return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype, kernel_prefix="Gemma2")
+    if OpTy is kcg_att_gemma2_origin.Gemma2OriginOp :
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        tmp_cfg = _dump_subcfg(full_cfg, None, overrides=origin_fixed_cfg)
+        return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype, kernel_prefix="Gemma2Origin")
     if OpTy is kcg_att_gemma2.Gemma2K1Op:
         import json
         import kcg.tuning.attn_FP32_test as ns_attentiopn
@@ -560,6 +598,13 @@ def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torc
             full_cfg = json.load(f)
         tmp_cfg = _dump_subcfg(full_cfg, "k3")
         return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype)
+    if OpTy is kcg_att_h2o_origin.H2OOriginOp :
+        import json
+        import kcg.tuning.attn_FP32_test as ns_attentiopn
+        with open(cfgPath, 'r') as f:
+            full_cfg = json.load(f)
+        tmp_cfg = _dump_subcfg(full_cfg, None, overrides=origin_fixed_cfg)
+        return ns_attentiopn.getTuneSpace(_shape(4096), tmp_cfg, [], torch_dtype, kernel_prefix="H2OOrigin")
     if OpTy is kcg_att_h2o.H2OK1Op:
         import json
         import kcg.tuning.attn_FP32_test as ns_attentiopn
@@ -646,14 +691,17 @@ def do_compile_and_benchmark_alternatively(opty : Type[OpInterface], ts : TsGene
 _opty_map = {
     "matmul":  kcg_mm.MatmulOp,
     "attn_v1": kcg_att.AttentionOp,
+    "attention_origin": kcg_att_origin.AttentionOriginOp,
     "attn_v2": kcg_att_v2.AttentionV2Op,
     "attn_split": kcg_att_split.AttentionSplitOp,
     "attn_k1": kcg_att_split.AttentionK1Op,
     "attn_k2": kcg_att_split.AttentionK2Op,
     "gemma2_split": kcg_att_gemma2.Gemma2SplitOp,
+    "gemma2_origin": kcg_att_gemma2_origin.Gemma2OriginOp,
     "gemma2_k1": kcg_att_gemma2.Gemma2K1Op,
     "gemma2_k2": kcg_att_gemma2.Gemma2K2Op,
     "h2o_split": kcg_att_h2o.H2OSplitOp,
+    "h2o_origin": kcg_att_h2o_origin.H2OOriginOp,
     "h2o_k1": kcg_att_h2o.H2OK1Op,
     "h2o_k2": kcg_att_h2o.H2OK2Op,
     "h2o_k3": kcg_att_h2o.H2OK3Op,
@@ -763,6 +811,15 @@ def main():
     co = CompileOption()
     co.fastCompile = False
     do_compile_and_benchmark_alternatively(opty,ts,bc,co,backend,arch,devId,checktflops, checkAcc, task_id, tssize)
+    if result_json_path:
+        if not os.path.exists(result_json_path):
+            raise RuntimeError(f"result json not found: {result_json_path}")
+        with open(result_json_path, 'r') as f:
+            obj = json.load(f)
+        result_count = len(obj.get("testResult", []))
+        print(f"[result-json] final result count = {result_count}", flush=True)
+        if result_count == 0:
+            raise RuntimeError(f"no valid kernels were recorded in {result_json_path}")
     # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
     # do_benchmark(opty,devId,cc,[])
     et = time.time()

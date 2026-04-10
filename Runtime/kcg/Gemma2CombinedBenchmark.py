@@ -10,10 +10,9 @@ import os
 import re
 import json
 import math
-import time
 import importlib
+import statistics
 
-import numpy as np
 import torch
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)) + "/..")
@@ -160,34 +159,37 @@ def load_top_result(path, tag):
     return results[0]
 
 
-def measure_sequence(steps, rounds=7):
-    for step in steps:
-        step()
+def measure_gpu_time(run_once):
+    start = torch_ns.Event(enable_timing=True)
+    end = torch_ns.Event(enable_timing=True)
     torch_ns.synchronize()
-    times = []
-    for _ in range(rounds):
-        torch_ns.synchronize()
-        st = time.perf_counter()
+    start.record()
+    run_once()
+    end.record()
+    torch_ns.synchronize()
+    return float(start.elapsed_time(end))
+
+
+def measure_gpu_median(run_once, rounds=7):
+    run_once()
+    torch_ns.synchronize()
+    times = [measure_gpu_time(run_once) for _ in range(rounds)]
+    return float(statistics.median(times))
+
+
+def measure_sequence(steps, rounds=7):
+    def run_once():
         for step in steps:
             step()
-        torch_ns.synchronize()
-        et = time.perf_counter()
-        times.append((et - st) * 1000.0)
-    return float(np.median(times))
+
+    return measure_gpu_median(run_once, rounds)
 
 
 def measure_baseline(q, k, v, rounds=7):
-    baseline(q, k, v)
-    torch_ns.synchronize()
-    times = []
-    for _ in range(rounds):
-        torch_ns.synchronize()
-        st = time.perf_counter()
+    def run_once():
         baseline(q, k, v)
-        torch_ns.synchronize()
-        et = time.perf_counter()
-        times.append((et - st) * 1000.0)
-    return float(np.median(times))
+
+    return measure_gpu_median(run_once, rounds)
 
 
 def main():
@@ -271,8 +273,6 @@ def main():
         "k1_name": k1_top["name"],
         "k2_name": k2_top["name"],
         "combined_mode": "direct_k1_k2",
-        "combined_timer_mode": "cpu_wall_time",
-        "baseline_timer_mode": "cpu_wall_time",
         "combined_time": combined_time,
         "baseline_time": baseline_time,
         "speedup": speedup

@@ -295,6 +295,136 @@ std::string attention_v2(std::vector<int64_t> shape, const TuneConfig& config, c
   return compile_kernel(configV2, tileConfig, kds, fkds);
 }
 
+static std::pair<std::vector<KernelData>, std::vector<FuseKernelData>>
+build_origin_attention_kernels(std::vector<int64_t> shape,
+                               const std::string& dtype,
+                               bool write_row_sum) {
+  int len = shape.size();
+  int64_t hd = shape[len-1];
+  int64_t d0 = shape[len-3], d1 = shape[len-2];
+  int64_t head_num = std::min(d0, d1);
+  int64_t sl = std::max(d0, d1);
+  std::vector<int64_t> b(shape.begin(), shape.begin() + (len - 3));
+  b.push_back(head_num);
+  std::vector<int64_t> shq{hd, sl}, shk{hd, sl}, shscores{sl, sl};
+  std::vector<int64_t> shv{sl, hd}, sho{sl, hd}, sh_rowsum{sl};
+  for (int i=b.size()-1; i>=0; i--) {
+    shq.insert(shq.begin(), b[i]);
+    shk.insert(shk.begin(), b[i]);
+    shscores.insert(shscores.begin(), b[i]);
+    shv.insert(shv.begin(), b[i]);
+    sho.insert(sho.begin(), b[i]);
+    sh_rowsum.insert(sh_rowsum.begin(), b[i]);
+  }
+
+  KernelData kd1 = {
+    "matmul1", "Matmul", {shq, shk, shscores}, {dtype, dtype, dtype}, {true, false}, 1
+  };
+  KernelData kd2 = {
+    "softmax1", "Softmax", {shscores, shscores}, {dtype, dtype}, {false}, 1
+  };
+  KernelData kd3 = {
+    "matmul2", "Matmul", {shscores, shv, sho}, {dtype, dtype, dtype}, {false, false}, 1
+  };
+
+  std::vector<std::vector<int64_t>> funcArgShapes{shq, shk, shv, sho};
+  std::vector<std::string> funcArgDtypes{dtype, dtype, dtype, dtype};
+  std::vector<std::map<std::string, std::vector<int64_t>>> funcArgIndex{
+    {{"matmul1", {0}}},
+    {{"matmul1", {1}}},
+    {{"matmul2", {1}}},
+    {{"matmul2", {2}}},
+  };
+  if (write_row_sum) {
+    funcArgShapes.push_back(sh_rowsum);
+    funcArgDtypes.push_back(dtype);
+    funcArgIndex.push_back({});
+  }
+
+  FuseKernelData fkd = {
+    __GlobalKernelName, "FlashAttnOrigin", {"matmul1", "softmax1", "matmul2"},
+    funcArgShapes, {shscores},
+    funcArgDtypes, {dtype},
+    funcArgIndex,
+    {
+      {{"matmul1", {2}}, {"softmax1", {0, 1}}, {"matmul2", {0}}},
+    },
+    {kd1.isTrans[0], kd1.isTrans[1], kd3.isTrans[1]}, {"y"}, write_row_sum ? 2 : 1
+  };
+  return {{kd1, kd2, kd3}, {fkd}};
+}
+
+std::string attention_origin(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Origin attention: GEMM(Q@K^T) + causal mask + softmax + PV in one FlashAttnOrigin kernel.
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+  auto [kds, fkds] = build_origin_attention_kernels(shape, dtype, false);
+  TuneConfig configOrigin = config;
+  configOrigin[__GlobalKernelName]["SCALE_SCORES"] = 1;
+  configOrigin[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  configOrigin[__GlobalKernelName]["SHARED_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_O"] = 0;
+  configOrigin[__GlobalKernelName]["SHUFFLE_P"] = 0;
+  configOrigin[__GlobalKernelName]["SPLITK_PV"] = 0;
+  return compile_kernel(configOrigin, tileConfig, kds, fkds);
+}
+
+std::string gemma2_origin(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Origin Gemma2: GEMM(Q@K^T) + scale + softcap + causal mask + softmax + PV.
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+  auto [kds, fkds] = build_origin_attention_kernels(shape, dtype, false);
+  TuneConfig configOrigin = config;
+  configOrigin[__GlobalKernelName]["SCALE_SCORES"] = 1;
+  configOrigin[__GlobalKernelName]["SOFTCAP_TANH"] = 1;
+  configOrigin[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  configOrigin[__GlobalKernelName]["SHARED_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_O"] = 0;
+  configOrigin[__GlobalKernelName]["SHUFFLE_P"] = 0;
+  configOrigin[__GlobalKernelName]["SPLITK_PV"] = 0;
+  return compile_kernel(configOrigin, tileConfig, kds, fkds);
+}
+
+std::string h2o_origin(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
+  // Origin H2O: GEMM(Q@K^T) + causal mask + softmax + PV, with in-kernel row_sum accumulation.
+  auto attn = config.at(__GlobalKernelName);
+  TileConfig tileConfig = {
+    {"matmul1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"softmax1", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("PTr")},
+                {"BLOCK_SIZE_X", attn.at("Bc")}, {"THREAD_SIZE_X", attn.at("PTc")}}},
+    {"matmul2", {{"BLOCK_SIZE_Y", attn.at("Br")}, {"THREAD_SIZE_Y", attn.at("OTr")},
+                {"BLOCK_SIZE_X", attn.at("Hd")}, {"THREAD_SIZE_X", attn.at("OTc")}}},
+  };
+  auto [kds, fkds] = build_origin_attention_kernels(shape, dtype, true);
+  TuneConfig configOrigin = config;
+  configOrigin[__GlobalKernelName]["SCALE_SCORES"] = 1;
+  configOrigin[__GlobalKernelName]["CAUSAL_MASK"] = 1;
+  configOrigin[__GlobalKernelName]["WRITE_ROW_SUM"] = 1;
+  configOrigin[__GlobalKernelName]["SHARED_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_P"] = 0;
+  configOrigin[__GlobalKernelName]["REG_PREFETCH_O"] = 0;
+  configOrigin[__GlobalKernelName]["SHUFFLE_P"] = 0;
+  configOrigin[__GlobalKernelName]["SPLITK_PV"] = 0;
+  return compile_kernel(configOrigin, tileConfig, kds, fkds);
+}
+
 std::string attention_split_k1(std::vector<int64_t> shape, const TuneConfig& config, const std::string& dtype = "float32") {
   // Split attention kernel 1: GEMM(Q@K^T) + online reduce → em, denom
   auto attn = config.at(__GlobalKernelName);
@@ -850,6 +980,51 @@ static PyObject* py_compile_attn_v2(PyObject* self, PyObject* args) {
   return PyUnicode_FromString(result.c_str());
 }
 
+static PyObject* py_compile_attention_origin(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = attention_origin(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_gemma2_origin(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = gemma2_origin(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
+static PyObject* py_compile_h2o_origin(PyObject* self, PyObject* args) {
+  PyObject* py_shape;
+  PyObject* py_config;
+  const char* dtype_str = "float32";
+  if (!PyArg_ParseTuple(args, "OO|s", &py_shape, &py_config, &dtype_str)) {
+    return NULL;
+  }
+  std::vector<int64_t> shape;
+  TuneConfig config;
+  if (!py_list_to_vector(py_shape, shape)) return NULL;
+  if (!py_dict_to_config(py_config, config)) return NULL;
+  std::string result = h2o_origin(shape, config, std::string(dtype_str));
+  return PyUnicode_FromString(result.c_str());
+}
+
 static PyObject* py_compile_attn_split_k1(PyObject* self, PyObject* args) {
   PyObject* py_shape;
   PyObject* py_config;
@@ -958,6 +1133,9 @@ static PyObject* py_compile_h2o_split_k3(PyObject* self, PyObject* args) {
 static PyMethodDef DeepgenMethods[] = {
     {"compile_attn", py_compile_attn, METH_VARARGS, "Compile attention with given shape and config"},
     {"compile_attn_v2", py_compile_attn_v2, METH_VARARGS, "Compile optimized attention (scale before mm1, div after mm2)"},
+    {"compile_attention_origin", py_compile_attention_origin, METH_VARARGS, "Compile origin attention (scale after mm1 + causal mask + softmax + PV)"},
+    {"compile_gemma2_origin", py_compile_gemma2_origin, METH_VARARGS, "Compile Gemma2 origin attention (scale after mm1 + softcap + causal mask + softmax + PV)"},
+    {"compile_h2o_origin", py_compile_h2o_origin, METH_VARARGS, "Compile H2O origin attention (causal attention + in-kernel row_sum accumulation)"},
     {"compile_mm", py_compile_mm, METH_VARARGS, "Compile matmul with given shape and config"},
     {"set_platform", set_platform, METH_VARARGS, "Set target platform and architecture"},
     {"set_kernel_name", set_kernel_name, METH_VARARGS, "Set global kernel name"},
