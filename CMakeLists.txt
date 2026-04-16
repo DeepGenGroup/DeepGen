@@ -11,13 +11,19 @@ set(LLVM_INSTALL_DIR "/home/xushilong/rocm-llvm-install")
 set(DEBUG_AMDGCN_OUTPUT_PATH "/home/xushilong/DeepGen/test.amdgcn") 
 set(USER_LLD_PATH "${LLVM_INSTALL_DIR}/bin/ld.lld")
 # After change llvm repo, the ld.lld must be compiled from llvm-project. Default ld in dtk is not available
-set(USER_LLD_PATH "/usr/bin/ld.lld") 
-set(USER_PTXAS_PATH "/home/xushilong/.local/cuda-12.2/bin/ptxas") 
+# set(USER_LLD_PATH "/usr/bin/ld.lld") 
+set(USER_LLD_PATH "/home/xushilong/rocm-llvm-project/clang/test/Driver/Inputs/lld/ld.lld") 
+set(USER_PTXAS_PATH "/home/xushilong/anaconda3/bin/ptxas") 
 set(CUDA_CAP        80)
 set(PTXAS_VERSION   82)
 set(CUDA_INCLUDE_DIR "/home/xushilong/.local/cuda-12.2/include")
 option(ENABLE_GRAPH_OPT "enable graph optimizer" OFF)
 option(USE_STABLEHLO_EMBEDDED "Use embedded stableHLO(ON) or external stableHLO(OFF)" ON)
+
+### Check user configs
+include(CheckUserConfig.cmake)
+check_user_program(PTXAS_BIN ${USER_PTXAS_PATH} ptxas)
+check_user_program(LLD_BIN ${USER_LLD_PATH} ld.lld)
 
 
 #############################################################
