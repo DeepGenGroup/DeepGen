@@ -534,7 +534,9 @@ class HybridLlamaAttention(nn.Module):
             scores = scores + mask
         probs = F.softmax(scores.float(), dim=-1).type_as(query)
         if self.op_name == "h2o":
-            _ = probs.sum(dim=2, keepdim=False)
+            row_sum = probs.sum(dim=2, keepdim=False).unsqueeze(-1)
+            output = torch.matmul(probs, values)
+            return output + row_sum.type_as(output) * torch.finfo(output.dtype).tiny
         return torch.matmul(probs, values)
 
     def forward(
