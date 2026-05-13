@@ -222,11 +222,17 @@ class CreateMatmulConfig:
     ttiles = self.getThreadTile(halfTag=thalfTag, squareTag=tsquareTag)
     btiles = self.getBlockTile(halfTag=bhalfTag, squareTag=bsquareTag)
     tals = self.getSplitUAndLayout(ttiles, btiles, max_thread_num=max_thread_num)
+    print("[d] getSplitUAndLayout len = ", len(tals))
     temp_tals = self.getBlockK(tals)
+    print("[d] getBlockK len = ", len(temp_tals))
     temp_tals = self.getScatterWidth(temp_tals)
+    print("[d] getScatterWidth len = ", len(temp_tals))
     temp_tals = self.getPrefetchAndContinuous(temp_tals)
+    print("[d] getPrefetchAndContinuous len = ", len(temp_tals))
     temp_tals = self.getOther(temp_tals)
+    print("[d] getOther len = ", len(temp_tals))
     temp_tals = self.ultimate(temp_tals)
+    print("[d] ultimate len = ", len(temp_tals))
     for tal in temp_tals:
       ta = MatmulTuningArgs(
         m = self.cfg_dict[kw.KEY_M][0], 

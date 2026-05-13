@@ -22,7 +22,7 @@ echo "=== [1/1] Tuning Origin Fused Kernel ==="
 date
 ${PYTHON_BIN} SimpleLocalTester.py \
   ${CFG} ./testattn_h2o_origin_${SEQLEN}.json \
-  0 0 0 0 h2o_origin ${DEV} ${DTYPE} --seqlen "$SEQLEN"
+  0 10 0 0 h2o_origin ${DEV} ${DTYPE} --seqlen "$SEQLEN"
 
 echo ""
 echo "=============================================="

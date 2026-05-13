@@ -16,7 +16,7 @@
     "WARP_SCATTER_WIDTH_N" : [1, 2, 4],
     "LOCAL_SPLIT_U" : [1, 2],
     "BLOCK_MAPPING" : [4, 8],
-    "WARP_SIZE" : [64],
+    "WARP_SIZE" : [32],
     "GLOB_STORE_WIDTH" : [2, 4],
     "DATATYPE_A" : [4],
     "DATATYPE_B" : [4],

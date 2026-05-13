@@ -358,6 +358,7 @@ def get_cfgs(cfgfilepath : str, shape = [1, 32, 4096, 128], type_width : int = 4
   print(f'get_cfgs shape = {shape}, type_width = {type_width}',flush=True)
   cfg_dict['Hd'] = [shape[3]]
   print(f"attn Hd = {cfg_dict['Hd']}",flush=True)
+  # cc = CreateConfig(cfgfilepath, shape)
   cc = CreateAttnConfig(cfg_dict, shape, type_width=type_width)
   cfgs = cc.main()
   if len(cfgs) == 0:
@@ -398,7 +399,9 @@ def getTuneSpace(shape : List[int] , cfgfile : str, cfgs : List, torch_dtype : t
         # smP bypass
         "SHUFFLE_P": shuffle_p, "SPLITK_PV": splitk_pv,
         # baseArgs
-        kw.KEY_BLOCK_DIM_X : th_num, kw.KEY_BLOCK_DIM_Y : 1, kw.KEY_BLOCK_DIM_Z : 1,
+        kw.KEY_BLOCK_DIM_X : br*bc // (ptr * ptc), 
+        kw.KEY_BLOCK_DIM_Y : 1, 
+        kw.KEY_BLOCK_DIM_Z : 1,
         kw.KEY_SHM_BYTES :  smem_size ,
         kw.KEY_GRID_DIM_X : int(shape[2]/br),
         kw.KEY_GRID_DIM_Y : shape[1],

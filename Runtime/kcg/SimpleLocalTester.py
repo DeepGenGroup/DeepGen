@@ -59,13 +59,17 @@ def __compile_task_func(OpTy : Type[OpInterface], info : CompileNeededInfo , dev
 
 
 g_index : int = 0
+g_compileTimes : float = 0
 def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtype : EnumBackendType, arch : str, kernelLimit = 10, globalLimit = 0, compileOpt : CompileOption = None, task_id : str = "") -> bool:
     # shape, dtypeInt = [[1, 32, 2048, 128], 4]
     global g_index
+    global g_compileTimes
     localIndex = 0
     maxProcsLimit = 100
     procs : List[Process] = []
     iterationEnds = False
+    start_time = 0
+    end_time = 0
     print('========= compiling ============')
     while True:
         try:
@@ -81,6 +85,8 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             # create compile process
             p = Process(target=__compile_task_func,args=(OpTy,needInfo,deviceId,backendtype,arch, g_index, compileOpt, task_id))
             procs.append(p)
+            if start_time <= 0 :
+                start_time = time.time()
             p.start()
             localIndex += 1
             g_index += 1
@@ -90,6 +96,7 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
                 for pp in procs :
                     pp.join()
                 procs.clear()
+                
         except StopIteration as e :
             iterationEnds = True
             break
@@ -105,6 +112,9 @@ def compile_kernel(OpTy, tsGenerator : TsGeneratorType, deviceId:int, backendtyp
             ...
             # raise RuntimeError(f"compile subprocess failed, exitcode={pp.exitcode}")
     procs.clear()
+    end_time = time.time()
+    g_compileTimes += (end_time - start_time)
+    start_time = 0  # reset st
     return iterationEnds
 
 def is_tflops_ok(b,m,n,k,t) :
@@ -466,6 +476,84 @@ def _get_gemmnormcolsum_like_cfgs(cfg_dict, shape: List[int], type_width: int):
                                                                 ))
     return results
 
+def get_tune_configs_directly_from_json(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32, seqlen: Optional[int] = None) -> TsGeneratorType :
+    if OpTy is kcg_mm.MatmulOp :
+        with open(cfgPath) as f :
+            cfgs = json.load(f)
+        shape = [1, 32, 2048, 64]
+        m = cfgs[0][ConfigKeywords.KEY_M]
+        n = cfgs[0][ConfigKeywords.KEY_N]
+        k = cfgs[0][ConfigKeywords.KEY_K]
+        ta = kcg_mm.MatmulTuningArgs(
+            m = m, 
+            n = n,
+            k= k,
+            batch= 1 ,
+            enumDType = EnumKernelDType.float32
+        )
+        for cfg in cfgs :
+            ta.assignWithDict(cfg)
+            for e in ta.batch:
+                if e == 1:
+                    ta.batch.remove(e)
+            ret = ta.getCompileNeededInfo()
+            if ret is not None:
+                yield ret
+    if OpTy is kcg_att.AttentionOp :
+        # /home/xushilong/DeepGen/TuningConfigs/xbk/attn.json
+        with open(cfgPath) as f:
+            cfgs = json.load(f)
+        shape = [1, 32, seqlen, 64]
+        for cfg in cfgs:
+            kw = ConfigKeywords
+            valDict = {
+                "Br": cfg['Br'], "Bc": cfg['Bc'], "Hd": cfg['Hd'], "Slice1": cfg['Slice1'], "Slice2": cfg['Slice2'], 
+                "PTr": cfg['PTr'], "PTc": cfg['PTc'], "OTr": cfg['OTr'], "OTc": cfg['OTc'],
+                # global to shared
+                "GLOB_LOAD_WIDTH_Q": cfg['GLOB_LOAD_WIDTH_Q'], "GLOB_LOAD_WIDTH_K": cfg['GLOB_LOAD_WIDTH_K'], "GLOB_LOAD_WIDTH_V": cfg['GLOB_LOAD_WIDTH_V'],
+                # P = Q * K
+                "BLOCK_LAYOUT_P_Y": cfg['BLOCK_LAYOUT_P_Y'], "BLOCK_LAYOUT_P_X": cfg['BLOCK_LAYOUT_P_X'], "WARP_LAYOUT_P_Y": cfg['WARP_LAYOUT_P_Y'], "WARP_LAYOUT_P_X": cfg['WARP_LAYOUT_P_X'],
+                "BLOCK_SCATTER_WIDTH_Q": cfg['BLOCK_SCATTER_WIDTH_Q'], "BLOCK_SCATTER_WIDTH_K": cfg['BLOCK_SCATTER_WIDTH_K'], "WARP_SCATTER_WIDTH_Q": cfg['WARP_SCATTER_WIDTH_Q'], "WARP_SCATTER_WIDTH_K": cfg['WARP_SCATTER_WIDTH_K'],
+                # O = P * V
+                "BLOCK_LAYOUT_O_Y": cfg['BLOCK_LAYOUT_O_Y'], "BLOCK_LAYOUT_O_X": cfg['BLOCK_LAYOUT_O_X'], "WARP_LAYOUT_O_Y": cfg['WARP_LAYOUT_O_Y'], "WARP_LAYOUT_O_X": cfg['WARP_LAYOUT_O_X'], 
+                "BLOCK_SCATTER_WIDTH_P": cfg['BLOCK_SCATTER_WIDTH_P'], "BLOCK_SCATTER_WIDTH_V": cfg['BLOCK_SCATTER_WIDTH_V'], "WARP_SCATTER_WIDTH_P": cfg['WARP_SCATTER_WIDTH_P'], "WARP_SCATTER_WIDTH_V": cfg['WARP_SCATTER_WIDTH_V'],
+
+                "UNROLL_NUM": cfg['UNROLL_NUM'], "WARP_SIZE": cfg['WARP_SIZE'], 
+                "LOAD_CONTINUOUS_P": cfg['LOAD_CONTINUOUS_P'], "LOAD_CONTINUOUS_O": cfg['LOAD_CONTINUOUS_O'], 
+                # prefecth
+                "SHARED_PREFETCH_P": cfg['SHARED_PREFETCH_P'], "REG_PREFETCH_P": cfg['REG_PREFETCH_P'], "REG_PREFETCH_O": cfg['REG_PREFETCH_O'],
+                # smP bypass
+                "SHUFFLE_P": cfg['SHUFFLE_P'], "SPLITK_PV": cfg['SPLITK_PV'],
+                # baseArgs
+                kw.KEY_BLOCK_DIM_X : cfg['Br']*cfg['Bc'] // (cfg['PTr'] * cfg['PTc'] ) ,
+                kw.KEY_BLOCK_DIM_Y : 1, 
+                kw.KEY_BLOCK_DIM_Z : 1,
+                kw.KEY_SHM_BYTES :  49152 ,
+                kw.KEY_GRID_DIM_X : int(shape[2] / cfg['Br']),
+                kw.KEY_GRID_DIM_Y : shape[1],
+                kw.KEY_GRID_DIM_Z : shape[0]
+            }
+            temp = kcg_att.AttentionTuningArgs()
+            temp.assignWithDict(valDict)
+            
+            
+            temp.kernelNamePrefix = "kcg_att_"
+            temp.basearg.argDict['shape'] = shape
+            temp.basearg.argDict['dtype'] = EnumKernelDType.float32
+            kernelName = temp.generateKernelName()
+            config = {kernelName : valDict}
+            
+            ret = CompileNeededInfo()
+            ret.kernelName = kernelName
+            ret.baseArgs = shape
+            ret.torchDataType = torch_dtype
+            ret.tsArgs = [shape,config]
+            ret.blockDims = [ valDict[kw.KEY_BLOCK_DIM_X], valDict[kw.KEY_BLOCK_DIM_Y], valDict[kw.KEY_BLOCK_DIM_Z] ]  # tx
+            ret.gridDims = [ valDict[ kw.KEY_GRID_DIM_X], valDict[ kw.KEY_GRID_DIM_Y], valDict[ kw.KEY_GRID_DIM_Z] ]
+            ret.shmBytes = 49152
+            yield ret
+            
+    
 def get_tuning_space(OpTy : Type[OpInterface], cfgPath : str, torch_dtype : torch.dtype = torch.float32, seqlen: Optional[int] = None) -> TsGeneratorType :
     def _shape(default_seqlen: int) -> List[int]:
         shape = [1, 32, default_seqlen, 64]
@@ -787,17 +875,22 @@ def main():
     os.makedirs(f"{PathManager().pikle_dir()}/{devId}/{task_id}", exist_ok=True)
     print("get_tune_space",flush=True)
     tssize = 0
-    for c in  get_tuning_space(opty, cfgFile, torch_dtype, seqlen=seqlen):
+    f_gs = get_tune_configs_directly_from_json
+    # f_gs = get_tuning_space
+
+
+    for c in  f_gs(opty, cfgFile, torch_dtype, seqlen=seqlen):
         tssize += 1
     print(f"==== tune space size = {tssize}")
     
     # return
     print("=== checktflops, checkAcc",checktflops, checkAcc)
-    ts = get_tuning_space(opty, cfgFile, torch_dtype, seqlen=seqlen)
+    
+    ts = f_gs(opty, cfgFile, torch_dtype, seqlen=seqlen)
     bc = BenchmarkConfig()
     bc.keepTopNum = 10
     bc.max_kernel_per_iter = 80
-    bc.result_json_path = result_json_path
+    bc.result_json_path = f"{result_json_path}"
     bc.maxCount = maxCount
     st = time.time()
     print(f"=====  start at : {st}")
@@ -824,8 +917,8 @@ def main():
     # compile_kernel(opty,ts,devId,backend,arch,kernelLimit=1)
     # do_benchmark(opty,devId,cc,[])
     et = time.time()
-    print(f"===== Complete! Total spends {(et - st)/ 60} minutes")
-    
+    print(f"===== Complete! Total spends {(et - st)/ 60} minutes. Compile times : {g_compileTimes / 60} minutes")
+        
     
 if __name__ == '__main__' :
     print(time.strftime('------------- %Y-%m-%d %H:%M:%S ------------- ',time.localtime(time.time())))       # 打印按指定格式排版的时间

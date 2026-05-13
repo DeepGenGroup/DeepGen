@@ -20,12 +20,12 @@ echo "=============================================="
 echo ""
 echo "=== [1/3] Tuning K1 (GemmStats) ==="
 date
-${PYTHON_BIN} SimpleLocalTester.py ${CFG} ./testattn_split_k1_${SEQLEN}.json 0 0 0 0 attn_k1 ${DEV} ${DTYPE} --seqlen "$SEQLEN"
+${PYTHON_BIN} SimpleLocalTester.py ${CFG} ./testattn_split_k1_${SEQLEN}.json 0 10 0 0 attn_k1 ${DEV} ${DTYPE} --seqlen "$SEQLEN"
 
 echo ""
 echo "=== [2/3] Tuning K2 (FlashAttnSplitK2) ==="
 date
-${PYTHON_BIN} SimpleLocalTester.py ${CFG} ./testattn_split_k2_${SEQLEN}.json 0 0 0 0 attn_k2 ${DEV} ${DTYPE} --seqlen "$SEQLEN"
+${PYTHON_BIN} SimpleLocalTester.py ${CFG} ./testattn_split_k2_${SEQLEN}.json 0 10 0 0 attn_k2 ${DEV} ${DTYPE} --seqlen "$SEQLEN"
 
 echo ""
 echo "=== [3/3] Combined K1+K2 Benchmark ==="
