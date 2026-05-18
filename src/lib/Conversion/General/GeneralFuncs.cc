@@ -216,17 +216,21 @@ std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::
     // replace operands
     replaceOpsOperands(newForOps.back(), oldIvs, newIvs);
     // [DEBUG] check for dangling uses before erase
+    #ifdef KCG_DEBUG
     llvm::errs() << "[fuseForOps] about to erase forOps[" << i << "][0]\n";
+    #endif
     bool hasDanglingUse = false;
     forOps[i][0]->walk([&](mlir::Operation* op) {
       for (auto result : op->getResults()) {
         for (auto *user : result.getUsers()) {
           if (!forOps[i][0]->isAncestor(user)) {
+            #ifdef KCG_DEBUG
             llvm::errs() << "[fuseForOps] DANGLING USE: value defined by:\n  ";
             op->print(llvm::errs());
             llvm::errs() << "\n  used by (outside erase scope):\n  ";
             user->print(llvm::errs());
             llvm::errs() << "\n";
+            #endif
             hasDanglingUse = true;
           }
         }
@@ -238,11 +242,13 @@ std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::
         for (auto arg : block.getArguments()) {
           for (auto *user : arg.getUsers()) {
             if (!forOps[i][0]->isAncestor(user)) {
+              #ifdef KCG_DEBUG
               llvm::errs() << "[fuseForOps] DANGLING block arg use, arg of:\n  ";
               forOps[i][0]->print(llvm::errs());
               llvm::errs() << "\n  used by:\n  ";
               user->print(llvm::errs());
               llvm::errs() << "\n";
+              #endif
               hasDanglingUse = true;
             }
           }
@@ -250,7 +256,9 @@ std::vector<mlir::affine::AffineForOp> fuseForOps(std::vector<std::vector<mlir::
       }
     }
     if (!hasDanglingUse) {
+      #ifdef KCG_DEBUG
       llvm::errs() << "[fuseForOps] erase OK (no dangling uses)\n";
+      #endif
     }
     forOps[i][0].erase();
   }

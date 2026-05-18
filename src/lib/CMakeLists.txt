@@ -7,7 +7,7 @@ file(GLOB_RECURSE modelmanager_src ./ModelManager/*.cc)
 add_compile_options(-g)
 add_definitions(-DTORCH_MLIR_ENABLE_STABLEHLO)
 
-add_library(kcg_runtime 
+add_library(${LIB_KCG_RUNTIME} 
             ${analysis_src}
             ${conversion_src}
             ${operators_src}
@@ -20,7 +20,7 @@ add_library(kcg_runtime
 
 #target_compile_options(kcg_runtime PRIVATE -frtti)
 # MLIR有自己的一套RTTI，需要关掉才能正确继承MLIR中类
-target_compile_options(kcg_runtime PUBLIC -fno-rtti)
+target_compile_options(${LIB_KCG_RUNTIME} PUBLIC -fno-rtti)
 
 set(LLVM_LINK_COMPONENTS
         Core
@@ -36,7 +36,7 @@ get_property(conversion_libs GLOBAL PROPERTY MLIR_CONVERSION_LIBS)
 get_property(translation_libs GLOBAL PROPERTY MLIR_TRANSLATION_LIBS)
 get_property(extension_libs GLOBAL PROPERTY MLIR_EXTENSION_LIBS)
 
-target_link_libraries(kcg_runtime
+target_link_libraries(${LIB_KCG_RUNTIME}
 PUBLIC
     ${dialect_libs}
     ${conversion_libs}

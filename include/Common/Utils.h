@@ -232,12 +232,21 @@ struct NVVMMetadata {
 #define INDEX_BIT_WIDTH     32
 #define KCG_ALIGNBYTE       16
 #ifdef KCG_DEBUG
+#pragma message("enable KCG_DEBUG")
 #define LOG_DEBUG(message,mod)  \
 {\
-  llvm::outs() << message;llvm::outs().flush(); mod.dump();\
+  llvm::outs() << message << "\n" << mod << "\n";llvm::outs().flush(); \
 }
+#define LOG_MSG(message)  \
+{\
+  llvm::outs() << message;llvm::outs().flush(); \
+}
+
 #else
+#pragma message("disable KCG_DEBUG")
 #define LOG_DEBUG(message,mod)  ;
+#define LOG_MSG(message)  ;
+
 #endif
 
 /*******************  common tool functions ****************/

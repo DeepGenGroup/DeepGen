@@ -256,7 +256,9 @@ bool KernelCodeGenerator::mapping(mlir::ModuleOp& mod, const std::map<std::strin
     auto xloops = collectOpsInfuncOp<mlir::affine::AffineForOp>(kernel, FORDESC, std::string{"x"});
     // split & reorder & parallel
     std::vector<mlir::affine::AffineParallelOp> blockIdxs;  // collect all block parallel ops
+    #ifdef KCG_DEBUG 
     llvm::errs() << "[mapping] yloops.size()=" << yloops.size() << " xloops.size()=" << xloops.size() << "\n";
+    #endif
     LOG_DEBUG("===== start =====\n", mod);
     for (int i=0; i<yloops.size(); i++) {
       // split tile for
@@ -377,7 +379,9 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
       dumpModuleIRIfEnabled(mod, std::string("04_failed_") + tag);
       return false;
     }
+    #ifdef KCG_DEBUG    
     llvm::errs() << "[transform] OK: " << tag << "\n";
+    #endif
     return true;
   };
   auto runOneNested = [&](std::unique_ptr<mlir::Pass> pass, const char* tag) -> bool {
@@ -387,7 +391,9 @@ bool KernelCodeGenerator::transform(mlir::ModuleOp& mod) {
       llvm::errs() << "[transform] FAILED at pass: " << tag << "\n";
       return false;
     }
+    #ifdef KCG_DEBUG 
     llvm::errs() << "[transform] OK: " << tag << "\n";
+    #endif
     return true;
   };
 

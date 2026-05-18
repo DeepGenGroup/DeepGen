@@ -39,18 +39,18 @@ if(Python_FOUND)
     message(STATUS "=== Python Libraries: ${Python_LIBRARIES}")
 endif()
 
-# # 查找 Python
-# find_package(PythonInterp REQUIRED)
-# find_package(PythonLibs REQUIRED)
 
-# # 获取 Python 版本信息
-# execute_process(
-#     COMMAND ${PYTHON_EXECUTABLE} -c "import sysconfig; print(sysconfig.get_path('include'))"
-#     OUTPUT_VARIABLE PYTHON_INCLUDE_DIR
-#     OUTPUT_STRIP_TRAILING_WHITESPACE
-# )
-# message(STATUS "===== Found PythonIncludeDIr ${PYTHON_INCLUDE_DIR}")
-# message(STATUS "===== Found PyLib ${Python_LIBRARIES}")
+if(CMAKE_BUILD_TYPE STREQUAL "" )
+  set(CMAKE_BUILD_TYPE "Debug")
+endif()
+message("=== buildType : ${CMAKE_BUILD_TYPE} ===")
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
+  message(STATUS "==== enable debug_log =======")
+  add_definitions(-DKCG_DEBUG)
+  add_compile_options(-g)
+else()
+  message(STATUS "==== disable debug_log =======")
+endif()
 
 option(COMPILE_AS_PYMODULE "Compile kcg_compiler to DynamicLib or Exe" ON)
 # close some warnings
@@ -102,17 +102,30 @@ else()
   set(MLIR_INCLUDE_DIRS "${MLIR_INCLUDE_DIR};${MLIR_GENERATED_INCLUDE_DIR}")
 endif()
 
-if(CMAKE_BUILD_TYPE STREQUAL "" )
-set(CMAKE_BUILD_TYPE "Debug")
-endif()
-message("=== buildType : ${CMAKE_BUILD_TYPE} ===")
-if(CMAKE_BUILD_TYPE STREQUAL "Debug")
-  message(STATUS "==== enable debug_log =======")
-  add_definitions(-DKCG_DEBUG)
-  add_compile_options(-g)
-else()
-  message(STATUS "==== disable debug_log =======")
-endif()
+
+# Utilities
+function(add_deepgengraph_object name)
+  cmake_parse_arguments(ARG "" "" "DEPENDS;LINK_LIBS" ${ARGN})
+  add_library(${name} OBJECT)
+  target_sources(${name}
+    PRIVATE ${ARG_UNPARSED_ARGUMENTS}
+    INTERFACE $<TARGET_OBJECTS:${name}>
+  )
+  if(ARG_DEPENDS)
+    add_dependencies(${name} ${ARG_DEPENDS})
+  endif()
+  if(ARG_LINK_LIBS)
+    target_link_libraries(${name} PUBLIC ${ARG_LINK_LIBS})
+  endif()
+endfunction(add_deepgengraph_object)
+
+set_property(GLOBAL PROPERTY DEEPGENGRAPH_LIBS "")
+function(add_deepgengraph_library name)
+  set_property(GLOBAL APPEND PROPERTY DEEPGENGRAPH_LIBS ${name})
+  add_deepgengraph_object(${name} ${ARGN})
+  llvm_update_compile_flags(${name})
+endfunction()
+
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 set(KernelCodeGen_SOURCE_DIR ${PROJECT_SOURCE_DIR})
@@ -127,7 +140,6 @@ include_directories(${KernelCodeGen_SOURCE_DIR}/build/include)
 # link_directories(${LLVM_BUILD_LIBRARY_DIR})
 link_directories(${LLVM_INSTALL_DIR}/lib)
 add_definitions(${LLVM_DEFINITIONS})
-add_definitions()
 message("add-def:${LLVM_DEFINITIONS}")
 
 
@@ -156,11 +168,17 @@ endif(ENABLE_GRAPH_OPT)
 SET(LIBRARY_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 SET(EXECUTABLE_OUTPUT_PATH ${PROJECT_SOURCE_DIR}/bin)
 
-if(ENABLE_DEBUG_LOG)
+set(LIB_KCG_RUNTIME "kcg_runtime")
+set(LIB_DEEPGEN "deepgen")
+
+if(CMAKE_BUILD_TYPE STREQUAL "Debug")
   message("==== Enable debug log ====")
-  add_definitions(-DKCG_DEBUG)
+  set(LIB_KCG_RUNTIME "kcg_runtime_d")
+  set(LIB_DEEPGEN "deepgen_d")
 endif()
 
 # add_subdirectory(include)
+add_subdirectory(include/Dialect/Frisk)
 add_subdirectory(src/lib)
 add_subdirectory(src)
+add_subdirectory(src/Dialect/Frisk)

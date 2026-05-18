@@ -1,0 +1,51 @@
+------------- 2026-05-14 08:33:16 ------------- 
+[Info] opty = MatmulOp, devId = 4, dtype = torch.float32
+[Info] task_id = f28c6083
+start get_tune_space
+
+module {
+  frisk.kernel @Matmul(memref<2048x2048xf32, 1>, memref<2048x2048xf32, 1>, memref<2048x2048xf32, 1>) {
+    frisk.parallel (%bz, %by) = (16, 16), threads = 128 {
+      %0 = frisk.alloc_buffer {scope = "shared", alignment = 128} -> memref<128x16xf32, 3>
+      %1 = frisk.alloc_buffer {scope = "shared", alignment = 128} -> memref<16x128xf32, 3>
+      %2 = frisk.alloc_buffer {scope = "local"} -> memref<128x128xf32>
+      frisk.fill %2 {value = 0.000000e+00 : f32} : memref<128x128xf32>
+      frisk.for %arg3 = 0 to 2048 step = 16 {
+        %4 = frisk.buffer_view %arg0[%bz * 128, %arg3], ranges = [128, 16] : memref<2048x2048xf32, 1> -> memref<128x16xf32, 1>
+        frisk.copy %4 to %0 : memref<128x16xf32, 1>, memref<128x16xf32, 3>
+        %5 = frisk.buffer_view %arg1[%arg3, %by * 128], ranges = [16, 128] : memref<2048x2048xf32, 1> -> memref<16x128xf32, 1>
+        frisk.copy %5 to %1 : memref<16x128xf32, 1>, memref<16x128xf32, 3>
+        frisk.gemm(%0, %1) to %2 {transA = false, transB = false} : memref<128x16xf32, 3>, memref<16x128xf32, 3>, memref<128x128xf32>
+      }
+      %3 = frisk.buffer_view %arg2[%bz * 128, %by * 128], ranges = [128, 128] : memref<2048x2048xf32, 1> -> memref<128x128xf32, 1>
+      frisk.copy %2 to %3 : memref<128x128xf32>, memref<128x128xf32, 1>
+    }
+  }
+}
+
+==== tune space size = 1
+=== checktflops, checkAcc False 0.0
+=====  start at : 1778747596.791716
+========= compiling ============
+needInfo.tsArgs = [[[], 2048, 2048, 2048], {'kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1': {'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 16, 'THREAD_SIZE_M': 8, 'THREAD_SIZE_N': 4, 'WARP_SIZE': 32, 'BLOCK_LAYOUT_Y': 1, 'BLOCK_LAYOUT_X': 2, 'WARP_LAYOUT_Y': 8, 'WARP_LAYOUT_X': 4, 'DATATYPE_A': 4, 'DATATYPE_B': 4, 'DATATYPE_C': 4, 'M_SIZE': 2048, 'N_SIZE': 2048, 'K_SIZE': 2048, 'BATCH_SIZE': 1, 'IS_ATRANS': 1, 'GLOB_LOAD_WIDTH_A': 4, 'GLOB_LOAD_WIDTH_B': 4, 'BLOCK_SCATTER_WIDTH_M': 4, 'BLOCK_SCATTER_WIDTH_N': 4, 'WARP_SCATTER_WIDTH_M': 4, 'WARP_SCATTER_WIDTH_N': 4, 'LOCAL_SPLIT_U': 2, 'BLOCK_MAPPING': 4, 'GLOB_STORE_WIDTH': 2, 'UNROLL_NUM': 16, 'REG_PREFETCH': 0, 'SHARED_PREFETCH': 1, 'LOAD_CONTINUOUS': 1, 'STORE_CONTINUOUS': 1}}]
+shmBytes =  16384
+blockDims = [128, 1, 1]
+gridDims = [2048, 1, 1]
+ta= [[], 2048, 2048, 2048] {'kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1': {'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 16, 'THREAD_SIZE_M': 8, 'THREAD_SIZE_N': 4, 'WARP_SIZE': 32, 'BLOCK_LAYOUT_Y': 1, 'BLOCK_LAYOUT_X': 2, 'WARP_LAYOUT_Y': 8, 'WARP_LAYOUT_X': 4, 'DATATYPE_A': 4, 'DATATYPE_B': 4, 'DATATYPE_C': 4, 'M_SIZE': 2048, 'N_SIZE': 2048, 'K_SIZE': 2048, 'BATCH_SIZE': 1, 'IS_ATRANS': 1, 'GLOB_LOAD_WIDTH_A': 4, 'GLOB_LOAD_WIDTH_B': 4, 'BLOCK_SCATTER_WIDTH_M': 4, 'BLOCK_SCATTER_WIDTH_N': 4, 'WARP_SCATTER_WIDTH_M': 4, 'WARP_SCATTER_WIDTH_N': 4, 'LOCAL_SPLIT_U': 2, 'BLOCK_MAPPING': 4, 'GLOB_STORE_WIDTH': 2, 'UNROLL_NUM': 16, 'REG_PREFETCH': 0, 'SHARED_PREFETCH': 1, 'LOAD_CONTINUOUS': 1, 'STORE_CONTINUOUS': 1}}
+ba= [[], 2048, 2048, 2048, 4]
+[d] load r lib
+[lib] setKernelNAme : kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1
+shape = [2048, 2048, 2048], cfg = {'kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1': {'BLOCK_SIZE_M': 64, 'BLOCK_SIZE_N': 32, 'BLOCK_SIZE_K': 16, 'THREAD_SIZE_M': 8, 'THREAD_SIZE_N': 4, 'WARP_SIZE': 32, 'BLOCK_LAYOUT_Y': 1, 'BLOCK_LAYOUT_X': 2, 'WARP_LAYOUT_Y': 8, 'WARP_LAYOUT_X': 4, 'DATATYPE_A': 4, 'DATATYPE_B': 4, 'DATATYPE_C': 4, 'M_SIZE': 2048, 'N_SIZE': 2048, 'K_SIZE': 2048, 'BATCH_SIZE': 1, 'IS_ATRANS': 1, 'GLOB_LOAD_WIDTH_A': 4, 'GLOB_LOAD_WIDTH_B': 4, 'BLOCK_SCATTER_WIDTH_M': 4, 'BLOCK_SCATTER_WIDTH_N': 4, 'WARP_SCATTER_WIDTH_M': 4, 'WARP_SCATTER_WIDTH_N': 4, 'LOCAL_SPLIT_U': 2, 'BLOCK_MAPPING': 4, 'GLOB_STORE_WIDTH': 2, 'UNROLL_NUM': 16, 'REG_PREFETCH': 0, 'SHARED_PREFETCH': 1, 'LOAD_CONTINUOUS': 1, 'STORE_CONTINUOUS': 1}}
+[pipeline] translate done
+========= kernelName =  kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1
+[benchmark] discovered 1 serialized kernels 
+init_cuda devid= [4]
+==== set visible device to 4  =====
+[D] after desrialize : [[], 2048, 2048, 2048, 4]
+self.BaseArgs.intValues = [[], 2048, 2048, 2048, 4]
+[D] tensor shape verify ======
+<class 'dict'>
+Test Correct! kcg_MM_bM2048N2048K2048isAT1W32_BM64BN32BK16TM8TN4BLY1BLX2WLY8WLX4GLWA4GLWB4BSWM4BSWN4WSWM4WSWN4LSU2Map4GSW2UN16RP0SP1LC1RC1 , speedup = 0.9566285284226772
+[result-json] wrote ./xbk_best_gemm2048_.json with 10 entries
+[result-json] final result count = 10
+===== Complete! Total spends 0.07609237829844157 minutes. Compile times : 0.029902772108713786 minutes

@@ -107,50 +107,51 @@ std::string compile_kernel(TuneConfig tuneCfg, TileConfig tileCfg, std::vector<K
   // compile func
   mlir::ModuleOp module = generator.createModule();
   auto noSupKernels = generator.createKernels(module, kds);  // create kernels
-  llvm::errs() << "[pipeline] createKernels done\n";
+  LOG_MSG("[pipeline] createKernels done\n");
   dumpModuleIRIfEnabled(module, "00_create");
   auto result = generator.fusing(module, fkds);  // fusing
-  llvm::errs() << "[pipeline] fusing done\n";
+  LOG_MSG("[pipeline] fusing done\n");
   dumpModuleIRIfEnabled(module, "01_fusing");
   result = generator.mapping(module, tileCfg);  // mpping
-  llvm::errs() << "[pipeline] mapping done\n";
+  LOG_MSG("[pipeline] mapping done\n");
   dumpModuleIRIfEnabled(module, "02_mapping");
-  llvm::errs() << "[pipeline] about to optimize\n";
+  LOG_MSG("[pipeline] about to optimize\n");
   if (!generator.optimize(module, tuneCfg)) {
-    llvm::errs() << "[pipeline] optimize FAILED\n";
+    LOG_MSG("[pipeline] optimize FAILED\n");
     dumpModuleIRIfEnabled(module, "03_optimize_failed");
     return "";
   }
-  llvm::errs() << "[pipeline] optimize done\n";
+  LOG_MSG("[pipeline] optimize done\n");
   dumpModuleIRIfEnabled(module, "03_optimize");
   if (mlir::failed(module.verify())) {
-    llvm::errs() << "[pipeline] ERROR: IR already broken after optimize!\n";
+    LOG_MSG("[pipeline] ERROR: IR already broken after optimize!\n");
     dumpModuleIRIfEnabled(module, "03_verify_failed");
     return "";
   }
-  llvm::errs() << "[pipeline] verify OK after optimize\n";
-  llvm::errs() << "[pipeline] about to transform\n";
+  LOG_MSG("[pipeline] verify OK after optimize\n");
+  LOG_MSG("[pipeline] about to transform\n");
   if (!generator.transform(module)) {
     llvm::errs() << "[pipeline] transform FAILED\n";
     dumpModuleIRIfEnabled(module, "04_transform_failed");
     return "";
   }
-  llvm::errs() << "[pipeline] transform done\n";
+  LOG_MSG("[pipeline] transform done\n");
   dumpModuleIRIfEnabled(module, "04_transform");
-  llvm::errs() << "[pipeline] about to lowering\n";
+  LOG_MSG("[pipeline] about to lowering\n");
   if (!generator.lowering_(module)) {
-    llvm::errs() << "[pipeline] lowering FAILED\n";
+    LOG_MSG( "[pipeline] lowering FAILED\n");
     dumpModuleIRIfEnabled(module, "05_lowering_failed");
     return "";
   }
-  llvm::errs() << "[pipeline] lowering done\n";
+  LOG_MSG( "[pipeline] lowering done\n");
   dumpModuleIRIfEnabled(module, "05_lowering");
   auto path = generator.translate(module);
   if (path.empty()) {
     llvm::errs() << "[pipeline] translate FAILED\n";
     return "";
   }
-  llvm::errs() << "[pipeline] translate done\n";
+  llvm::outs() << "[pipeline] translate done\n";
+  // llvm::outs() << "====after translate ====\n" << module << "\n"; llvm::outs().flush();
   return path;
 }
 

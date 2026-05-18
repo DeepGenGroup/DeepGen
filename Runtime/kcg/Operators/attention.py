@@ -482,7 +482,7 @@ class AttentionOp(OpInterface) :
     
     def InitLibInterface(self) :
         if self.CompileKernel is None or self.SetPlatform is None :
-            print(f"libdeepgen = {PathManager.kcg_lib_deepgen_path()}",flush=True)
+            # print(f"libdeepgen = {PathManager.kcg_lib_deepgen_path()}",flush=True)
             spec = importlib.util.spec_from_file_location("deepgen", PathManager.kcg_lib_deepgen_path())
             mod = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(mod)

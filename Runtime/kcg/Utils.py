@@ -167,7 +167,7 @@ def delete_files_in_directory(directory):
                 os.remove(file_path)
             else:
                 shutil.rmtree(file_path)
-        print(f"Deleted files in {directory}")
+        # print(f"Deleted files in {directory}")
     else:
         print(f"The directory {directory} does not exist.")
 
@@ -518,7 +518,8 @@ class DeviceInfo :
     def get_device_count() :
         DeviceInfo.__init_gpu_info()
         return DeviceInfo.__get_device_count()
-    
+
+
 # 路径管理器。存放了各种路径设置
 class PathManager :
     _s_cuda_install_dir = ""
@@ -599,6 +600,10 @@ class PathManager :
     def kcg_lib_deepgen_path()->str:
         return os.path.join(PathManager.project_dir(),"bin/libdeepgen.so")
         # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
+    @staticmethod
+    def kcg_lib_deepgen_debug_path()->str:
+        return os.path.join(PathManager.project_dir(),"bin/libdeepgen_d.so")
+        # return PathManager.__project_dir() + "/bin/libkcg_compiler.so"
     
     @staticmethod
     def init(clearPkl = False, clearDump = False, clearOverride = False, clearCache = False, clearTmp = False) :
@@ -626,6 +631,13 @@ class PathManager :
         with open(userPathConfigfile) as f:
             import json
             PathManager._s_path_obj = json.load(f)
+
+# user settings
+class UserSettings :
+    s_testMode = "tune"
+    @staticmethod
+    def friskLibPath() -> str :
+        return str(PathManager.project_dir())+"/bin/friskLib"
 
 class CompileNeededInfo :
     def __init__(self):

@@ -203,7 +203,7 @@ def _benchProcess( OpTy : Type[OpInterface] , benchConfig : BenchmarkConfig, fin
             funName = config.kernelFuncName
             if torch.allclose(r,r0,rtol=1e-3,atol=1e-3) :
                 acc = t0 / t
-                print(f"Test Correct! {funName} , speedup = {acc}")
+                print(f"Test Correct! {funName} ,speedup = {acc}")
             else:
                 abs_diff = torch.abs(r - r0)
                 max_abs_err = abs_diff.max().item()
@@ -259,7 +259,8 @@ def do_benchmark(OpTy : Type[OpInterface], devId : int, benchConfig : BenchmarkC
     global g_findAvaialbleCase
     name_format = f"{PathManager.pikle_dir()}/{devId}/{task_id}/*.pkl"
     pkls = glob.glob(name_format)
-    print(f"[benchmark] discovered {len(pkls)} serialized kernels under {name_format}", flush=True)
+    # print(f"[benchmark] discovered {len(pkls)} serialized kernels under {name_format}", flush=True)
+    print(f"[benchmark] discovered {len(pkls)} serialized kernels ", flush=True)
     p = Process(target = _benchProcess, args = (OpTy,benchConfig, g_findAvaialbleCase, devId, g_time0, pkls, checkTflops, checkAcc))
     p.start()
     p.join()
@@ -856,10 +857,13 @@ def getInputs() :
     torch_dtype = _dtype_map[dtype_name]
     if seqlen is not None and seqlen <= 0:
         raise ValueError("--seqlen must be > 0")
-    return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen)
+    
+    test_mode = argv[9] if len(argv) >= 10 else "tune"
+
+    return (cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen, test_mode)
 
 def main():
-    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen = getInputs()
+    cfgFile,result_json_path,start,maxCount,checktflops, checkAcc, opty, devId, torch_dtype, seqlen , test_mode = getInputs()
     print(f"[Info] opty = {opty.__name__}, devId = {devId}, dtype = {torch_dtype}")
 
     if is_hip():
@@ -873,10 +877,13 @@ def main():
     print(f"[Info] task_id = {task_id}")
     PathManager.init(clearPkl=False, clearCache=True)
     os.makedirs(f"{PathManager().pikle_dir()}/{devId}/{task_id}", exist_ok=True)
-    print("get_tune_space",flush=True)
+    print("start get_tune_space",flush=True)
     tssize = 0
-    f_gs = get_tune_configs_directly_from_json
-    # f_gs = get_tuning_space
+    if test_mode=="tune":
+        f_gs = get_tuning_space
+    else:
+        f_gs = get_tune_configs_directly_from_json
+    UserSettings.s_testMode = test_mode
 
 
     for c in  f_gs(opty, cfgFile, torch_dtype, seqlen=seqlen):
@@ -904,6 +911,19 @@ def main():
                 break 
     co = CompileOption()
     co.fastCompile = False
+    if UserSettings.s_testMode == "notune" :
+        os.environ['KCG_DUMP_IR'] = "1"
+        opKind = "-"
+        if opty is kcg_mm.MatmulOp :
+            opKind = "matmul"
+        elif opty is kcg_att.AttentionOp :
+            opKind = "attn"
+        friskCMd = [ UserSettings.friskLibPath() , opKind]
+        pp = subprocess.run(friskCMd, capture_output=True , text=True)
+        content = pp.stdout
+        with open('/home/xushilong/DeepGen/_TempIRCodes/' + 'deepgenIR.mlir','w') as f :
+            f.write(content) 
+
     do_compile_and_benchmark_alternatively(opty,ts,bc,co,backend,arch,devId,checktflops, checkAcc, task_id, tssize)
     if result_json_path:
         if not os.path.exists(result_json_path):
@@ -918,7 +938,7 @@ def main():
     # do_benchmark(opty,devId,cc,[])
     et = time.time()
     print(f"===== Complete! Total spends {(et - st)/ 60} minutes. Compile times : {g_compileTimes / 60} minutes")
-        
+
     
 if __name__ == '__main__' :
     print(time.strftime('------------- %Y-%m-%d %H:%M:%S ------------- ',time.localtime(time.time())))       # 打印按指定格式排版的时间

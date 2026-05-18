@@ -915,22 +915,22 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
   LOG_DEBUG("===== split & reorder tileP to smP & amend globMid to smP =======\n",module);
 
   // *** 将softmax rear 和matmul2的计算部分 fuse到blockx循环中 ***
-  llvm::errs() << "[dbg] about to fuseForOps(bfors)\n";
+  LOG_MSG( "[dbg] about to fuseForOps(bfors)\n");
   std::vector<std::vector<mlir::affine::AffineForOp>> bfors{{xBlockFors[0]}, {xBlockFors[1]}, {k2_outer}};
   auto xBlockFor = fuseForOps(bfors)[0];
-  llvm::errs() << "[dbg] fuseForOps done, moveBefore\n";
+  LOG_MSG("[dbg] fuseForOps done, moveBefore\n");
   yTileForOps[1]->moveBefore(qs_outer);  // move tilePToSmP before
   calMap = getCalculateMap(builder, "softmax");  // {itery, iterx}
   Rewriter::cache_read(xTileForOps[1], midBuf, tileP[0], calMap, {yTileForOps[1].getInductionVar(), xTileForOps[1].getInductionVar()});
   Rewriter::cache_read(xTileForOps[1], maxBuf, regMax, sumAndMaxRegMap, {yTileForOps[1].getInductionVar()});
   Rewriter::cache_write(xTileForOps[1], midBuf, tileP[0], calMap, {yTileForOps[1].getInductionVar(), xTileForOps[1].getInductionVar()});
-  llvm::errs() << "[dbg] about to updateTileO(regFactor)\n";
+  LOG_MSG("[dbg] about to updateTileO(regFactor)\n");
   // create tileO update ops
   updateTileO(toSmP, smFactor, tileO[0], "regFactor");
-  llvm::errs() << "[dbg] updateTileO(regFactor) done\n";
+  LOG_MSG( "[dbg] updateTileO(regFactor) done\n");
   LOG_DEBUG("===== fuse blockx for op and move & softmax rear amend load and store =======\n",module);
 
-  llvm::errs() << "[dbg] matmul2 part start\n";
+  LOG_MSG("[dbg] matmul2 part start\n");
   // matmul2部分的sm和reg的load和store {k2_midder, k2_inner, yTileForOps[2], xTileForOps[2]}
   // glob load to temp reg
   auto loadTileVMap = getGlobVToTempVMap(builder);
@@ -1009,11 +1009,11 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     };
     loadFragP = builder.create<mlir::affine::AffineForOp>(
         loc, 0, 1, 1, mlir::ValueRange{}, wrapBody);
-    llvm::errs() << "[dbg] generateSplitKRegP done\n";
+    LOG_MSG("[dbg] generateSplitKRegP done\n");
   } else if (useShuffleP) {
     loadFragP = generateShufflePToRegP(builder, tileP[0], regP, tIdx[0],
         k2_midder.getInductionVar(), k2_inner.getInductionVar(), k2_inner);
-    llvm::errs() << "[dbg] generateShufflePToRegP done\n";
+    LOG_MSG("[dbg] generateShufflePToRegP done\n");
   } else {
     auto loadFragPMap = getSmPToRegPMap(builder);
     llvm::SmallVector<mlir::Value> spoperands{tIdx[0], k2_midder.getInductionVar(), k2_inner.getInductionVar()};
@@ -1082,9 +1082,9 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
                  << ", " << (int)std::log2(WLPX) << " rounds)\n";
   }
 
-  llvm::errs() << "[dbg] about to updateTileO(ORegSum)\n";
+  LOG_MSG("[dbg] about to updateTileO(ORegSum)\n");
   updateTileO(tyds.back(), smSum, tileO[0], "ORegSum");
-  llvm::errs() << "[dbg] updateTileO(ORegSum) done\n";
+  LOG_MSG("[dbg] updateTileO(ORegSum) done\n");
   LOG_DEBUG("===== update last TileO =======\n",module);
 
   mlir::affine::AffineParallelOp threadParallelOp;
@@ -1096,15 +1096,15 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
       return mlir::WalkResult::interrupt();
     } 
   });
-  llvm::errs() << "[dbg] about to moveMemrefDefineAhead\n";
+  LOG_MSG("[dbg] about to moveMemrefDefineAhead\n");
   moveMemrefDefineAhead(threadParallelOp.getOperation());
-  llvm::errs() << "[dbg] moveMemrefDefineAhead done\n";
+  LOG_MSG("[dbg] moveMemrefDefineAhead done\n");
   LOG_DEBUG("===== moveMemrefDefineAhead =======\n",module);
 
   mlir::affine::AffineForOp regRearForOp, regRearForOp_;
   std::vector<mlir::affine::AffineForOp> pfLdRegForOps, pfLdSMForOps, pfLdRegForOps_, pfLdRegForOps__;
   if (cfg["SHARED_PREFETCH_P"]) {
-    llvm::errs() << "[dbg] SHARED_PREFETCH_P start\n";
+    LOG_MSG("[dbg] SHARED_PREFETCH_P start\n");
     std::vector<mlir::affine::AffineForOp> LdRegForOps{loadTileK}, ldSMForOps{storeTileK};
     std::vector<mlir::Value> smBufs{smK};
     int64_t prefetchStep = cfg.at("Slice1");
@@ -1113,7 +1113,7 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     loadTileK = LdRegForOps[0];
     storeTileK = ldSMForOps[0];
     pfLdRegForOps = smResult.first; pfLdSMForOps = smResult.second;
-    llvm::errs() << "[dbg] sharedMemroyPrefetch done\n";
+    LOG_MSG("[dbg] sharedMemroyPrefetch done\n");
     LOG_DEBUG("===== sharedMemroyPrefetch (K only, Q pre-loaded) =======\n",module);
 
     // After sharedMemroyPrefetch the k_outer IV is shifted by +step (range
@@ -1121,7 +1121,7 @@ void FlashAttnOptimizer::applyOptimzer(mlir::func::FuncOp& funcOp) {
     // but Q reads from smQFull need the *original* unshifted k value.
     // Create an affine.apply to compute (new_k_outer_iv - step) and patch
     // every smQFull load inside loadFragQ to use it.
-    llvm::errs() << "[dbg] fixing smQFull k_outer IV shift\n";
+    LOG_MSG("[dbg] fixing smQFull k_outer IV shift\n");
     mlir::Value newKOuterIv = k1_outer.getInductionVar();
     // Bake the -step offset directly into the affine map of each smQFull
     // load.  No new SSA value is created — purely a compile-time map edit,
